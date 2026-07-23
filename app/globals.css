@@ -1,3 +1,4 @@
+@import "./theme-tokens.css";
 @import "tailwindcss";
 
 :root {

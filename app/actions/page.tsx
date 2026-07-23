@@ -19,22 +19,22 @@ export default async function ActionsPage() {
   const today = new Date().toISOString().slice(0, 10);
 
   return (
-    <main className="min-h-screen bg-neutral-100 p-8">
+    <main className="min-h-screen p-8" style={{ background: "var(--ch-paper)" }}>
       <div className="max-w-3xl mx-auto">
-        <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-900">
+        <Link href="/" className="text-sm hover:underline" style={{ color: "var(--ch-navy)" }}>
           ‹ Dashboard
         </Link>
-        <h1 className="text-xl font-bold text-neutral-900 mt-3 mb-1">Corrective actions</h1>
-        <p className="text-sm text-neutral-500 mb-6">
+        <h1 className="text-xl font-bold mt-3 mb-1" style={{ color: "var(--ch-ink)" }}>Corrective actions</h1>
+        <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
           Every failed check point becomes a tracked action here automatically.
         </p>
 
         <div className="mb-8">
-          <div className="text-xs font-bold uppercase tracking-wide text-neutral-500 mb-2">
+          <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "var(--ch-sub)" }}>
             Open ({open.length})
           </div>
           {open.length === 0 ? (
-            <div className="bg-white border border-neutral-200 rounded-xl p-6 text-sm text-neutral-500">
+            <div className="bg-white border rounded-xl p-6 text-sm" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
               No open actions — nice work.
             </div>
           ) : (
@@ -48,7 +48,7 @@ export default async function ActionsPage() {
 
         {closed.length > 0 && (
           <div>
-            <div className="text-xs font-bold uppercase tracking-wide text-neutral-500 mb-2">
+            <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "var(--ch-sub)" }}>
               Closed ({closed.length})
             </div>
             <div className="space-y-3">

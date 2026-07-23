@@ -24,7 +24,6 @@ export default function StartInspection({
     setError(null);
     const supabase = createClient();
 
-    // Find or create the site by name within the org
     let { data: siteRow } = await supabase
       .from("sites")
       .select("id")
@@ -69,10 +68,7 @@ export default function StartInspection({
 
   if (!open) {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="bg-amber-400 hover:bg-amber-500 text-neutral-900 rounded-lg px-4 py-2 text-sm font-bold"
-      >
+      <button onClick={() => setOpen(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-bold">
         Start inspection
       </button>
     );
@@ -82,26 +78,20 @@ export default function StartInspection({
     <div className="flex items-center gap-2 flex-wrap">
       <input
         autoFocus
-        className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-44"
+        className="border rounded-lg px-3 py-2 text-sm w-44"
+        style={{ borderColor: "var(--ch-line)" }}
         placeholder="Site / location name"
         value={site}
         onChange={(e) => setSite(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && start()}
       />
-      <button
-        onClick={start}
-        disabled={busy}
-        className="bg-neutral-900 text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-      >
+      <button onClick={start} disabled={busy} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
         {busy ? "…" : "Go"}
       </button>
-      <button
-        onClick={() => { setOpen(false); setError(null); }}
-        className="text-sm text-neutral-500 px-2"
-      >
+      <button onClick={() => { setOpen(false); setError(null); }} className="text-sm px-2" style={{ color: "var(--ch-sub)" }}>
         Cancel
       </button>
-      {error && <span className="text-xs text-red-600 w-full">{error}</span>}
+      {error && <span className="text-xs w-full" style={{ color: "var(--ch-fail)" }}>{error}</span>}
     </div>
   );
 }

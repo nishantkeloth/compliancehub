@@ -1,0 +1,52 @@
+/* ============================================================
+   ComplianceHub — Design tokens (Sysconic-aligned)
+   Navy = primary brand color (buttons, header, links, focus)
+   Amber = RESERVED exclusively for AI-powered features.
+   Do not use amber for ordinary actions — that convention is
+   the whole point of carrying it over from Sysconic.
+   ============================================================ */
+
+:root {
+  --ch-navy: #1e3a5f;       /* primary brand — swap this one value if Sysconic's exact hex differs */
+  --ch-navy-dark: #14293f;  /* hover/active state */
+  --ch-navy-soft: #e7edf3;  /* light tint for badges/backgrounds */
+  --ch-ai: #f59e0b;         /* RESERVED for AI features only */
+  --ch-ai-soft: #fef3e2;
+  --ch-pass: #15803d;
+  --ch-pass-bg: #dcfce7;
+  --ch-fail: #b91c1c;
+  --ch-fail-bg: #fee2e2;
+  --ch-ink: #171717;
+  --ch-sub: #6b7280;
+  --ch-line: #e5e7eb;
+  --ch-paper: #f4f5f6;
+}
+
+input, textarea, select {
+  color: #171717 !important;
+  background-color: #ffffff !important;
+}
+
+/* Utility classes used across the re-skinned screens */
+.ch-btn-primary {
+  background: var(--ch-navy);
+  color: #fff;
+}
+.ch-btn-primary:hover {
+  background: var(--ch-navy-dark);
+}
+.ch-badge-navy {
+  background: var(--ch-navy-soft);
+  color: var(--ch-navy);
+}
+.ch-badge-ai {
+  background: var(--ch-ai-soft);
+  color: var(--ch-ai);
+  border: 1px solid var(--ch-ai);
+}
+.ch-link-navy {
+  color: var(--ch-navy);
+}
+.ch-link-navy:hover {
+  color: var(--ch-navy-dark);
+}
