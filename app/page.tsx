@@ -30,6 +30,20 @@ export default async function Home() {
     .order("started_at", { ascending: false })
     .limit(30);
 
+  // Supabase's generated types can't tell these joins return a single row
+  // (not an array) for this relationship — normalize so the shape matches
+  // what InspectionsPanel expects, and so Vercel's strict production
+  // type-check passes (this is more lenient in local `next dev`).
+  const normalizedInspections = (inspections ?? []).map((i: any) => ({
+    id: i.id,
+    status: i.status,
+    score_pct: i.score_pct,
+    started_at: i.started_at,
+    submitted_at: i.submitted_at,
+    templates: Array.isArray(i.templates) ? i.templates[0] : i.templates,
+    sites: Array.isArray(i.sites) ? i.sites[0] : i.sites,
+  }));
+
   const { count: openActions } = await supabase
     .from("corrective_actions")
     .select("id", { count: "exact", head: true })
@@ -90,7 +104,7 @@ export default async function Home() {
           ))}
         </div>
 
-        <InspectionsPanel inspections={inspections ?? []} />
+        <InspectionsPanel inspections={normalizedInspections} />
       </div>
     </main>
   );
