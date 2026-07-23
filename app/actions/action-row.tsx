@@ -36,12 +36,29 @@ export default function ActionRow({
   const borderColor =
     status === "closed" ? "var(--ch-pass)" : overdue ? "var(--ch-fail)" : "var(--ch-navy)";
 
+  // inspection_responses comes back as an object or array depending on
+  // Supabase's join inference — handle both.
+  const rawPhotos = Array.isArray(action.inspection_responses)
+    ? action.inspection_responses[0]?.photo_urls
+    : action.inspection_responses?.photo_urls;
+  const photos: string[] = rawPhotos ?? [];
+
   return (
     <div
       className="bg-white border rounded-xl p-4"
       style={{ borderColor: "var(--ch-line)", borderLeft: `4px solid ${borderColor}` }}
     >
       <div className="flex items-start gap-3 flex-wrap">
+        {photos.length > 0 && (
+          <a href={photos[0]} target="_blank" rel="noopener noreferrer" className="shrink-0">
+            <img
+              src={photos[0]}
+              alt="Finding photo"
+              className="w-16 h-16 object-cover rounded-lg border"
+              style={{ borderColor: "var(--ch-line)" }}
+            />
+          </a>
+        )}
         <div className="flex-1 min-w-[220px]">
           <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>
             {action.sites?.name}

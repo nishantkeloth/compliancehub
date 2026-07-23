@@ -11,7 +11,9 @@ export default async function ActionsPage() {
 
   const { data: actions } = await supabase
     .from("corrective_actions")
-    .select("id, title, finding, owner_name, priority, due_date, status, closed_at, created_at, sites(name)")
+    .select(
+      "id, title, finding, owner_name, priority, due_date, status, closed_at, created_at, sites(name), inspection_responses(photo_urls)"
+    )
     .order("created_at", { ascending: false });
 
   const open = (actions ?? []).filter((a: any) => a.status === "open" || a.status === "in_progress");
