@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sysconic – Payment Vouchers</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0f1117;--surface:#181c27;--card:#1e2235;--border:#2a2f45;
+    --accent:#4f7eff;--accent2:#a78bfa;--green:#22c55e;--amber:#f59e0b;
+    --red:#ef4444;--text:#e2e8f0;--muted:#64748b;--radius:10px;
+  }
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+
+  nav{display:flex;align-items:center;justify-content:space-between;padding:0 32px;height:60px;
+    background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}
+  .logo{font-weight:700;font-size:1.1rem;letter-spacing:.5px;}
+  .logo span{color:var(--accent);}
+  .nav-tabs{display:flex;gap:4px;}
+  .nav-tab{padding:6px 16px;border-radius:6px;border:none;background:transparent;color:var(--muted);
+    font-size:.875rem;font-weight:500;cursor:pointer;transition:all .15s;}
+  .nav-tab.active{background:var(--accent);color:#fff;}
+  .nav-tab:hover:not(.active){background:var(--border);color:var(--text);}
+  .user-badge{font-size:.8rem;color:var(--muted);background:var(--border);padding:4px 12px;border-radius:20px;}
+
+  .page{display:none;padding:32px;max-width:960px;margin:0 auto;}
+  .page.active{display:block;}
+  h2{font-size:1.25rem;font-weight:600;margin-bottom:24px;}
+  h2 small{font-size:.85rem;color:var(--muted);font-weight:400;margin-left:8px;}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;}
+  .stat-label{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;}
+  .stat-value{font-size:1.8rem;font-weight:700;margin-top:6px;font-family:'JetBrains Mono',monospace;}
+  .stat-value.blue{color:var(--accent);}.stat-value.amber{color:var(--amber);}
+  .stat-value.green{color:var(--green);}.stat-value.red{color:var(--red);}
+
+  .table-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+  table{width:100%;border-collapse:collapse;font-size:.875rem;}
+  thead{background:var(--surface);}
+  th{padding:12px 16px;text-align:left;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:600;}
+  td{padding:14px 16px;border-top:1px solid var(--border);vertical-align:middle;}
+  tr:hover td{background:rgba(79,126,255,.04);}
+
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.6px;}
+  .badge.pending{background:rgba(245,158,11,.15);color:var(--amber);}
+  .badge.approved{background:rgba(34,197,94,.15);color:var(--green);}
+  .badge.rejected{background:rgba(239,68,68,.15);color:var(--red);}
+
+  .approver-dots{display:flex;gap:6px;align-items:center;}
+  .dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:.65rem;font-weight:700;border:2px solid transparent;}
+  .dot.ok{background:rgba(34,197,94,.2);color:var(--green);border-color:var(--green);}
+  .dot.wait{background:rgba(100,116,139,.15);color:var(--muted);border-color:var(--border);}
+  .dot.no{background:rgba(239,68,68,.2);color:var(--red);border-color:var(--red);}
+
+  .form-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:32px;}
+  .section-title{font-size:.7rem;color:var(--accent);font-weight:700;text-transform:uppercase;
+    letter-spacing:1.2px;margin:24px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+  .section-title:first-child{margin-top:0;}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+  .form-group{display:flex;flex-direction:column;gap:6px;}
+  .form-group.full{grid-column:1/-1;}
+  label{font-size:.8rem;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.6px;}
+  input,select,textarea{background:var(--surface);border:1px solid var(--border);color:var(--text);
+    border-radius:7px;padding:10px 14px;font-size:.9rem;font-family:'Inter',sans-serif;transition:border-color .15s;outline:none;}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);}
+  textarea{resize:vertical;min-height:90px;}
+  select option{background:var(--surface);}
+
+  .form-footer{margin-top:24px;display:flex;justify-content:flex-end;gap:12px;}
+  .btn-primary{padding:10px 28px;border-radius:8px;border:none;background:var(--accent);color:#fff;
+    font-weight:600;font-size:.9rem;cursor:pointer;transition:all .15s;}
+  .btn-primary:hover{background:#3d6be8;}
+  .btn-primary:disabled{background:var(--muted);cursor:not-allowed;}
+  .btn-ghost{padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:transparent;
+    color:var(--muted);font-size:.9rem;cursor:pointer;}
+  .btn-ghost:hover{border-color:var(--text);color:var(--text);}
+
+  .empty{text-align:center;padding:48px;color:var(--muted);}
+  .toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;
+    font-weight:600;font-size:.88rem;opacity:0;transform:translateY(10px);
+    transition:all .3s;pointer-events:none;z-index:999;}
+  .toast.success{background:var(--green);color:#000;}
+  .toast.error{background:var(--red);color:#fff;}
+  .toast.show{opacity:1;transform:translateY(0);}
+  .loading{color:var(--muted);font-size:.9rem;padding:32px;text-align:center;}
+
+  @media(max-width:640px){
+    .stats{grid-template-columns:1fr 1fr;}
+    .form-grid{grid-template-columns:1fr;}
+    nav{padding:0 16px;}
+    .page{padding:20px 16px;}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">Sys<span>conic</span> PV</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showTab('dashboard',this)">Dashboard</button>
+    <button class="nav-tab" onclick="showTab('submit',this)">Submit Voucher</button>
+  </div>
+  <div class="user-badge">Sysconic Team</div>
+</nav>
+
+<!-- DASHBOARD -->
+<div class="page active" id="page-dashboard">
+  <h2>Payment Vouchers <small id="dash-date"></small></h2>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total</div><div class="stat-value blue" id="stat-total">–</div></div>
+    <div class="stat"><div class="stat-label">Pending</div><div class="stat-value amber" id="stat-pending">–</div></div>
+    <div class="stat"><div class="stat-label">Approved</div><div class="stat-value green" id="stat-approved">–</div></div>
+    <div class="stat"><div class="stat-label">Rejected</div><div class="stat-value red" id="stat-rejected">–</div></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Voucher #</th><th>Payee</th><th>Amount</th>
+          <th>Project</th><th>Approvals</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="voucher-table-body">
+        <tr><td colspan="6" class="loading">Loading vouchers…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- SUBMIT -->
+<div class="page" id="page-submit">
+  <h2>Submit Payment Voucher</h2>
+  <div class="form-card">
+
+    <div class="section-title">Payee Information</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Payee Name *</label>
+        <input type="text" id="f-payee" placeholder="e.g. Al Futtaim Electric"/>
+      </div>
+      <div class="form-group">
+        <label>Amount *</label>
+        <input type="number" id="f-amount" placeholder="0.00" step="0.01"/>
+      </div>
+      <div class="form-group">
+        <label>Currency</label>
+        <select id="f-currency">
+          <option value="AED">AED – UAE Dirham</option>
+          <option value="USD">USD – US Dollar</option>
+          <option value="EUR">EUR – Euro</option>
+          <option value="GBP">GBP – British Pound</option>
+          <option value="INR">INR – Indian Rupee</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Payment Method</label>
+        <select id="f-payment-method">
+          <option value="Bank Transfer">Bank Transfer</option>
+          <option value="Cheque">Cheque</option>
+          <option value="Cash">Cash</option>
+          <option value="Online Payment">Online Payment</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section-title">Invoice Details</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Invoice Number</label>
+        <input type="text" id="f-invoice" placeholder="INV-XXXX"/>
+      </div>
+      <div class="form-group">
+        <label>Payment Due Date</label>
+        <input type="date" id="f-due"/>
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="f-category">
+          <option>Equipment</option>
+          <option>Materials</option>
+          <option>Subcontract</option>
+          <option>Utilities</option>
+          <option>Travel</option>
+          <option>Professional Services</option>
+          <option>Maintenance</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Project</label>
+        <select id="f-project">
+          <option value="">Loading projects from Zoho...</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section-title">Submission Details</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Submitted By *</label>
+        <input type="text" id="f-submitted-by" placeholder="Your name"/>
+      </div>
+      <div class="form-group">
+        <label>Submission Date</label>
+        <input type="text" id="f-submission-date" readonly style="color:var(--muted)"/>
+      </div>
+      <div class="form-group full">
+        <label>Description / Remarks</label>
+        <textarea id="f-remarks" placeholder="Brief description of what this payment is for…"></textarea>
+      </div>
+    </div>
+
+  </div>
+  <div class="form-footer" style="margin-top:20px;">
+    <button class="btn-ghost" onclick="clearForm()">Clear</button>
+    <button class="btn-primary" id="submit-btn" onclick="submitVoucher()">Submit for Approval →</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  document.getElementById('dash-date').textContent =
+    new Date().toLocaleDateString('en-AE', {month:'long', year:'numeric'});
+  document.getElementById('f-submission-date').value =
+    new Date().toLocaleDateString('en-AE', {day:'2-digit', month:'short', year:'numeric'});
+
+  function showTab(tab, btn) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('page-' + tab).classList.add('active');
+    btn.classList.add('active');
+    if (tab === 'dashboard') loadVouchers();
+  }
+
+  function statusDot(status, initial, fullName) {
+    const cls = status === 'approve' ? 'ok' : status === 'reject' ? 'no' : 'wait';
+    return `<div class="dot ${cls}" title="${fullName}">${initial}</div>`;
+  }
+
+  function loadVouchers() {
+    fetch('/api/vouchers')
+      .then(r => r.json())
+      .then(data => {
+        const body = document.getElementById('voucher-table-body');
+        document.getElementById('stat-total').textContent    = data.length;
+        document.getElementById('stat-pending').textContent  = data.filter(v => v.status === 'pending').length;
+        document.getElementById('stat-approved').textContent = data.filter(v => v.status === 'approved').length;
+        document.getElementById('stat-rejected').textContent = data.filter(v => v.status === 'rejected').length;
+
+        if (!data.length) {
+          body.innerHTML = '<tr><td colspan="6" class="empty">No vouchers yet. Submit one to get started.</td></tr>';
+          return;
+        }
+
+        body.innerHTML = data.map(v => `
+          <tr>
+            <td><span style="font-family:monospace;color:var(--accent)">PV-${String(v.id).padStart(4,'0')}</span></td>
+            <td>${v.payee}</td>
+            <td style="font-family:monospace">${v.currency || 'AED'} ${parseFloat(v.amount).toLocaleString('en-AE',{minimumFractionDigits:2})}</td>
+            <td style="font-size:.82rem;color:var(--muted)">${v.project}</td>
+            <td><div class="approver-dots">
+              ${statusDot(v.rajesh_status,'R','Rajesh')}
+              ${statusDot(v.ajith_status,'A','Ajith')}
+              ${statusDot(v.nishant_status,'N','Nishant')}
+            </div></td>
+            <td><span class="badge ${v.status}">${v.status}</span></td>
+          </tr>
+        `).join('');
+      })
+      .catch(() => {
+        document.getElementById('voucher-table-body').innerHTML =
+          '<tr><td colspan="6" class="empty">Could not load vouchers.</td></tr>';
+      });
+  }
+
+  function submitVoucher() {
+    const payee  = document.getElementById('f-payee').value.trim();
+    const amount = document.getElementById('f-amount').value.trim();
+    const submittedBy = document.getElementById('f-submitted-by').value.trim();
+    if (!payee || !amount) { showToast('Please fill in Payee and Amount.', 'error'); return; }
+    if (!submittedBy) { showToast('Please enter your name in Submitted By.', 'error'); return; }
+
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+
+    const payload = {
+      payee,
+      amount:           parseFloat(amount),
+      currency:         document.getElementById('f-currency').value,
+      payment_method:   document.getElementById('f-payment-method').value,
+      category:         document.getElementById('f-category').value,
+      project:          document.getElementById('f-project').value,
+      invoice_no:       document.getElementById('f-invoice').value,
+      due_date:         document.getElementById('f-due').value,
+      remarks:          document.getElementById('f-remarks').value,
+      submitted_by:     submittedBy,
+    };
+
+    fetch('/api/submit', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast(`✓ Voucher PV-${String(data.voucher_id).padStart(4,'0')} submitted! Approvers notified.`, 'success');
+        clearForm();
+        setTimeout(() => showTab('dashboard', document.querySelector('.nav-tab')), 1500);
+      } else {
+        showToast('Submission failed. Try again.', 'error');
+      }
+    })
+    .catch(() => showToast('Network error. Is the server running?', 'error'))
+    .finally(() => { btn.disabled = false; btn.textContent = 'Submit for Approval →'; });
+  }
+
+  function clearForm() {
+    ['f-payee','f-invoice','f-due','f-remarks','f-submitted-by','f-amount'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('f-currency').value = 'AED';
+    document.getElementById('f-payment-method').value = 'Bank Transfer';
+    document.getElementById('f-submission-date').value =
+      new Date().toLocaleDateString('en-AE', {day:'2-digit', month:'short', year:'numeric'});
+  }
+
+  function showToast(msg, type='success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast ${type} show`;
+    setTimeout(() => t.classList.remove('show'), 4000);
+  }
+
+  // Load projects from Zoho
+  function loadProjects() {
+    fetch('/api/projects')
+      .then(r => r.json())
+      .then(projects => {
+        const sel = document.getElementById('f-project');
+        sel.innerHTML = projects.map(p =>
+          `<option value="${p.name}">${p.name}</option>`
+        ).join('');
+      })
+      .catch(() => {
+        document.getElementById('f-project').innerHTML =
+          '<option>Could not load projects</option>';
+      });
+  }
+
+  loadVouchers();
+  loadProjects();
+</script>
+</body>
+</html>
