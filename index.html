@@ -51,6 +51,11 @@
   .btn-ghost { background:#fff; color: var(--navy); border:1px solid var(--line); }
   .btn-sm { padding:7px 12px; font-size:12px; border-radius:7px; }
   .btn-tint-amber { background: #fef3e2; color:#b45309; }
+  .btn-ai { background: var(--ai); color:#1c1c1c; }
+  .btn-ai:hover { background: #d99510; }
+  .btn-ai:disabled { opacity:.5; cursor:default; }
+  .ai-box { border:1.5px solid var(--ai); background: var(--ai-soft); border-radius:10px; padding:12px 14px; font-size:13px; line-height:1.5; }
+  .ai-label { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--amber-mid); margin-bottom:6px; }
   .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr)); gap:14px; margin-bottom:22px; }
   .stat-card { background: var(--navy-soft); border-radius:12px; padding:16px 18px; }
   .stat-card .label { font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5b7290; }
@@ -158,6 +163,30 @@ const esc = (s) => (s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString() : "";
 const today = () => new Date().toISOString().slice(0,10);
 function scoreTone(pct){ if(pct>=90) return {bg:"var(--pass-bg)",fg:"var(--pass)",pill:"pill-pass"}; if(pct>=75) return {bg:"var(--amber-bg)",fg:"var(--amber-mid)",pill:"pill-amber"}; return {bg:"var(--fail-bg)",fg:"var(--fail)",pill:"pill-fail"}; }
+
+async function callAI(action, payload) {
+  try {
+    const r = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, payload }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) return { error: data.error || "AI request failed" };
+    return { text: data.text };
+  } catch (e) {
+    return { error: "Could not reach AI service. AI features only work on the deployed site, not a local file." };
+  }
+}
+async function urlToBase64(url) {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(",")[1]);
+    reader.readAsDataURL(blob);
+  });
+}
 
 window.addEventListener("hashchange", route);
 function route() {
@@ -272,6 +301,31 @@ async function renderDashboard() {
   const submitted = list.filter(i => i.status !== "in_progress");
   const avgScore = submitted.length ? Math.round(submitted.reduce((n,i)=>n+(i.score_pct||0),0)/submitted.length) : 0;
 
+  // ---- 4. Risk trend (heuristic v1): per site+template, compare the two most recent scores ----
+  const bySiteTpl = {};
+  submitted.forEach(i => {
+    const key = `${i.site_id}|${i.template_id}`;
+    (bySiteTpl[key] ||= []).push(i);
+  });
+  const risks = [];
+  Object.values(bySiteTpl).forEach(arr => {
+    const sorted = [...arr].sort((a,b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+    if (sorted.length >= 2) {
+      const [latest, prev] = sorted;
+      const drop = (prev.score_pct||0) - (latest.score_pct||0);
+      if (drop >= 10 || (latest.score_pct < 75 && prev.score_pct < 75)) {
+        risks.push({ site: latest.sites?.name, template: latest.templates?.code, latest: Math.round(latest.score_pct), prev: Math.round(prev.score_pct), id: latest.id });
+      }
+    }
+  });
+
+  // ---- 7. Anomaly detection (heuristic v1): perfect/near-perfect score completed suspiciously fast ----
+  const anomalies = submitted.filter(i => {
+    if (!i.submitted_at || (i.score_pct||0) < 95) return false;
+    const mins = (new Date(i.submitted_at) - new Date(i.started_at)) / 60000;
+    return mins < 2 && mins >= 0;
+  });
+
   const topRight = `<button class="btn btn-primary" id="new-insp-btn"><i data-lucide="plus" style="width:15px;height:15px"></i>New inspection</button>`;
   const statsHtml = `
     <div class="stat-grid">
@@ -280,6 +334,20 @@ async function renderDashboard() {
       <div class="stat-card"><div class="label">Open Actions</div><div class="value amber">${openActions ?? 0}</div></div>
       <div class="stat-card"><div class="label">Templates</div><div class="value">${(templates??[]).length}</div><div class="sub2">Active</div></div>
     </div>
+    <div class="card" style="border:1.5px solid var(--ai);background:var(--ai-soft)">
+      <div class="ai-label"><i data-lucide="sparkles" style="width:12px;height:12px"></i>Ask ComplianceHub AI</div>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="nl-question" placeholder="e.g. Which sites have the most open corrective actions?" style="flex:1">
+        <button class="btn btn-ai" id="nl-ask-btn">Ask</button>
+      </div>
+      <div id="nl-answer" style="margin-top:10px"></div>
+    </div>
+    ${(risks.length || anomalies.length) ? `
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Risk & Anomaly Insights</div>
+      ${risks.map(r => `<div style="padding:8px 0;border-top:1px solid var(--line);font-size:13px"><i data-lucide="trending-down" style="width:13px;height:13px;color:var(--fail);vertical-align:-2px"></i> <a href="#/inspection/${r.id}" style="color:var(--navy);font-weight:600">${esc(r.template)} — ${esc(r.site)}</a> trending down: ${r.prev}% → ${r.latest}%</div>`).join("")}
+      ${anomalies.map(a => `<div style="padding:8px 0;border-top:1px solid var(--line);font-size:13px"><i data-lucide="alert-circle" style="width:13px;height:13px;color:var(--amber-mid);vertical-align:-2px"></i> <a href="#/inspection/${a.id}" style="color:var(--navy);font-weight:600">${esc(a.templates?.code)} — ${esc(a.sites?.name)}</a> completed in under 2 minutes with a ${Math.round(a.score_pct)}% score — worth a spot-check</div>`).join("")}
+    </div>` : ""}
     <div class="toolbar">
       <div class="search-box"><i data-lucide="search" class="ic" style="width:15px;height:15px"></i><input type="text" id="dash-search" placeholder="Search inspections..."></div>
       <select class="filter-sel" id="dash-filter">
@@ -298,6 +366,20 @@ async function renderDashboard() {
   `;
   shell("/", "Dashboard", topRight, statsHtml);
   if (window.lucide) lucide.createIcons();
+
+  $("#nl-ask-btn").onclick = async () => {
+    const q = $("#nl-question").value.trim();
+    if (!q) return;
+    $("#nl-ask-btn").disabled = true;
+    $("#nl-answer").innerHTML = `<div class="muted">Thinking…</div>`;
+    const context = {
+      inspections: list.map(i => ({ template: i.templates?.code, site: i.sites?.name, status: i.status, score: i.score_pct, started: i.started_at, submitted: i.submitted_at })),
+      open_actions_count: openActions ?? 0,
+    };
+    const { text, error } = await callAI("nl_query", { question: q, context });
+    $("#nl-ask-btn").disabled = false;
+    $("#nl-answer").innerHTML = error ? `<div class="err">${esc(error)}</div>` : `<div class="ai-box">${esc(text).replace(/\n/g,"<br>")}</div>`;
+  };
 
   $("#new-insp-btn").onclick = () => location.hash = "/templates";
   $("#dash-search").oninput = (e) => { state.search = e.target.value.toLowerCase(); renderResults(); };
@@ -357,7 +439,17 @@ async function renderDashboard() {
 async function renderTemplates() {
   shell("/templates", "Templates", "", `<div class="spinner-text">Loading…</div>`);
   const { data: templates } = await sb.from("templates").select("id, code, name, revision, scoring_type").order("code");
-  const body = `<div class="card-grid">` + (templates??[]).map(t => `
+  const body = `
+    <div class="card" style="border:1.5px solid var(--ai);background:var(--ai-soft)">
+      <div class="ai-label"><i data-lucide="sparkles" style="width:12px;height:12px"></i>AI Form Generator</div>
+      <p class="muted" style="margin:0 0 10px">Paste the text of any checklist, audit form, or SOP from any industry — AI turns it into a digital template with sections, items, and scoring, ready to use immediately.</p>
+      <textarea id="ai-form-text" rows="5" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="Paste raw checklist text here..."></textarea>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ai" id="ai-generate-btn"><i data-lucide="sparkles" style="width:14px;height:14px"></i>Generate template with AI</button>
+        <span class="muted" id="ai-form-status"></span>
+      </div>
+    </div>
+    <div class="card-grid">` + (templates??[]).map(t => `
     <div class="qcard">
       <div class="head"><div><div class="title">${esc(t.name)}</div><div class="site">${esc(t.code)} · Rev ${esc(t.revision)}</div></div><span class="pill ${t.scoring_type==="scored"?"pill-amber":"pill-draft"}">${esc(t.scoring_type)}</span></div>
       <button class="btn btn-primary" data-tid="${t.id}" id="start-${t.id}">Start inspection</button>
@@ -365,6 +457,38 @@ async function renderTemplates() {
     </div>`).join("") + `</div>`;
   shell("/templates", "Templates", "", body);
   if (window.lucide) lucide.createIcons();
+
+  $("#ai-generate-btn").onclick = async () => {
+    const raw = $("#ai-form-text").value.trim();
+    if (!raw) { $("#ai-form-status").textContent = "Paste some checklist text first."; return; }
+    $("#ai-generate-btn").disabled = true;
+    $("#ai-form-status").textContent = "Generating…";
+    const { text, error } = await callAI("generate_template", { text: raw });
+    if (error) { $("#ai-form-status").textContent = error; $("#ai-generate-btn").disabled = false; return; }
+    let tpl;
+    try { tpl = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+    catch { $("#ai-form-status").textContent = "AI response could not be parsed. Try again or simplify the text."; $("#ai-generate-btn").disabled = false; return; }
+
+    const { data: newTpl, error: tErr } = await sb.from("templates").insert({
+      org_id: state.profile.org_id, code: tpl.code || "AI-" + Date.now().toString().slice(-5),
+      name: tpl.name || "Untitled Template", revision: "00", scoring_type: tpl.scoring_type === "scored" ? "scored" : "checklist", status: "active",
+    }).select("id").single();
+    if (tErr) { $("#ai-form-status").textContent = tErr.message; $("#ai-generate-btn").disabled = false; return; }
+
+    for (let si = 0; si < (tpl.sections||[]).length; si++) {
+      const s = tpl.sections[si];
+      const { data: sec, error: sErr } = await sb.from("template_sections").insert({ template_id: newTpl.id, title: s.title, sort_order: si }).select("id").single();
+      if (sErr) continue;
+      const rows = (s.items||[]).map((it,ii) => ({
+        section_id: sec.id, prompt: it.prompt, sort_order: ii,
+        max_marks: tpl.scoring_type === "scored" ? (it.max_marks||1) : null,
+        response_type: tpl.scoring_type === "scored" ? "score" : "tri_state",
+      }));
+      if (rows.length) await sb.from("template_items").insert(rows);
+    }
+    $("#ai-form-status").textContent = "Template created!";
+    renderTemplates();
+  };
 
   (templates??[]).forEach(t => {
     $(`#start-${t.id}`).onclick = () => {
@@ -457,6 +581,7 @@ function renderRunner(insp, sections) {
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${photos.map(url => `<div style="position:relative"><img src="${url}" class="photo-thumb"><button data-rmphoto="${it.id}" data-url="${esc(url)}" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#fff;border:1px solid var(--fail);color:var(--fail);font-weight:700;font-size:11px;cursor:pointer">×</button></div>`).join("")}
           <label class="photo-tile" style="display:flex;flex-direction:column;align-items:center;gap:2px"><i data-lucide="camera" style="width:16px;height:16px"></i>Photo<input type="file" accept="image/*" capture="environment" data-photo="${it.id}" style="display:none"></label>
+          ${photos.length ? `<button class="btn btn-ai btn-sm" data-analyze="${it.id}"><i data-lucide="sparkles" style="width:12px;height:12px"></i>Analyze photo</button>` : ""}
         </div>
       </div>` : "";
     return `<div class="item-row ${failed?"failed":""}">
@@ -527,6 +652,21 @@ function renderRunner(insp, sections) {
     document.querySelectorAll("[data-rmphoto]").forEach(btn => {
       btn.onclick = () => { const id=btn.dataset.rmphoto; state.runnerPhotos[id]=(state.runnerPhotos[id]||[]).filter(u=>u!==btn.dataset.url); renderBody(); };
     });
+    document.querySelectorAll("[data-analyze]").forEach(btn => {
+      btn.onclick = async () => {
+        const itemId = btn.dataset.analyze;
+        const photos = state.runnerPhotos[itemId] || [];
+        if (!photos.length) return;
+        btn.disabled = true; btn.textContent = "Analyzing…";
+        const itemText = allItems.find(it => it.id === itemId)?.prompt || "";
+        const base64 = await urlToBase64(photos[0]);
+        const { text, error } = await callAI("analyze_photo", { itemPrompt: itemText, imageBase64: base64, mediaType: "image/jpeg" });
+        if (!error && text) {
+          state.runnerNotes[itemId] = (state.runnerNotes[itemId] ? state.runnerNotes[itemId] + " " : "") + text.trim();
+        }
+        renderBody();
+      };
+    });
     const submitBtn = $("#submit-btn");
     if (submitBtn) submitBtn.onclick = submit;
   }
@@ -587,11 +727,28 @@ async function renderInspectionSummary(insp, sections) {
           ${f.photos.length?`<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${f.photos.map(url=>`<a href="${url}" target="_blank"><img src="${url}" class="photo-thumb" style="width:80px;height:80px"></a>`).join("")}</div>`:""}
         </div>`).join("") + `<a href="#/actions" class="btn btn-primary btn-sm" style="display:inline-block;margin-top:14px">View corrective actions →</a>`
       }
+    </div>
+    <div class="card">
+      <div class="ai-label"><i data-lucide="sparkles" style="width:12px;height:12px"></i>AI Executive Summary</div>
+      <button class="btn btn-ai btn-sm" id="ai-summary-btn"><i data-lucide="sparkles" style="width:13px;height:13px"></i>Generate summary</button>
+      <div id="ai-summary-result" style="margin-top:10px"></div>
     </div>`;
   shell("/", `${insp.templates.code} Summary`, "", body);
+  if (window.lucide) lucide.createIcons();
   $("#dup-btn").onclick = async () => {
     const { data, error } = await sb.from("inspections").insert({ org_id: insp.org_id, template_id: insp.template_id, site_id: insp.site_id, inspector_id: state.user.id, status:"in_progress" }).select("id").single();
     if (!error) { location.hash = `/inspection/${data.id}`; route(); }
+  };
+  $("#ai-summary-btn").onclick = async () => {
+    $("#ai-summary-btn").disabled = true;
+    $("#ai-summary-result").innerHTML = `<div class="muted">Generating…</div>`;
+    const { text, error } = await callAI("summarize_inspection", {
+      templateName: insp.templates.name, siteName: insp.sites.name, score: pct,
+      findings: findings.map(f => ({ section: f.section, item: f.prompt, note: f.note })),
+    });
+    if (error) { $("#ai-summary-result").innerHTML = `<div class="err">${esc(error)}</div>`; $("#ai-summary-btn").disabled = false; return; }
+    $("#ai-summary-result").innerHTML = `<div class="ai-box">${esc(text).replace(/\n/g,"<br>")}</div>`;
+    $("#ai-summary-btn").disabled = false;
   };
 }
 
@@ -617,11 +774,15 @@ async function renderActions() {
         <div style="font-weight:600;font-size:13.5px">${esc(a.title)}</div>
         ${a.finding?`<div class="muted">Finding: ${esc(a.finding)}</div>`:""}
         <div style="font-size:12px;margin-top:4px;font-weight:500;color:${a.status==="closed"?"var(--pass)":overdue?"var(--fail)":"var(--sub)"}">Due ${a.due_date}${overdue?" · OVERDUE":""}${a.status==="closed"&&a.closed_at?` · Closed ${new Date(a.closed_at).toLocaleDateString()}`:""}</div>
+        ${a.status!=="closed" ? `<div id="ai-suggest-${a.id}" style="margin-top:8px"></div>` : ""}
       </div>
-      ${a.status!=="closed" ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          <input type="text" class="field-sm" style="width:130px;font-size:12px" placeholder="Owner" value="${esc(a.owner_name||"")}" data-owner="${a.id}">
-          <input type="date" style="font-size:12px" value="${a.due_date}" data-due="${a.id}">
-          <button class="btn btn-primary btn-sm" data-close="${a.id}">Close out</button>
+      ${a.status!=="closed" ? `<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input type="text" class="field-sm" style="width:130px;font-size:12px" placeholder="Owner" value="${esc(a.owner_name||"")}" data-owner="${a.id}">
+            <input type="date" style="font-size:12px" value="${a.due_date}" data-due="${a.id}">
+            <button class="btn btn-primary btn-sm" data-close="${a.id}">Close out</button>
+          </div>
+          <button class="btn btn-ai btn-sm" data-suggest="${a.id}"><i data-lucide="sparkles" style="width:12px;height:12px"></i>Suggest fix</button>
         </div>` : `<span class="pill pill-pass">Verified & closed</span>`}
     </div>`;
   }
@@ -636,6 +797,36 @@ async function renderActions() {
   document.querySelectorAll("[data-owner]").forEach(inp => inp.onblur = () => sb.from("corrective_actions").update({owner_name:inp.value}).eq("id",inp.dataset.owner));
   document.querySelectorAll("[data-due]").forEach(inp => inp.onchange = () => sb.from("corrective_actions").update({due_date:inp.value}).eq("id",inp.dataset.due));
   document.querySelectorAll("[data-close]").forEach(btn => btn.onclick = async () => { await sb.from("corrective_actions").update({status:"closed",closed_at:new Date().toISOString()}).eq("id",btn.dataset.close); renderActions(); });
+  document.querySelectorAll("[data-suggest]").forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.suggest;
+      const a = list.find(x => x.id === id);
+      btn.disabled = true; btn.textContent = "Thinking…";
+      const { text, error } = await callAI("suggest_action", { section: a.title, itemPrompt: a.title, note: a.finding });
+      const box = $(`#ai-suggest-${id}`);
+      if (error) { box.innerHTML = `<div class="err">${esc(error)}</div>`; }
+      else {
+        let parsed = null;
+        try { parsed = JSON.parse(text.replace(/```json|```/g,"").trim()); } catch {}
+        if (parsed) {
+          box.innerHTML = `<div class="ai-box"><div class="ai-label" style="margin-bottom:4px"><i data-lucide="sparkles" style="width:11px;height:11px"></i>Suggested</div>${esc(parsed.action)}${parsed.days?` <span style="color:var(--sub)">(~${parsed.days} day${parsed.days>1?"s":""})</span>`:""}</div>`;
+          if (parsed.days) {
+            const dueInput = document.querySelector(`[data-due="${id}"]`);
+            if (dueInput) {
+              const d = new Date(); d.setDate(d.getDate() + parsed.days);
+              dueInput.value = d.toISOString().slice(0,10);
+              sb.from("corrective_actions").update({ due_date: dueInput.value }).eq("id", id);
+            }
+          }
+        } else {
+          box.innerHTML = `<div class="ai-box">${esc(text)}</div>`;
+        }
+        if (window.lucide) lucide.createIcons();
+      }
+      btn.disabled = false; btn.innerHTML = `<i data-lucide="sparkles" style="width:12px;height:12px"></i>Suggest fix`;
+      if (window.lucide) lucide.createIcons();
+    };
+  });
 }
 
 init();
