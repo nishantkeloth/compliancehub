@@ -2,12 +2,15 @@
 // ComplianceHub — AI proxy (Vercel serverless function)
 // Path: /api/ai.js  →  callable at https://your-domain/api/ai
 //
+// Uses Google's Gemini API, which has a genuinely free tier
+// (no credit card required) — get a key at aistudio.google.com/apikey
+//
 // Keeps the AI provider key server-side only. The frontend
 // (index.html) never sees it — it just POSTs { action, payload }
 // to this endpoint and gets back { text } or { error }.
 //
 // Requires an environment variable set in Vercel:
-//   ANTHROPIC_API_KEY = sk-ant-...
+//   GEMINI_API_KEY = AIza...
 // (Settings → Environment Variables → Production+Preview)
 //
 // All prompts below are written to be industry-neutral —
@@ -20,9 +23,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: "AI not configured. Set ANTHROPIC_API_KEY in Vercel project settings." });
+    res.status(500).json({ error: "AI not configured. Set GEMINI_API_KEY in Vercel project settings (free key at aistudio.google.com/apikey)." });
     return;
   }
 
@@ -89,34 +92,36 @@ QUESTION: ${p.question}`,
   }
 
   const isVision = action === "analyze_photo";
-  const messages = isVision
-    ? [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: payload.mediaType || "image/jpeg", data: payload.imageBase64 } },
-          { type: "text", text: promptFn(payload) },
-        ],
-      }]
-    : [{ role: "user", content: promptFn(payload) }];
+  const parts = isVision
+    ? [
+        { text: promptFn(payload) },
+        { inline_data: { mime_type: payload.mediaType || "image/jpeg", data: payload.imageBase64 } },
+      ]
+    : [{ text: promptFn(payload) }];
 
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024, messages }),
-    });
+    const model = "gemini-2.0-flash";
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }] }),
+      }
+    );
     const data = await r.json();
     if (!r.ok) {
       res.status(500).json({ error: data.error?.message || "AI request failed" });
       return;
     }
-    const text = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+    const text = data.candidates?.[0]?.content?.parts?.map((pt) => pt.text).join("\n") || "";
+    if (!text) {
+      res.status(500).json({ error: "AI returned no content — the request may have been blocked by safety filters." });
+      return;
+    }
     res.status(200).json({ text });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 };
+
