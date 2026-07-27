@@ -1,361 +1,605 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Sysconic – Payment Vouchers</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ComplianceHub</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  :root{
-    --bg:#0f1117;--surface:#181c27;--card:#1e2235;--border:#2a2f45;
-    --accent:#4f7eff;--accent2:#a78bfa;--green:#22c55e;--amber:#f59e0b;
-    --red:#ef4444;--text:#e2e8f0;--muted:#64748b;--radius:10px;
+  :root {
+    --navy: #14264a; --navy-light: #1e3a5f; --navy-soft: #e7edf3; --sidebar: #0f1c33; --sidebar-active: #1c2f52;
+    --ai: #f59e0b; --ai-soft: #fef3e2;
+    --pass: #15803d; --pass-bg: #dcfce7;
+    --fail: #b91c1c; --fail-bg: #fee2e2;
+    --amber-mid: #b45309; --amber-bg: #fef3e2;
+    --ink: #171717; --sub: #6b7280; --line: #e5e7eb; --paper: #f7f8fa;
   }
-  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
-
-  nav{display:flex;align-items:center;justify-content:space-between;padding:0 32px;height:60px;
-    background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}
-  .logo{font-weight:700;font-size:1.1rem;letter-spacing:.5px;}
-  .logo span{color:var(--accent);}
-  .nav-tabs{display:flex;gap:4px;}
-  .nav-tab{padding:6px 16px;border-radius:6px;border:none;background:transparent;color:var(--muted);
-    font-size:.875rem;font-weight:500;cursor:pointer;transition:all .15s;}
-  .nav-tab.active{background:var(--accent);color:#fff;}
-  .nav-tab:hover:not(.active){background:var(--border);color:var(--text);}
-  .user-badge{font-size:.8rem;color:var(--muted);background:var(--border);padding:4px 12px;border-radius:20px;}
-
-  .page{display:none;padding:32px;max-width:960px;margin:0 auto;}
-  .page.active{display:block;}
-  h2{font-size:1.25rem;font-weight:600;margin-bottom:24px;}
-  h2 small{font-size:.85rem;color:var(--muted);font-weight:400;margin-left:8px;}
-
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
-  .stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;}
-  .stat-label{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;}
-  .stat-value{font-size:1.8rem;font-weight:700;margin-top:6px;font-family:'JetBrains Mono',monospace;}
-  .stat-value.blue{color:var(--accent);}.stat-value.amber{color:var(--amber);}
-  .stat-value.green{color:var(--green);}.stat-value.red{color:var(--red);}
-
-  .table-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
-  table{width:100%;border-collapse:collapse;font-size:.875rem;}
-  thead{background:var(--surface);}
-  th{padding:12px 16px;text-align:left;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:600;}
-  td{padding:14px 16px;border-top:1px solid var(--border);vertical-align:middle;}
-  tr:hover td{background:rgba(79,126,255,.04);}
-
-  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.6px;}
-  .badge.pending{background:rgba(245,158,11,.15);color:var(--amber);}
-  .badge.approved{background:rgba(34,197,94,.15);color:var(--green);}
-  .badge.rejected{background:rgba(239,68,68,.15);color:var(--red);}
-
-  .approver-dots{display:flex;gap:6px;align-items:center;}
-  .dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-    font-size:.65rem;font-weight:700;border:2px solid transparent;}
-  .dot.ok{background:rgba(34,197,94,.2);color:var(--green);border-color:var(--green);}
-  .dot.wait{background:rgba(100,116,139,.15);color:var(--muted);border-color:var(--border);}
-  .dot.no{background:rgba(239,68,68,.2);color:var(--red);border-color:var(--red);}
-
-  .form-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:32px;}
-  .section-title{font-size:.7rem;color:var(--accent);font-weight:700;text-transform:uppercase;
-    letter-spacing:1.2px;margin:24px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border);}
-  .section-title:first-child{margin-top:0;}
-  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
-  .form-group{display:flex;flex-direction:column;gap:6px;}
-  .form-group.full{grid-column:1/-1;}
-  label{font-size:.8rem;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.6px;}
-  input,select,textarea{background:var(--surface);border:1px solid var(--border);color:var(--text);
-    border-radius:7px;padding:10px 14px;font-size:.9rem;font-family:'Inter',sans-serif;transition:border-color .15s;outline:none;}
-  input:focus,select:focus,textarea:focus{border-color:var(--accent);}
-  textarea{resize:vertical;min-height:90px;}
-  select option{background:var(--surface);}
-
-  .form-footer{margin-top:24px;display:flex;justify-content:flex-end;gap:12px;}
-  .btn-primary{padding:10px 28px;border-radius:8px;border:none;background:var(--accent);color:#fff;
-    font-weight:600;font-size:.9rem;cursor:pointer;transition:all .15s;}
-  .btn-primary:hover{background:#3d6be8;}
-  .btn-primary:disabled{background:var(--muted);cursor:not-allowed;}
-  .btn-ghost{padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:transparent;
-    color:var(--muted);font-size:.9rem;cursor:pointer;}
-  .btn-ghost:hover{border-color:var(--text);color:var(--text);}
-
-  .empty{text-align:center;padding:48px;color:var(--muted);}
-  .toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;
-    font-weight:600;font-size:.88rem;opacity:0;transform:translateY(10px);
-    transition:all .3s;pointer-events:none;z-index:999;}
-  .toast.success{background:var(--green);color:#000;}
-  .toast.error{background:var(--red);color:#fff;}
-  .toast.show{opacity:1;transform:translateY(0);}
-  .loading{color:var(--muted);font-size:.9rem;padding:32px;text-align:center;}
-
-  @media(max-width:640px){
-    .stats{grid-template-columns:1fr 1fr;}
-    .form-grid{grid-template-columns:1fr;}
-    nav{padding:0 16px;}
-    .page{padding:20px 16px;}
-  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Inter, sans-serif; background: var(--paper); color: var(--ink); }
+  input, textarea, select { color:#171717; background:#fff; font-family:inherit; }
+  a { text-decoration:none; color:inherit; }
+  .shell { display:flex; min-height:100vh; }
+  .sidebar { width:236px; background: var(--sidebar); color:#c7d3e0; flex-shrink:0; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; }
+  .sb-logo { padding:18px 18px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid rgba(255,255,255,.08); }
+  .sb-logo .mark { width:34px; height:34px; border-radius:8px; background: linear-gradient(135deg,var(--navy-light),var(--ai)); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:15px; flex-shrink:0; }
+  .sb-logo .name { font-weight:800; font-size:14.5px; color:#fff; line-height:1.2; }
+  .sb-logo .sub { font-size:10.5px; color:#8a96ab; }
+  .sb-section-label { padding:16px 18px 6px; font-size:10.5px; font-weight:700; letter-spacing:.08em; color:#5c6a82; text-transform:uppercase; }
+  .sb-nav { padding: 2px 10px; flex:1; overflow-y:auto; }
+  .sb-item { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; font-size:13.5px; font-weight:600; color:#aeb9cc; cursor:pointer; margin-bottom:2px; }
+  .sb-item:hover { background: rgba(255,255,255,.06); color:#fff; }
+  .sb-item.active { background: var(--sidebar-active); color:#fff; }
+  .sb-item .ic { width:18px; text-align:center; }
+  .sb-user { border-top:1px solid rgba(255,255,255,.08); padding:14px 18px; }
+  .sb-user .row1 { display:flex; align-items:center; gap:10px; }
+  .sb-avatar { width:32px; height:32px; border-radius:50%; background: var(--ai); color:#1c1c1c; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+  .sb-user .who { font-size:13px; font-weight:700; color:#fff; }
+  .sb-user .role { font-size:11px; color:#8a96ab; }
+  .sb-signout { display:block; font-size:12px; color:#8a96ab; margin-top:10px; cursor:pointer; background:none; border:none; padding:0; }
+  .sb-signout:hover { color:#fff; }
+  .sb-powered { font-size:10px; color:#4a5670; padding: 8px 18px 14px; }
+  .main { flex:1; min-width:0; }
+  .topbar { display:flex; align-items:center; justify-content:space-between; padding:20px 32px; border-bottom:1px solid var(--line); background:#fff; flex-wrap:wrap; gap:12px; }
+  .topbar h1 { font-size:22px; margin:0; color: var(--navy); font-weight:800; }
+  .content { padding: 24px 32px 60px; max-width:1180px; }
+  .btn { border:none; border-radius:9px; padding:10px 18px; font-weight:700; font-size:13.5px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .btn-primary { background: var(--navy); color:#fff; }
+  .btn-primary:hover { background: var(--navy-light); }
+  .btn-primary:disabled { opacity:.5; cursor:default; }
+  .btn-ghost { background:#fff; color: var(--navy); border:1px solid var(--line); }
+  .btn-sm { padding:7px 12px; font-size:12px; border-radius:7px; }
+  .btn-tint-amber { background: #fef3e2; color:#b45309; }
+  .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr)); gap:14px; margin-bottom:22px; }
+  .stat-card { background: var(--navy-soft); border-radius:12px; padding:16px 18px; }
+  .stat-card .label { font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5b7290; }
+  .stat-card .value { font-size:28px; font-weight:800; color: var(--navy); margin-top:4px; }
+  .stat-card .value.green { color: var(--pass); }
+  .stat-card .value.amber { color: var(--amber-mid); }
+  .stat-card .sub2 { font-size:12px; color:#6b7d94; margin-top:2px; }
+  .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:18px; flex-wrap:wrap; }
+  .search-box { flex:1; min-width:220px; position:relative; }
+  .search-box input { width:100%; padding:10px 12px 10px 34px; border:1px solid var(--line); border-radius:9px; font-size:13.5px; background:#fff; }
+  .search-box .ic { position:absolute; left:11px; top:50%; transform:translateY(-50%); color:var(--sub); }
+  select.filter-sel { border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-size:13px; background:#fff; }
+  .toggle-group { display:flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  .toggle-group button { border:none; background:#fff; color:var(--sub); font-size:13px; font-weight:700; padding:9px 14px; cursor:pointer; }
+  .toggle-group button.active { background: var(--navy); color:#fff; }
+  .card-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:16px; }
+  .qcard { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px; display:flex; flex-direction:column; gap:10px; }
+  .qcard .head { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .qcard .title { font-weight:700; font-size:15px; color: var(--navy); }
+  .qcard .site { font-size:12.5px; color:var(--sub); margin-top:-4px; }
+  .qcard .meta { font-size:12px; color:var(--sub); display:flex; gap:12px; }
+  .qcard .stats-row { display:flex; justify-content:space-between; border-top:1px solid var(--line); padding-top:10px; }
+  .qcard .stat-label { font-size:11px; color:var(--sub); }
+  .qcard .stat-val { font-weight:700; font-size:14.5px; color: var(--navy); }
+  .qcard .stat-val.green { color: var(--pass); }
+  .qcard .actions-row { display:flex; gap:6px; margin-top:2px; flex-wrap:wrap; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10.5px; font-weight:700; }
+  .pill-draft { background:#f3f4f6; color:#4b5563; }
+  .pill-pass { background: var(--pass-bg); color: var(--pass); }
+  .pill-amber { background: var(--amber-bg); color: var(--amber-mid); }
+  .pill-fail { background: var(--fail-bg); color: var(--fail); }
+  .list-row { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:12px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .muted { color: var(--sub); font-size: 13px; }
+  input[type=text], input[type=email], input[type=password], input[type=date] { border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:13.5px; width:100%; }
+  .field-sm { width:auto; min-width:140px; }
+  .err { background: var(--fail-bg); color: var(--fail); border-radius:8px; padding:10px 12px; font-size:13px; margin-bottom:12px; }
+  h2.section-title { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--sub); margin: 24px 0 10px; }
+  .login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; background: var(--paper); }
+  .login-card { width:100%; max-width:360px; background:#fff; border:1px solid var(--line); border-radius:12px; padding:32px; }
+  .item-row { padding:12px 16px; border-top:1px solid var(--line); }
+  .item-row.failed { background: var(--fail-bg); }
+  .item-row .prompt { flex:1; font-size:13.5px; min-width:200px; }
+  .tri-btn { width:42px; padding:7px 0; border-radius:8px; border:1px solid var(--line); background:#fff; font-weight:700; font-size:12px; color:#9ca3af; cursor:pointer; }
+  .tri-btn.on-ok { background: var(--pass-bg); border-color: var(--pass); color: var(--pass); }
+  .tri-btn.on-fail { background: var(--fail-bg); border-color: var(--fail); color: var(--fail); }
+  .tri-btn.on-na { background:#e5e7eb; border-color:#6b7280; color:#374151; }
+  .step-btn { width:30px; height:30px; border-radius:8px; border:1px solid var(--line); background:#fff; font-weight:700; cursor:pointer; }
+  .section-head { background: var(--navy); color:#fff; padding:8px 16px; font-weight:700; font-size:13px; letter-spacing:.03em; }
+  .sticky-runner-header { position:sticky; top:0; z-index:5; padding: 0 0 12px; background: var(--paper); }
+  .sticky-submit { position:sticky; bottom:0; left:0; background:#fff; border-top:1px solid var(--line); padding:14px 0; margin-top:12px; }
+  .photo-thumb { width:64px; height:64px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
+  .photo-tile { width:64px; height:64px; border:2px dashed var(--navy-light); color:var(--navy-light); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; cursor:pointer; text-align:center; }
+  .score-ring { width:88px; height:88px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:22px; flex-shrink:0; }
+  .link-navy { color: var(--navy-light); font-size:13px; }
+  .spinner-text { text-align:center; padding:60px; color:var(--sub); }
+  .help-fab { position:fixed; bottom:22px; right:22px; width:44px; height:44px; border-radius:50%; background: var(--ai); color:#1c1c1c; font-weight:800; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(0,0,0,.15); cursor:default; }
 </style>
 </head>
 <body>
+<div id="app"><div class="spinner-text">Loading ComplianceHub…</div></div>
+<script type="module">
+const SUPABASE_URL = "https://gnpddjfmgunwzbehynon.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImducGRkamZtZ3Vud3piZWh5bm9uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4MDYxNDIsImV4cCI6MjEwMDM4MjE0Mn0.hX9cI-bBAEA1gq2W1PYuMRoXrgcjfYxLDFArZeKJHOg";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-<nav>
-  <div class="logo">Sys<span>conic</span> PV</div>
-  <div class="nav-tabs">
-    <button class="nav-tab active" onclick="showTab('dashboard',this)">Dashboard</button>
-    <button class="nav-tab" onclick="showTab('submit',this)">Submit Voucher</button>
-  </div>
-  <div class="user-badge">Sysconic Team</div>
-</nav>
+const MS90_SECTIONS = [
+  ["Health & Safety Management", ["HSE Evacuation Plan is available","Risk Assessments available at the workplace","Work Instructions available at the workplace","Pre-works checklist completed (if required)","Fire Emergency Plan posted","Welfare facilities available at site","Emergency exits and pathways clear and easily accessible","Emergency contact information displayed"]],
+  ["Storage / Housekeeping", ["General neatness of working areas maintained","Work areas free from slip/trip hazards","Materials stored safely and securely","Safe means of access for high shelves / racks","Material stored in racks/bins","Work areas free from rubbish and obstructions","Racks free of rubbish and waste material"]],
+  ["Electrical Equipment / Works", ["Temporary electric wiring protected from damage by traffic","External temporary electric boxes weatherproof","Portable electrical equipment PAT tested","Electrical tools in good condition, not damaged","Cables and leads clear of access ways","RCD/ELCB installed and earthing system available at site","Competent electrician available at site","No overloading of sockets","Cable management available at site","Plugs, sockets, switches not damaged","Temporary outlet boxes properly mounted","Cables and leads not frayed, cut or defective","Cooking equipment cords and outlets in good condition"]],
+  ["HSE Training & Consultation", ["Induction training conducted for new employees","Weekly toolbox talks completed","Safety meetings held with staff","Staff inducted and trained on work activities","Fire drill training conducted","Monthly internal training completed","Any external training required identified"]],
+  ["First Aid Arrangement", ["First aid kit available and checked monthly","First aiders appointed and details posted","First aid kit as per OSHAD requirement","First aid kit available and clean"]],
+  ["Manual Handling", ["Manual handling training conducted for staff","Risk assessment for manual handling","Lifting equipment provided (trolleys, lifts, etc.)"]],
+  ["Hygiene & Sanitation", ["Handwashing facilities stocked with soap, sanitizer, towels","Employees practicing proper hygiene (uniforms, hairnets, gloves)","Food handling per food safety guidelines and regulations","Waste disposal practices in place","Food preparation surfaces sanitized regularly"]],
+  ["Fire Extinguisher Safety", ["Extinguishers available at the site","Extinguishers checked monthly","Firefighting equipment serviced as per plan","Fire evacuation muster points identified","Fire exit doors unobstructed, access clear","Emergency signage in place at site","No-smoking areas identified and enforced","Fire wardens trained and appointed"]],
+  ["Personal Protective Equipment", ["Correct PPE available and used at place of work","PPE in good condition and usable for all employees","Staff trained in use of PPE","Storage and cleaning facilities for PPE","PPE issued to staff and recorded","Jewellery (necklaces, rings, etc.) avoided","All workers have correct PPE at site"]],
+  ["Chemical & Hazardous Material Store", ["Relevant signage available in the store","Chemicals labelled appropriately, MSDS available","Proper housekeeping observed in store area","Hazardous material stored properly in ventilated area","MSDS available at workplace incl. chemical storage area"]],
+  ["Mechanical Devices & Cooking Equipment", ["Operators trained / licensed to operate equipment","Serviced to manufacturer's specification","Machine guards fitted where required","Warning lights fitted where needed","Fire extinguishers available at cooking area","Emergency switch available","Equipment placed at designated areas","Operators have 3rd-party certification where needed","No visible emissions (black smoke) from equipment"]],
+  ["Ladder / Access & Egress", ["Adequate ladders provided","Properly secured at top and bottom","Ladders inspected and maintained","Metal ladders not used around electrical hazards","Step ladders fully open with locking device","Proper handrails on all temporary stairs"]],
+  ["Cooking Area", ["Floors clean, dry, free from hazards, not slippery","Employees wearing appropriate PPE in cooking area","Cooking appliances in proper working condition","Waste bin available and disposed appropriately","Electrical cords and outlets without wear or damage","Cooking equipment and surfaces cleaned and sanitized","Ventilation / chimney removing smoke, steam, odors","Flammable materials stored away from heat sources"]],
+  ["Dining Area", ["Tables, chairs, furniture clean and well maintained","Fire exits and escape routes marked and unobstructed","Waste bins properly placed and regularly emptied","Food storage/display organized, labelled, temperature controlled"]],
+];
 
-<!-- DASHBOARD -->
-<div class="page active" id="page-dashboard">
-  <h2>Payment Vouchers <small id="dash-date"></small></h2>
-  <div class="stats">
-    <div class="stat"><div class="stat-label">Total</div><div class="stat-value blue" id="stat-total">–</div></div>
-    <div class="stat"><div class="stat-label">Pending</div><div class="stat-value amber" id="stat-pending">–</div></div>
-    <div class="stat"><div class="stat-label">Approved</div><div class="stat-value green" id="stat-approved">–</div></div>
-    <div class="stat"><div class="stat-label">Rejected</div><div class="stat-value red" id="stat-rejected">–</div></div>
-  </div>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Voucher #</th><th>Payee</th><th>Amount</th>
-          <th>Project</th><th>Approvals</th><th>Status</th>
-        </tr>
-      </thead>
-      <tbody id="voucher-table-body">
-        <tr><td colspan="6" class="loading">Loading vouchers…</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
+const MS33_SECTIONS = [
+  ["Personal Hygiene", [["Staff well groomed, wears PPE, min. 2 uniforms & safety shoes",5],["No staff with disease/infection or open wounds working",2],["Dressings / band-aids changed daily",4],["Staff washing & sanitising hands properly on re-entry / after toilets",5]]],
+  ["Kitchen", [["Raw vegetables/fruits washed properly before use",2],["Pulses/grains/rice cleaned and checked for foreign objects",2],["Colour-coded chopping boards used",2],["All colour-coded knives present (red/blue/green/yellow/white/brown)",3],["Salad vegetables disinfected at 100 PPM, sanitizing checklist used",4],["Staff trained in chlorine water prep; labelled container & spray bottle",3],["Chain mail gloves washed, sanitised, stored properly",2],["No food stored directly on the floor",2],["Food cooked above 75°C with records for every meal",3],["All foods always kept covered properly",3],["No food at room temperature over 30 minutes",2],["No hot food prepared more than 1 hr before service",2],["Salads prepared just in time, stored and served chilled",3],["Meat not out of chiller more than 20 minutes for marination",2],["Work tables cleaned and sanitized with chlorine sprays",2],["Bloated cans disposed; canned food transferred on opening",2],["Knives disinfected and stored properly after use",2],["Separate sanitation bucket for sponge cloths",2],["Blue sponge cloths in galley, no dirty dusters",2],["No extra cleaning equipment/chemicals stored in galley",3],["No signs of pests and flies",2],["Raw eggs not at room temperature over 30 minutes",1],["Exhaust hoods/filters cleaned weekly with records",3],["Garbage bins cleared and cleaned in time",2],["Fire blankets available",2],["Fire extinguishers available, accessible, checked",2],["All equipment in good working condition",3],["Tin cutters used and maintained clean",3],["Disposable gloves dispensed neatly, signage displayed",2],["Restricted entry signage on entrance door",2],["Probe thermometer used and functional",3],["Masala in clear lidded plastic containers",3],["Storage cabinets/racks clean after each shift",2],["Mise-en-place fridge racks, walls & gaskets clean",2],["No broken tiles in the galley",3],["Floor drains clean with detachable covers",2],["Grillers and hotplates cleaned regularly",2],["Pots and pans stored inverted or hanging",2],["Grills and drip pans cleaned once per shift",2],["Deep fat fryers drained/strained daily, covered",3],["Dishes and utensils washed and air dried",2],["Dry towels used to polish cutlery and crockery",2],["Galley staff aware of fire response",2],["Cups and glasses stored dry, stain-free, inverted",2],["Floors/walls/ceiling cleaned end of each shift",2],["Oven gloves available and cleaned regularly",2],["Separate plastic aprons for meat cutting & dishwashing",2],["Cleaning checklist displayed and signed",2],["Dishwasher at proper temperature with records",2],["Dishwasher trays cleaned and descaled",2],["Hair net dispenser available and replenished",2],["Separate handwash facility in galley with signage",2],["Paper towels available for hand drying",2],["Waste segregation (food/paper/plastic/tins) in galley",2],["Colour coding poster displayed prominently",2],["Separate tub/spray for cutting-board sanitization",3]]],
+  ["Chiller", [["Enough pallets for foodstuffs",2],["Foods on racks, not on the floor",3],["Proper thawing crates with drip trays per meat type",2],["Vegetables & fruits in clean plastic crates, no cartons",3],["Raw meats and ready-to-eat kept separate, covered, dated",3],["Separate marination containers, date marked",2],["Frozen foods thawed in chiller, defrosting log kept",3],["FEFO followed, all foods date marked with expiry",2],["Raw below cooked; poultry below other meat",3],["Eggs stored separately, no broken eggs",2],["Expired/spoiled foods disposed",3],["No food stored in garbage bags",2],["Temperature < 5°C, recorded 3-4x/day, chart displayed",2],["Containers, racks, walls, ceiling cleaned daily",2],["Emergency alarm working",2],["Cleaning schedule displayed and signed by CB",2]]],
+  ["Freezer", [["Enough pallets for foodstuffs",3],["Thawed foods not refrozen",2],["Frozen vegetables stored separately from meats",2],["All foods date marked with expiry dates",2],["Expired/spoiled foods disposed",2],["Foods on racks, not on the floor",2],["Different meats stored separately",2],["No food stored in garbage bags",2],["Food samples retained 72 hrs with logs",2],["Storage clean, defrosted regularly, well lit",2],["Emergency alarm working",2],["Cleaning schedule displayed and signed by CB",2],["Temperature at -18°C, recorded 3-4x/day, chart displayed",2]]],
+  ["Dry Stores", [["Enough pallets for foodstuffs",2],["FEFO followed, items date tagged",2],["Expired/spoiled foods disposed",2],["No signs of pests, roaches, flies",2],["No food stored in garbage bags",2],["Floor/walls/racks clean",2],["No food in cardboard boxes or cardboard rack lining",2],["Atta/maida/sugar covered, proper scoops provided",2],["Pulses/cereals in plastic jars or original packets",2],["No open packets kept in stores",2],["Cleaning checklist displayed, updated, signed by CB",2]]],
+  ["Mess Room", [["Tables disinfected with 100 PPM chlorine spray",2],["Refrigerated foods covered and date marked",2],["No signs of pests, roaches, flies",2],["No chipped or cracked crockery in use",2],["Bain-marie at 63°C, temperature log updated",2],["Yellow sponge cloths sanitized, stored in clean water",2],["Cold foods served below 5°C",2],["Furniture wiped down daily",3],["Drink dispenser cleaned daily, sanitized every 3 days",2],["Ice machine wiped daily, filter changed as needed",2],["Sauce bottles, salt & pepper shakers clean",3],["Area around tea/coffee machines clean",2],["Bain-marie clean, water changed frequently",2],["Floors/walls/ceiling clean at all times",2],["Cleaning schedule displayed and signed by CB",2],["Menu board available and updated",2],["Customer feedback register checked by CB",2]]],
+  ["Chemical Stores", [["PPE gloves/masks/safety glasses available",2],["Cleaning agents in original containers",2],["Updated MSDS for all cleaning agents",2],["Standard dilution chart available",2],["Cleaning schedule displayed and updated",2]]],
+  ["Accommodation", [["Toilets, basins, showers cleaned and disinfected daily",2],["Trash cans emptied daily, washed when required",2],["All beds made daily",2],["Beds changed on departure or every 7 days",2],["Rooms free from bed bugs and cockroaches",2],["Bridge & offices cleaned daily",2],["Stairways, corridors, handrails cleaned daily",2],["Linen & towels per POB, washed regularly",2],["Gym & recreation rooms cleaned daily",2],["All rooms swept and mopped daily",2],["Furniture wiped down daily",2],["Cleaning schedule displayed and updated",2]]],
+  ["Laundry", [["No kitchen dusters/oil rags in washing machines",2],["No kitchen dusters/oil rags in dryers",2],["Cool-down cycle before folding coveralls",2],["Sufficient washers & dryers in working condition",2],["Area & machines clean, schedule displayed",2],["Dryer filters cleaned after every cycle",2],["Updated MSDS for laundry cleaning agents",2],["Laundry man aware of fire response",2],["PPE used for filters and chemicals",2],["Dirty/clean segregated, checked for sharp items",2],["Detergent container kept covered",2]]],
+  ["Staff Facilities / Changing Room", [["Trash cans emptied daily, washed when required",2],["Floors swept and mopped daily",2],["Lockers wiped down, tops clear of debris",2],["Area maintained after each break",2],["Grease and finger marks removed daily",2]]],
+  ["Common Toilets & Bathrooms", [["Trash cans emptied daily, washed when required",3],["Basins, showers, bowls cleaned and disinfected",2],["Soap & paper towels replenished",3],["Cleaning schedule updated and displayed",3]]],
+  ["QHSE Compliance", [["Crew aware of drug/alcohol/mobile policy",2],["Quality of meals prepared by cook is good",5],["Performance of staff in current position",5],["Staff aware of emergency response and alarms",3],["Staff working 12 hrs/day, not overworked",2],["Food safety team formed, meeting regularly",2],["Allergens notification displayed",2],["Weekly/monthly menu followed",2],["Operation log book in use",2],["Crew aware of MLC compliance",2],["Crew aware of grievance addressal system",2]]],
+  ["Documents", [["Menu profile available with CB/chief cook",2],["Scope of service available with CB",2],["Meal sheet & visitor meal records up to date",2],["Slopchest stock and cash in hand tallied",2],["Company laptop & printer in good condition",2],["Responsibility matrix available with CB",2],["Receiving checklist up to date",2],["Medical records & training certificates onboard",2],["Incident reports, TBT records, hygiene audits maintained",2]]],
+];
 
-<!-- SUBMIT -->
-<div class="page" id="page-submit">
-  <h2>Submit Payment Voucher</h2>
-  <div class="form-card">
+let state = { user:null, profile:null, runnerAnswers:{}, runnerNotes:{}, runnerPhotos:{}, view:"grid", search:"", filter:"all" };
+const app = document.getElementById("app");
+const $ = (sel, root=document) => root.querySelector(sel);
+const esc = (s) => (s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString() : "";
+const today = () => new Date().toISOString().slice(0,10);
+function scoreTone(pct){ if(pct>=90) return {bg:"var(--pass-bg)",fg:"var(--pass)",pill:"pill-pass"}; if(pct>=75) return {bg:"var(--amber-bg)",fg:"var(--amber-mid)",pill:"pill-amber"}; return {bg:"var(--fail-bg)",fg:"var(--fail)",pill:"pill-fail"}; }
 
-    <div class="section-title">Payee Information</div>
-    <div class="form-grid">
-      <div class="form-group">
-        <label>Payee Name *</label>
-        <input type="text" id="f-payee" placeholder="e.g. Al Futtaim Electric"/>
+window.addEventListener("hashchange", route);
+function route() {
+  const hash = location.hash.slice(1) || "/";
+  if (!state.user) { renderLogin(); return; }
+  if (hash === "/") renderDashboard();
+  else if (hash === "/templates") renderTemplates();
+  else if (hash === "/actions") renderActions();
+  else if (hash.startsWith("/inspection/")) renderInspection(hash.split("/")[2]);
+  else renderDashboard();
+}
+
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  state.user = session?.user ?? null;
+  if (state.user) await loadProfile();
+  route();
+  sb.auth.onAuthStateChange((_e, session) => {
+    state.user = session?.user ?? null;
+    if (state.user) loadProfile().then(route); else route();
+  });
+}
+async function loadProfile() {
+  const { data } = await sb.from("profiles").select("full_name, role, org_id").eq("id", state.user.id).single();
+  state.profile = data;
+}
+async function signOut() { await sb.auth.signOut(); location.hash = "/"; }
+
+function renderLogin() {
+  app.innerHTML = `
+    <div class="login-wrap">
+      <div class="login-card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+          <div style="width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,var(--navy-light),var(--ai));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800">C</div>
+          <div style="font-weight:800;font-size:17px;color:var(--navy)">Compliance<span style="opacity:.5">Hub</span></div>
+        </div>
+        <p class="muted" id="login-sub" style="margin:0 0 20px">Sign in to your workspace</p>
+        <div id="login-error"></div>
+        <input type="text" id="lf-name" placeholder="Full name" style="display:none;margin-bottom:10px">
+        <input type="email" id="lf-email" placeholder="Email" style="margin-bottom:10px">
+        <input type="password" id="lf-pass" placeholder="Password (min 6 characters)" style="margin-bottom:16px">
+        <button class="btn btn-primary" id="lf-submit" style="width:100%;justify-content:center">Sign in</button>
+        <button id="lf-toggle" style="width:100%;background:none;border:none;margin-top:14px;cursor:pointer;color:var(--sub);font-size:13px">New here? Create an account</button>
       </div>
-      <div class="form-group">
-        <label>Amount *</label>
-        <input type="number" id="f-amount" placeholder="0.00" step="0.01"/>
-      </div>
-      <div class="form-group">
-        <label>Currency</label>
-        <select id="f-currency">
-          <option value="AED">AED – UAE Dirham</option>
-          <option value="USD">USD – US Dollar</option>
-          <option value="EUR">EUR – Euro</option>
-          <option value="GBP">GBP – British Pound</option>
-          <option value="INR">INR – Indian Rupee</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Payment Method</label>
-        <select id="f-payment-method">
-          <option value="Bank Transfer">Bank Transfer</option>
-          <option value="Cheque">Cheque</option>
-          <option value="Cash">Cash</option>
-          <option value="Online Payment">Online Payment</option>
-        </select>
+    </div>`;
+  let mode = "signin";
+  $("#lf-toggle").onclick = () => {
+    mode = mode==="signin" ? "signup" : "signin";
+    $("#login-sub").textContent = mode==="signin" ? "Sign in to your workspace" : "Create your account";
+    $("#lf-name").style.display = mode==="signup" ? "block" : "none";
+    $("#lf-submit").textContent = mode==="signin" ? "Sign in" : "Create account";
+    $("#lf-toggle").textContent = mode==="signin" ? "New here? Create an account" : "Already have an account? Sign in";
+  };
+  $("#lf-submit").onclick = async () => {
+    $("#login-error").innerHTML = "";
+    const email = $("#lf-email").value, password = $("#lf-pass").value;
+    const { error } = mode==="signin"
+      ? await sb.auth.signInWithPassword({ email, password })
+      : await sb.auth.signUp({ email, password, options:{ data:{ full_name: $("#lf-name").value } } });
+    if (error) { $("#login-error").innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+    state.user = (await sb.auth.getUser()).data.user;
+    await loadProfile();
+    location.hash = "/"; route();
+  };
+}
+
+function shell(active, title, topRightHtml, bodyHtml) {
+  const initials = (state.profile?.full_name || state.user.email || "?").trim()[0]?.toUpperCase() || "?";
+  const navItems = [
+    ["/", "layout-dashboard", "Dashboard"],
+    ["/templates", "clipboard-list", "Templates"],
+    ["/actions", "triangle-alert", "Corrective Actions"],
+  ];
+  app.innerHTML = `
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sb-logo">
+          <div class="mark">C</div>
+          <div><div class="name">ComplianceHub</div><div class="sub">AHM Marine</div></div>
+        </div>
+        <div class="sb-section-label">Workspace</div>
+        <nav class="sb-nav">
+          ${navItems.map(([href,ic,label]) => `<a href="#${href}" class="sb-item ${active===href?"active":""}"><i data-lucide="${ic}" class="ic" style="width:16px;height:16px"></i>${label}</a>`).join("")}
+        </nav>
+        <div class="sb-user">
+          <div class="row1">
+            <div class="sb-avatar">${initials}</div>
+            <div><div class="who">${esc(state.profile?.full_name ?? state.user.email)}</div><div class="role">${esc(state.profile?.role ?? "")}</div></div>
+          </div>
+          <button class="sb-signout" id="sb-signout-btn" style="display:flex;align-items:center;gap:5px"><i data-lucide="log-out" style="width:13px;height:13px"></i>Sign out</button>
+        </div>
+        <div class="sb-powered">Powered by ComplianceHub AI</div>
+      </aside>
+      <main class="main">
+        <div class="topbar"><h1>${title}</h1>${topRightHtml || ""}</div>
+        <div class="content">${bodyHtml}</div>
+      </main>
+    </div>
+    <div class="help-fab"><i data-lucide="help-circle" style="width:20px;height:20px"></i></div>`;
+  $("#sb-signout-btn").onclick = signOut;
+  if (window.lucide) lucide.createIcons();
+}
+
+async function renderDashboard() {
+  shell("/", "Dashboard", "", `<div class="spinner-text">Loading…</div>`);
+  const [{ data: templates }, { data: inspections }, { count: openActions }] = await Promise.all([
+    sb.from("templates").select("id, code, name, revision, scoring_type").order("code"),
+    sb.from("inspections").select("id, status, score_pct, started_at, submitted_at, template_id, site_id, templates(code,name), sites(name)").order("started_at",{ascending:false}).limit(60),
+    sb.from("corrective_actions").select("id",{count:"exact",head:true}).in("status",["open","in_progress"]),
+  ]);
+  const list = inspections ?? [];
+  const submitted = list.filter(i => i.status !== "in_progress");
+  const avgScore = submitted.length ? Math.round(submitted.reduce((n,i)=>n+(i.score_pct||0),0)/submitted.length) : 0;
+
+  const topRight = `<button class="btn btn-primary" id="new-insp-btn"><i data-lucide="plus" style="width:15px;height:15px"></i>New inspection</button>`;
+  const statsHtml = `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Total Inspections</div><div class="value">${list.length}</div><div class="sub2">${submitted.length} submitted</div></div>
+      <div class="stat-card"><div class="label">Avg Compliance</div><div class="value green">${avgScore}%</div></div>
+      <div class="stat-card"><div class="label">Open Actions</div><div class="value amber">${openActions ?? 0}</div></div>
+      <div class="stat-card"><div class="label">Templates</div><div class="value">${(templates??[]).length}</div><div class="sub2">Active</div></div>
+    </div>
+    <div class="toolbar">
+      <div class="search-box"><i data-lucide="search" class="ic" style="width:15px;height:15px"></i><input type="text" id="dash-search" placeholder="Search inspections..."></div>
+      <select class="filter-sel" id="dash-filter">
+        <option value="all">All status</option>
+        <option value="in_progress">In progress</option>
+        <option value="submitted">Submitted</option>
+      </select>
+      <div class="toggle-group">
+        <button id="view-grid" class="${state.view==="grid"?"active":""}" style="display:flex;align-items:center;gap:5px"><i data-lucide="layout-grid" style="width:14px;height:14px"></i>Grid</button>
+        <button id="view-list" class="${state.view==="list"?"active":""}" style="display:flex;align-items:center;gap:5px"><i data-lucide="list" style="width:14px;height:14px"></i>List</button>
       </div>
     </div>
+    <div id="insp-results"></div>
+    <h2 class="section-title" style="margin-top:28px">Templates</h2>
+    <div id="templates-list"></div>
+  `;
+  shell("/", "Dashboard", topRight, statsHtml);
+  if (window.lucide) lucide.createIcons();
 
-    <div class="section-title">Invoice Details</div>
-    <div class="form-grid">
-      <div class="form-group">
-        <label>Invoice Number</label>
-        <input type="text" id="f-invoice" placeholder="INV-XXXX"/>
-      </div>
-      <div class="form-group">
-        <label>Payment Due Date</label>
-        <input type="date" id="f-due"/>
-      </div>
-      <div class="form-group">
-        <label>Category</label>
-        <select id="f-category">
-          <option>Equipment</option>
-          <option>Materials</option>
-          <option>Subcontract</option>
-          <option>Utilities</option>
-          <option>Travel</option>
-          <option>Professional Services</option>
-          <option>Maintenance</option>
-          <option>Other</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Project</label>
-        <select id="f-project">
-          <option value="">Loading projects from Zoho...</option>
-        </select>
-      </div>
-    </div>
+  $("#new-insp-btn").onclick = () => location.hash = "/templates";
+  $("#dash-search").oninput = (e) => { state.search = e.target.value.toLowerCase(); renderResults(); };
+  $("#dash-filter").onchange = (e) => { state.filter = e.target.value; renderResults(); };
+  $("#view-grid").onclick = () => { state.view="grid"; renderDashboard(); };
+  $("#view-list").onclick = () => { state.view="list"; renderDashboard(); };
 
-    <div class="section-title">Submission Details</div>
-    <div class="form-grid">
-      <div class="form-group">
-        <label>Submitted By *</label>
-        <input type="text" id="f-submitted-by" placeholder="Your name"/>
-      </div>
-      <div class="form-group">
-        <label>Submission Date</label>
-        <input type="text" id="f-submission-date" readonly style="color:var(--muted)"/>
-      </div>
-      <div class="form-group full">
-        <label>Description / Remarks</label>
-        <textarea id="f-remarks" placeholder="Brief description of what this payment is for…"></textarea>
-      </div>
-    </div>
+  $("#templates-list").innerHTML = (templates??[]).map(t => `
+    <div class="card row">
+      <div><div style="font-weight:600">${esc(t.name)}</div><div class="muted">${esc(t.code)} · Rev ${esc(t.revision)} · <span style="text-transform:uppercase;font-weight:600">${esc(t.scoring_type)}</span></div></div>
+      <a href="#/templates" class="btn btn-ghost btn-sm">View</a>
+    </div>`).join("") || `<div class="card muted">No templates found.</div>`;
 
-  </div>
-  <div class="form-footer" style="margin-top:20px;">
-    <button class="btn-ghost" onclick="clearForm()">Clear</button>
-    <button class="btn-primary" id="submit-btn" onclick="submitVoucher()">Submit for Approval →</button>
-  </div>
-</div>
+  function renderResults() {
+    let filtered = list;
+    if (state.filter !== "all") filtered = filtered.filter(i => i.status === state.filter);
+    if (state.search) filtered = filtered.filter(i =>
+      (i.templates?.code||"").toLowerCase().includes(state.search) ||
+      (i.sites?.name||"").toLowerCase().includes(state.search));
 
-<div class="toast" id="toast"></div>
+    const el = $("#insp-results");
+    if (!filtered.length) { el.innerHTML = `<div class="card muted">No inspections match. Start one from Templates below.</div>`; return; }
 
-<script>
-  document.getElementById('dash-date').textContent =
-    new Date().toLocaleDateString('en-AE', {month:'long', year:'numeric'});
-  document.getElementById('f-submission-date').value =
-    new Date().toLocaleDateString('en-AE', {day:'2-digit', month:'short', year:'numeric'});
-
-  function showTab(tab, btn) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-    document.getElementById('page-' + tab).classList.add('active');
-    btn.classList.add('active');
-    if (tab === 'dashboard') loadVouchers();
+    if (state.view === "grid") {
+      el.innerHTML = `<div class="card-grid">` + filtered.map(i => {
+        const isDraft = i.status === "in_progress";
+        const tone = scoreTone(i.score_pct ?? 0);
+        const pill = isDraft ? `<span class="pill pill-draft">In progress</span>` : `<span class="pill ${tone.pill}">${Math.round(i.score_pct??0)}%</span>`;
+        return `<div class="qcard">
+          <div class="head"><div><div class="title">${esc(i.templates?.code)}</div><div class="site">${esc(i.sites?.name)}</div></div>${pill}</div>
+          <div class="meta"><span style="display:flex;align-items:center;gap:5px"><i data-lucide="calendar" style="width:13px;height:13px"></i>${fmtDate(i.started_at)}</span></div>
+          <div class="stats-row">
+            <div><div class="stat-label">Status</div><div class="stat-val">${isDraft?"Draft":"Submitted"}</div></div>
+            <div><div class="stat-label">Score</div><div class="stat-val ${!isDraft?"green":""}">${isDraft?"—":Math.round(i.score_pct??0)+"%"}</div></div>
+          </div>
+          <div class="actions-row">
+            <a href="#/inspection/${i.id}" class="btn btn-sm btn-tint-amber" style="display:inline-flex;align-items:center;gap:5px"><i data-lucide="pencil" style="width:13px;height:13px"></i>${isDraft?"Continue":"View"}</a>
+          </div>
+        </div>`;
+      }).join("") + `</div>`;
+    } else {
+      el.innerHTML = filtered.map(i => {
+        const isDraft = i.status === "in_progress";
+        const tone = scoreTone(i.score_pct ?? 0);
+        const pill = isDraft ? `<span class="pill pill-draft">In progress</span>` : `<span class="pill ${tone.pill}">${Math.round(i.score_pct??0)}%</span>`;
+        return `<a href="#/inspection/${i.id}" class="list-row">
+          <div><div style="font-weight:600;font-size:13.5px">${esc(i.templates?.code)} — ${esc(i.sites?.name)}</div><div class="muted">${fmtDate(i.started_at)}</div></div>
+          ${pill}
+        </a>`;
+      }).join("");
+    }
+    if (window.lucide) lucide.createIcons();
   }
+  renderResults();
+}
 
-  function statusDot(status, initial, fullName) {
-    const cls = status === 'approve' ? 'ok' : status === 'reject' ? 'no' : 'wait';
-    return `<div class="dot ${cls}" title="${fullName}">${initial}</div>`;
-  }
+async function renderTemplates() {
+  shell("/templates", "Templates", "", `<div class="spinner-text">Loading…</div>`);
+  const { data: templates } = await sb.from("templates").select("id, code, name, revision, scoring_type").order("code");
+  const body = `<div class="card-grid">` + (templates??[]).map(t => `
+    <div class="qcard">
+      <div class="head"><div><div class="title">${esc(t.name)}</div><div class="site">${esc(t.code)} · Rev ${esc(t.revision)}</div></div><span class="pill ${t.scoring_type==="scored"?"pill-amber":"pill-draft"}">${esc(t.scoring_type)}</span></div>
+      <button class="btn btn-primary" data-tid="${t.id}" id="start-${t.id}">Start inspection</button>
+      <div id="site-wrap-${t.id}"></div>
+    </div>`).join("") + `</div>`;
+  shell("/templates", "Templates", "", body);
+  if (window.lucide) lucide.createIcons();
 
-  function loadVouchers() {
-    fetch('/api/vouchers')
-      .then(r => r.json())
-      .then(data => {
-        const body = document.getElementById('voucher-table-body');
-        document.getElementById('stat-total').textContent    = data.length;
-        document.getElementById('stat-pending').textContent  = data.filter(v => v.status === 'pending').length;
-        document.getElementById('stat-approved').textContent = data.filter(v => v.status === 'approved').length;
-        document.getElementById('stat-rejected').textContent = data.filter(v => v.status === 'rejected').length;
-
-        if (!data.length) {
-          body.innerHTML = '<tr><td colspan="6" class="empty">No vouchers yet. Submit one to get started.</td></tr>';
-          return;
+  (templates??[]).forEach(t => {
+    $(`#start-${t.id}`).onclick = () => {
+      const wrap = $(`#site-wrap-${t.id}`);
+      wrap.innerHTML = `<div style="margin-top:10px"><input type="text" placeholder="Site / location name" id="site-input-${t.id}" style="margin-bottom:8px"><button class="btn btn-primary btn-sm" id="go-${t.id}">Go</button> <button class="btn btn-ghost btn-sm" id="cancel-${t.id}">Cancel</button><div class="err" id="err-${t.id}" style="display:none;margin-top:8px"></div></div>`;
+      $(`#cancel-${t.id}`).onclick = () => { wrap.innerHTML = ""; };
+      $(`#go-${t.id}`).onclick = async () => {
+        const name = $(`#site-input-${t.id}`).value.trim();
+        if (!name) { $(`#err-${t.id}`).style.display="block"; $(`#err-${t.id}`).textContent="Enter a site name"; return; }
+        let { data: site } = await sb.from("sites").select("id").eq("org_id", state.profile.org_id).ilike("name", name).maybeSingle();
+        if (!site) {
+          const { data, error } = await sb.from("sites").insert({ org_id: state.profile.org_id, name }).select("id").single();
+          if (error) { $(`#err-${t.id}`).style.display="block"; $(`#err-${t.id}`).textContent=error.message; return; }
+          site = data;
         }
-
-        body.innerHTML = data.map(v => `
-          <tr>
-            <td><span style="font-family:monospace;color:var(--accent)">PV-${String(v.id).padStart(4,'0')}</span></td>
-            <td>${v.payee}</td>
-            <td style="font-family:monospace">${v.currency || 'AED'} ${parseFloat(v.amount).toLocaleString('en-AE',{minimumFractionDigits:2})}</td>
-            <td style="font-size:.82rem;color:var(--muted)">${v.project}</td>
-            <td><div class="approver-dots">
-              ${statusDot(v.rajesh_status,'R','Rajesh')}
-              ${statusDot(v.ajith_status,'A','Ajith')}
-              ${statusDot(v.nishant_status,'N','Nishant')}
-            </div></td>
-            <td><span class="badge ${v.status}">${v.status}</span></td>
-          </tr>
-        `).join('');
-      })
-      .catch(() => {
-        document.getElementById('voucher-table-body').innerHTML =
-          '<tr><td colspan="6" class="empty">Could not load vouchers.</td></tr>';
-      });
-  }
-
-  function submitVoucher() {
-    const payee  = document.getElementById('f-payee').value.trim();
-    const amount = document.getElementById('f-amount').value.trim();
-    const submittedBy = document.getElementById('f-submitted-by').value.trim();
-    if (!payee || !amount) { showToast('Please fill in Payee and Amount.', 'error'); return; }
-    if (!submittedBy) { showToast('Please enter your name in Submitted By.', 'error'); return; }
-
-    const btn = document.getElementById('submit-btn');
-    btn.disabled = true;
-    btn.textContent = 'Submitting…';
-
-    const payload = {
-      payee,
-      amount:           parseFloat(amount),
-      currency:         document.getElementById('f-currency').value,
-      payment_method:   document.getElementById('f-payment-method').value,
-      category:         document.getElementById('f-category').value,
-      project:          document.getElementById('f-project').value,
-      invoice_no:       document.getElementById('f-invoice').value,
-      due_date:         document.getElementById('f-due').value,
-      remarks:          document.getElementById('f-remarks').value,
-      submitted_by:     submittedBy,
+        const { data: insp, error: iErr } = await sb.from("inspections").insert({
+          org_id: state.profile.org_id, template_id: t.id, site_id: site.id, inspector_id: state.user.id, status:"in_progress",
+        }).select("id").single();
+        if (iErr) { $(`#err-${t.id}`).style.display="block"; $(`#err-${t.id}`).textContent=iErr.message; return; }
+        location.hash = `/inspection/${insp.id}`;
+      };
     };
+  });
+}
 
-    fetch('/api/submit', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        showToast(`✓ Voucher PV-${String(data.voucher_id).padStart(4,'0')} submitted! Approvers notified.`, 'success');
-        clearForm();
-        setTimeout(() => showTab('dashboard', document.querySelector('.nav-tab')), 1500);
-      } else {
-        showToast('Submission failed. Try again.', 'error');
-      }
-    })
-    .catch(() => showToast('Network error. Is the server running?', 'error'))
-    .finally(() => { btn.disabled = false; btn.textContent = 'Submit for Approval →'; });
+async function renderInspection(id) {
+  shell("/", "Inspection", "", `<div class="spinner-text">Loading…</div>`);
+  const { data: insp } = await sb.from("inspections")
+    .select("id,status,score_pct,marks_attained,marks_max,count_pass,count_fail,count_na,started_at,submitted_at,template_id,site_id,org_id,templates(code,name,scoring_type),sites(name)")
+    .eq("id", id).single();
+  if (!insp) { shell("/", "Inspection", "", `<div class="card">Inspection not found.</div>`); return; }
+  const { data: sections } = await sb.from("template_sections")
+    .select("id,title,sort_order,template_items(id,prompt,sort_order,max_marks)")
+    .eq("template_id", insp.template_id).order("sort_order");
+  const ordered = (sections??[]).sort((a,b)=>a.sort_order-b.sort_order).map(s => ({...s, template_items:[...s.template_items].sort((a,b)=>a.sort_order-b.sort_order)}));
+  if (insp.status !== "in_progress") { renderInspectionSummary(insp, ordered); return; }
+  renderRunner(insp, ordered);
+}
+
+function renderRunner(insp, sections) {
+  const scored = insp.templates.scoring_type === "scored";
+  state.runnerAnswers = {}; state.runnerNotes = {}; state.runnerPhotos = {};
+  const allItems = sections.flatMap(s => s.template_items);
+  allItems.forEach(it => state.runnerAnswers[it.id] = scored ? it.max_marks : null);
+  const maxMarks = allItems.reduce((n,it)=>n+(it.max_marks??0),0);
+
+  function headerRight() {
+    const liveAtt = allItems.reduce((n,it)=>n+(state.runnerAnswers[it.id]||0),0);
+    const answered = allItems.filter(it => state.runnerAnswers[it.id] !== null).length;
+    return scored
+      ? `<div style="text-align:right"><div style="font-size:20px;font-weight:800;color:var(--navy)">${liveAtt}<span style="color:var(--sub);font-size:12px"> /${maxMarks}</span></div><div style="font-size:11px;font-weight:600;color:var(--sub)">${Math.round((liveAtt/maxMarks)*100)}%</div></div>`
+      : `<div style="text-align:right"><div style="font-size:20px;font-weight:800;color:var(--navy)">${answered}<span style="color:var(--sub);font-size:12px"> /${allItems.length}</span></div><div style="font-size:11px;font-weight:600;color:var(--sub)">ANSWERED</div></div>`;
   }
 
-  function clearForm() {
-    ['f-payee','f-invoice','f-due','f-remarks','f-submitted-by','f-amount'].forEach(id => {
-      document.getElementById(id).value = '';
+  function itemRow(it) {
+    const val = state.runnerAnswers[it.id];
+    const failed = scored ? val < it.max_marks : val === "fail";
+    const notes = state.runnerNotes[it.id] || "";
+    const photos = state.runnerPhotos[it.id] || [];
+    const controls = scored
+      ? `<div style="display:flex;align-items:center;gap:8px">
+          <button class="step-btn" data-act="dec" data-id="${it.id}">−</button>
+          <span style="font-weight:800;font-size:13.5px;min-width:44px;text-align:center;color:${failed?"var(--fail)":"var(--pass)"}">${val}<span style="color:var(--sub);font-weight:600"> /${it.max_marks}</span></span>
+          <button class="step-btn" data-act="inc" data-id="${it.id}" data-max="${it.max_marks}">+</button>
+        </div>`
+      : `<div style="display:flex;gap:6px">${["ok","fail","na"].map(v=>`<button class="tri-btn ${val===v?"on-"+v:""}" data-act="tri" data-id="${it.id}" data-v="${v}">${v==="ok"?"✓":v==="fail"?"✕":"N/A"}</button>`).join("")}</div>`;
+    const findingArea = failed ? `
+      <div style="margin-top:8px">
+        <input type="text" placeholder="Finding note — what was observed?" data-note="${it.id}" value="${esc(notes)}" style="margin-bottom:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${photos.map(url => `<div style="position:relative"><img src="${url}" class="photo-thumb"><button data-rmphoto="${it.id}" data-url="${esc(url)}" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#fff;border:1px solid var(--fail);color:var(--fail);font-weight:700;font-size:11px;cursor:pointer">×</button></div>`).join("")}
+          <label class="photo-tile" style="display:flex;flex-direction:column;align-items:center;gap:2px"><i data-lucide="camera" style="width:16px;height:16px"></i>Photo<input type="file" accept="image/*" capture="environment" data-photo="${it.id}" style="display:none"></label>
+        </div>
+      </div>` : "";
+    return `<div class="item-row ${failed?"failed":""}">
+      <div class="row" style="gap:12px"><div class="prompt">${esc(it.prompt)}</div>${controls}</div>
+      ${findingArea}
+    </div>`;
+  }
+
+  function renderBody() {
+    const body = `
+      <div class="sticky-runner-header">
+        <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0;border-left:4px solid var(--navy)">
+          <div><div style="font-weight:800;color:var(--navy)">${esc(insp.templates.code)} — ${esc(insp.templates.name)}</div><div class="muted">${esc(insp.sites.name)}</div></div>
+          ${headerRight()}
+        </div>
+      </div>
+      ${sections.map(s => `<div class="card" style="padding:0;overflow:hidden"><div class="section-head">${esc(s.title)}</div>${s.template_items.map(itemRow).join("")}</div>`).join("")}
+      <div class="sticky-submit">
+        <button class="btn btn-primary" id="submit-btn">Complete inspection</button>
+        <span class="err" id="runner-err" style="display:none;margin-left:10px"></span>
+      </div>`;
+    shell("/", `${insp.templates.code} — ${insp.sites.name}`, "", body);
+    wireEvents();
+  }
+
+  function wireEvents() {
+    document.querySelectorAll("[data-act]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.id, act = btn.dataset.act;
+        if (act==="tri") state.runnerAnswers[id] = state.runnerAnswers[id]===btn.dataset.v ? null : btn.dataset.v;
+        else if (act==="inc") state.runnerAnswers[id] = Math.min(parseInt(btn.dataset.max), (state.runnerAnswers[id]||0)+1);
+        else if (act==="dec") state.runnerAnswers[id] = Math.max(0, (state.runnerAnswers[id]||0)-1);
+        renderBody();
+      };
     });
-    document.getElementById('f-currency').value = 'AED';
-    document.getElementById('f-payment-method').value = 'Bank Transfer';
-    document.getElementById('f-submission-date').value =
-      new Date().toLocaleDateString('en-AE', {day:'2-digit', month:'short', year:'numeric'});
+    document.querySelectorAll("[data-note]").forEach(inp => inp.oninput = () => state.runnerNotes[inp.dataset.note] = inp.value);
+    document.querySelectorAll("[data-photo]").forEach(inp => {
+      inp.onchange = async () => {
+        const file = inp.files[0]; if (!file) return;
+        const itemId = inp.dataset.photo;
+        const ext = file.name.split(".").pop() || "jpg";
+        const path = `${insp.org_id}/${insp.id}/${itemId}-${Date.now()}.${ext}`;
+        const { error } = await sb.storage.from("inspection-photos").upload(path, file, { contentType: file.type||"image/jpeg" });
+        if (error) { $("#runner-err").style.display="block"; $("#runner-err").textContent="Photo upload failed: "+error.message; return; }
+        const { data: pub } = sb.storage.from("inspection-photos").getPublicUrl(path);
+        state.runnerPhotos[itemId] = [...(state.runnerPhotos[itemId]||[]), pub.publicUrl];
+        renderBody();
+      };
+    });
+    document.querySelectorAll("[data-rmphoto]").forEach(btn => {
+      btn.onclick = () => { const id=btn.dataset.rmphoto; state.runnerPhotos[id]=(state.runnerPhotos[id]||[]).filter(u=>u!==btn.dataset.url); renderBody(); };
+    });
+    $("#submit-btn").onclick = submit;
   }
 
-  function showToast(msg, type='success') {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = `toast ${type} show`;
-    setTimeout(() => t.classList.remove('show'), 4000);
+  async function submit() {
+    $("#submit-btn").disabled = true;
+    let pass=0, fail=0, na=0, att=0;
+    const rows = allItems.map(it => {
+      const val = state.runnerAnswers[it.id];
+      const photoUrls = state.runnerPhotos[it.id] || [];
+      if (scored) { att += val; return { inspection_id: insp.id, item_id: it.id, marks_attained: val, note: state.runnerNotes[it.id]||null, photo_urls: photoUrls }; }
+      const v = val ?? "na";
+      if (v==="ok") pass++; else if (v==="fail") fail++; else na++;
+      return { inspection_id: insp.id, item_id: it.id, result: v, note: state.runnerNotes[it.id]||null, photo_urls: photoUrls };
+    });
+    const { error: rErr } = await sb.from("inspection_responses").insert(rows);
+    if (rErr) { $("#runner-err").style.display="block"; $("#runner-err").textContent=rErr.message; $("#submit-btn").disabled=false; return; }
+    const scorePct = scored ? (att/maxMarks)*100 : (pass+fail===0?100:(pass/(pass+fail))*100);
+    const { error: uErr } = await sb.from("inspections").update({
+      status:"submitted", submitted_at:new Date().toISOString(), score_pct:Math.round(scorePct*100)/100,
+      marks_attained: scored?att:null, marks_max: scored?maxMarks:null, count_pass:pass, count_fail:fail, count_na:na,
+    }).eq("id", insp.id);
+    if (uErr) { $("#runner-err").style.display="block"; $("#runner-err").textContent=uErr.message; $("#submit-btn").disabled=false; return; }
+    location.hash = `/inspection/${insp.id}`; route();
+  }
+  renderBody();
+}
+
+async function renderInspectionSummary(insp, sections) {
+  const { data: responses } = await sb.from("inspection_responses").select("item_id,result,marks_attained,note,photo_urls").eq("inspection_id", insp.id);
+  const byItem = new Map((responses??[]).map(r=>[r.item_id,r]));
+  const scored = insp.templates.scoring_type === "scored";
+  const findings = [];
+  for (const s of sections) for (const it of s.template_items) {
+    const r = byItem.get(it.id); if (!r) continue;
+    if (!scored && r.result==="fail") findings.push({section:s.title,prompt:it.prompt,note:r.note,photos:r.photo_urls||[]});
+    if (scored && r.marks_attained!=null && r.marks_attained<it.max_marks) findings.push({section:s.title,prompt:it.prompt,note:r.note,lost:it.max_marks-r.marks_attained,photos:r.photo_urls||[]});
+  }
+  const pct = Math.round(insp.score_pct ?? 0);
+  const tone = scoreTone(pct);
+  const body = `
+    <div class="card row" style="align-items:flex-start">
+      <div class="score-ring" style="background:${tone.bg};color:${tone.fg}">${pct}%</div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-weight:800;font-size:17px;color:var(--navy)">${esc(insp.templates.code)} — ${esc(insp.templates.name)}</div>
+        <div class="muted">${esc(insp.sites.name)} · submitted ${fmtDate(insp.submitted_at)}</div>
+        <div style="margin-top:8px;font-size:13.5px">${scored?`${insp.marks_attained} of ${insp.marks_max} marks`:`${insp.count_pass} acceptable · ${insp.count_fail} not acceptable · ${insp.count_na} N/A`}</div>
+        <button class="btn btn-ghost btn-sm" id="dup-btn" style="margin-top:10px">Duplicate as new inspection</button>
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:10px">Findings (${findings.length})</div>
+      ${findings.length===0 ? `<div style="color:var(--pass);font-weight:600;font-size:13.5px">Clean inspection — no findings. ✓</div>` :
+        findings.map(f => `<div style="padding:10px 0;border-top:1px solid var(--line)">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sub)">${esc(f.section)}${f.lost?` · −${f.lost} mark${f.lost>1?"s":""}`:""}</div>
+          <div style="font-weight:600;font-size:13.5px">${esc(f.prompt)}</div>
+          ${f.note?`<div class="muted">Note: ${esc(f.note)}</div>`:""}
+          ${f.photos.length?`<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${f.photos.map(url=>`<a href="${url}" target="_blank"><img src="${url}" class="photo-thumb" style="width:80px;height:80px"></a>`).join("")}</div>`:""}
+        </div>`).join("") + `<a href="#/actions" class="btn btn-primary btn-sm" style="display:inline-block;margin-top:14px">View corrective actions →</a>`
+      }
+    </div>`;
+  shell("/", `${insp.templates.code} Summary`, "", body);
+  $("#dup-btn").onclick = async () => {
+    const { data, error } = await sb.from("inspections").insert({ org_id: insp.org_id, template_id: insp.template_id, site_id: insp.site_id, inspector_id: state.user.id, status:"in_progress" }).select("id").single();
+    if (!error) { location.hash = `/inspection/${data.id}`; route(); }
+  };
+}
+
+async function renderActions() {
+  shell("/actions", "Corrective Actions", "", `<div class="spinner-text">Loading…</div>`);
+  const { data: actions } = await sb.from("corrective_actions")
+    .select("id,title,finding,owner_name,due_date,status,closed_at,created_at,sites(name),inspection_responses(photo_urls)")
+    .order("created_at",{ascending:false});
+  const list = actions ?? [];
+  const open = list.filter(a=>a.status==="open"||a.status==="in_progress");
+  const closed = list.filter(a=>a.status==="closed");
+  const t = today();
+
+  function actionCard(a) {
+    const overdue = a.status!=="closed" && a.due_date < t;
+    const border = a.status==="closed" ? "var(--pass)" : overdue ? "var(--fail)" : "var(--navy-light)";
+    const rawPhotos = Array.isArray(a.inspection_responses) ? a.inspection_responses[0]?.photo_urls : a.inspection_responses?.photo_urls;
+    const photo = (rawPhotos||[])[0];
+    return `<div class="card" style="border-left:4px solid ${border};display:flex;gap:12px;align-items:flex-start">
+      ${photo ? `<a href="${photo}" target="_blank"><img src="${photo}" class="photo-thumb" style="flex-shrink:0"></a>` : ""}
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--sub)">${esc(a.sites?.name)}</div>
+        <div style="font-weight:600;font-size:13.5px">${esc(a.title)}</div>
+        ${a.finding?`<div class="muted">Finding: ${esc(a.finding)}</div>`:""}
+        <div style="font-size:12px;margin-top:4px;font-weight:500;color:${a.status==="closed"?"var(--pass)":overdue?"var(--fail)":"var(--sub)"}">Due ${a.due_date}${overdue?" · OVERDUE":""}${a.status==="closed"&&a.closed_at?` · Closed ${new Date(a.closed_at).toLocaleDateString()}`:""}</div>
+      </div>
+      ${a.status!=="closed" ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <input type="text" class="field-sm" style="width:130px;font-size:12px" placeholder="Owner" value="${esc(a.owner_name||"")}" data-owner="${a.id}">
+          <input type="date" style="font-size:12px" value="${a.due_date}" data-due="${a.id}">
+          <button class="btn btn-primary btn-sm" data-close="${a.id}">Close out</button>
+        </div>` : `<span class="pill pill-pass">Verified & closed</span>`}
+    </div>`;
   }
 
-  // Load projects from Zoho
-  function loadProjects() {
-    fetch('/api/projects')
-      .then(r => r.json())
-      .then(projects => {
-        const sel = document.getElementById('f-project');
-        sel.innerHTML = projects.map(p =>
-          `<option value="${p.name}">${p.name}</option>`
-        ).join('');
-      })
-      .catch(() => {
-        document.getElementById('f-project').innerHTML =
-          '<option>Could not load projects</option>';
-      });
-  }
+  const body = `
+    <p class="muted" style="margin-top:-8px">Every failed check point becomes a tracked action here automatically.</p>
+    <h2 class="section-title">Open (${open.length})</h2>
+    ${open.length===0?`<div class="card muted">No open actions — nice work.</div>`:open.map(actionCard).join("")}
+    ${closed.length?`<h2 class="section-title">Closed (${closed.length})</h2>${closed.map(actionCard).join("")}`:""}`;
+  shell("/actions", "Corrective Actions", "", body);
 
-  loadVouchers();
-  loadProjects();
+  document.querySelectorAll("[data-owner]").forEach(inp => inp.onblur = () => sb.from("corrective_actions").update({owner_name:inp.value}).eq("id",inp.dataset.owner));
+  document.querySelectorAll("[data-due]").forEach(inp => inp.onchange = () => sb.from("corrective_actions").update({due_date:inp.value}).eq("id",inp.dataset.due));
+  document.querySelectorAll("[data-close]").forEach(btn => btn.onclick = async () => { await sb.from("corrective_actions").update({status:"closed",closed_at:new Date().toISOString()}).eq("id",btn.dataset.close); renderActions(); });
+}
+
+init();
 </script>
 </body>
 </html>
