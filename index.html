@@ -407,6 +407,7 @@ async function renderInspection(id) {
 function renderRunner(insp, sections) {
   const scored = insp.templates.scoring_type === "scored";
   state.runnerAnswers = {}; state.runnerNotes = {}; state.runnerPhotos = {};
+  state.runnerActiveSection = 0;
   const allItems = sections.flatMap(s => s.template_items);
   allItems.forEach(it => state.runnerAnswers[it.id] = scored ? it.max_marks : null);
   const maxMarks = allItems.reduce((n,it)=>n+(it.max_marks??0),0);
@@ -417,6 +418,25 @@ function renderRunner(insp, sections) {
     return scored
       ? `<div style="text-align:right"><div style="font-size:20px;font-weight:800;color:var(--navy)">${liveAtt}<span style="color:var(--sub);font-size:12px"> /${maxMarks}</span></div><div style="font-size:11px;font-weight:600;color:var(--sub)">${Math.round((liveAtt/maxMarks)*100)}%</div></div>`
       : `<div style="text-align:right"><div style="font-size:20px;font-weight:800;color:var(--navy)">${answered}<span style="color:var(--sub);font-size:12px"> /${allItems.length}</span></div><div style="font-size:11px;font-weight:600;color:var(--sub)">ANSWERED</div></div>`;
+  }
+
+  function sectionHasFailure(s) {
+    return s.template_items.some(it => {
+      const v = state.runnerAnswers[it.id];
+      return scored ? v < it.max_marks : v === "fail";
+    });
+  }
+
+  function tabBar() {
+    return `<div style="display:flex;gap:6px;flex-wrap:wrap;padding:12px 0 4px;margin-bottom:2px">
+      ${sections.map((s,i) => {
+        const active = i === state.runnerActiveSection;
+        const flagged = sectionHasFailure(s);
+        return `<button data-tab="${i}" style="padding:8px 14px;border-radius:8px;border:1px solid ${active?"var(--navy)":"var(--line)"};background:${active?"var(--navy)":"#fff"};color:${active?"#fff":"var(--ink)"};font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;position:relative">
+          ${esc(s.title)}${flagged?` <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${active?"#fff":"var(--fail)"};margin-left:4px"></span>`:""}
+        </button>`;
+      }).join("")}
+    </div>`;
   }
 
   function itemRow(it) {
@@ -446,23 +466,41 @@ function renderRunner(insp, sections) {
   }
 
   function renderBody() {
+    const activeSection = sections[state.runnerActiveSection];
+    const isLast = state.runnerActiveSection === sections.length - 1;
+    const isFirst = state.runnerActiveSection === 0;
     const body = `
       <div class="sticky-runner-header">
         <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0;border-left:4px solid var(--navy)">
           <div><div style="font-weight:800;color:var(--navy)">${esc(insp.templates.code)} — ${esc(insp.templates.name)}</div><div class="muted">${esc(insp.sites.name)}</div></div>
           ${headerRight()}
         </div>
+        ${tabBar()}
       </div>
-      ${sections.map(s => `<div class="card" style="padding:0;overflow:hidden"><div class="section-head">${esc(s.title)}</div>${s.template_items.map(itemRow).join("")}</div>`).join("")}
-      <div class="sticky-submit">
-        <button class="btn btn-primary" id="submit-btn">Complete inspection</button>
-        <span class="err" id="runner-err" style="display:none;margin-left:10px"></span>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="section-head">${esc(activeSection.title)} <span style="opacity:.7;font-weight:500">(${state.runnerActiveSection+1} of ${sections.length})</span></div>
+        ${activeSection.template_items.map(itemRow).join("")}
+      </div>
+      <div style="display:flex;gap:10px;margin:14px 0 90px">
+        <button class="btn btn-ghost" id="prev-tab-btn" ${isFirst?"disabled":""}>&larr; Previous section</button>
+        ${!isLast
+          ? `<button class="btn btn-primary" id="next-tab-btn">Next section &rarr;</button>`
+          : `<button class="btn btn-primary" id="submit-btn">Complete inspection</button>`}
+        <span class="err" id="runner-err" style="display:none"></span>
       </div>`;
     shell("/", `${insp.templates.code} — ${insp.sites.name}`, "", body);
     wireEvents();
   }
 
   function wireEvents() {
+    document.querySelectorAll("[data-tab]").forEach(btn => {
+      btn.onclick = () => { state.runnerActiveSection = parseInt(btn.dataset.tab); renderBody(); };
+    });
+    const prevBtn = $("#prev-tab-btn");
+    if (prevBtn) prevBtn.onclick = () => { state.runnerActiveSection = Math.max(0, state.runnerActiveSection-1); renderBody(); };
+    const nextBtn = $("#next-tab-btn");
+    if (nextBtn) nextBtn.onclick = () => { state.runnerActiveSection = Math.min(sections.length-1, state.runnerActiveSection+1); renderBody(); };
+
     document.querySelectorAll("[data-act]").forEach(btn => {
       btn.onclick = () => {
         const id = btn.dataset.id, act = btn.dataset.act;
@@ -489,7 +527,8 @@ function renderRunner(insp, sections) {
     document.querySelectorAll("[data-rmphoto]").forEach(btn => {
       btn.onclick = () => { const id=btn.dataset.rmphoto; state.runnerPhotos[id]=(state.runnerPhotos[id]||[]).filter(u=>u!==btn.dataset.url); renderBody(); };
     });
-    $("#submit-btn").onclick = submit;
+    const submitBtn = $("#submit-btn");
+    if (submitBtn) submitBtn.onclick = submit;
   }
 
   async function submit() {
