@@ -54,6 +54,9 @@ export default async function AppShell({
   if (can(access, "team.manage_roles")) {
     navItems.push({ href: "/team/roles", key: "roles", label: "Roles & Permissions" });
   }
+  if (can(access, "templates.manage")) {
+    navItems.push({ href: "/team/templates", key: "templates", label: "Checklist Templates" });
+  }
 
   const initials =
     (profile?.full_name || user.email || "?").trim()[0]?.toUpperCase() || "?";
