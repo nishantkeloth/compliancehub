@@ -57,6 +57,12 @@ export default async function AppShell({
   if (can(access, "templates.manage")) {
     navItems.push({ href: "/team/templates", key: "templates", label: "Checklist Templates" });
   }
+  if (can(access, "crew.view")) {
+    navItems.push({ href: "/crew/profiles", key: "crew-profiles", label: "Crew Profiles" });
+  }
+  if (can(access, "crew.manage")) {
+    navItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
+  }
 
   const initials =
     (profile?.full_name || user.email || "?").trim()[0]?.toUpperCase() || "?";
