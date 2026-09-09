@@ -6,9 +6,11 @@ import { setUserStatus } from "./actions";
 export default function MemberRow({
   member,
   isSelf,
+  canManageStatus,
 }: {
-  member: { id: string; full_name: string | null; role: string; status: string };
+  member: { id: string; full_name: string | null; roleName: string; status: string };
   isSelf: boolean;
+  canManageStatus: boolean;
 }) {
   const [status, setStatus] = useState(member.status);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export default function MemberRow({
           {member.full_name || "—"} {isSelf && <span style={{ color: "var(--ch-sub)" }}>(you)</span>}
         </div>
         <div className="text-sm" style={{ color: "var(--ch-sub)" }}>
-          {member.role}
+          {member.roleName}
         </div>
         {error && (
           <div className="text-xs mt-1" style={{ color: "var(--ch-fail)" }}>
@@ -56,7 +58,7 @@ export default function MemberRow({
         >
           {status}
         </span>
-        {!isSelf && (
+        {canManageStatus && !isSelf && (
           <button
             onClick={toggle}
             disabled={pending}

@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import SignOutButton from "./signout-button";
-import { can, getEffectiveRole } from "@/lib/rbac";
+import { can, getEffectiveAccess } from "@/lib/rbac";
 
 export default async function AppShell({
   active,
@@ -27,14 +27,14 @@ export default async function AppShell({
     .eq("id", user.id)
     .single();
 
-  const { role: effectiveRole, orgId } = await getEffectiveRole(supabase, user.id);
+  const access = await getEffectiveAccess(supabase, user.id);
 
   let companyName = "Platform Admin";
-  if (orgId) {
+  if (access.orgId) {
     const { data: company } = await supabase
       .from("companies")
       .select("name")
-      .eq("id", orgId)
+      .eq("id", access.orgId)
       .single();
     companyName = company?.name ?? "—";
   }
@@ -43,8 +43,11 @@ export default async function AppShell({
     { href: "/", key: "dashboard", label: "Dashboard" },
     { href: "/actions", key: "actions", label: "Corrective Actions" },
   ];
-  if (can(effectiveRole, "team.view")) {
+  if (can(access, "team.view")) {
     navItems.push({ href: "/team", key: "team", label: "Manage Users" });
+  }
+  if (can(access, "team.manage_roles")) {
+    navItems.push({ href: "/team/roles", key: "roles", label: "Roles & Permissions" });
   }
 
   const initials =
@@ -109,7 +112,7 @@ export default async function AppShell({
                 {profile?.full_name ?? user.email}
               </div>
               <div className="text-[11px]" style={{ color: "#8a96ab" }}>
-                {profile?.role ?? ""}
+                {access.roleName ?? ""}
               </div>
             </div>
           </div>

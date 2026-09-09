@@ -2,14 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { inviteTeamMember } from "./actions";
-import { ROLE_LABELS, type TenantRole } from "@/lib/rbac";
 
 type Mode = "direct" | "invite";
+type RoleOption = { id: string; name: string };
 
-export default function NewMemberForm({ roleOptions }: { roleOptions: readonly TenantRole[] }) {
+export default function NewMemberForm({ roles }: { roles: RoleOption[] }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<TenantRole>(roleOptions[0] ?? "inspector");
+  const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [mode, setMode] = useState<Mode>("invite");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -22,19 +22,19 @@ export default function NewMemberForm({ roleOptions }: { roleOptions: readonly T
   const reset = () => {
     setName("");
     setEmail("");
-    setRole(roleOptions[0] ?? "inspector");
+    setRoleId(roles[0]?.id ?? "");
     setPassword("");
   };
 
   const submit = () => {
-    if (!name.trim() || !email.trim()) return;
+    if (!name.trim() || !email.trim() || !roleId) return;
     setError(null);
     setDirectResult(null);
     setInviteResult(null);
     const formData = new FormData();
     formData.set("name", name.trim());
     formData.set("email", email.trim());
-    formData.set("role", role);
+    formData.set("roleId", roleId);
     formData.set("mode", mode);
     formData.set("password", password);
     startTransition(async () => {
@@ -45,6 +45,21 @@ export default function NewMemberForm({ roleOptions }: { roleOptions: readonly T
       if (!res?.error) reset();
     });
   };
+
+  if (roles.length === 0) {
+    return (
+      <div
+        className="bg-white border rounded-xl p-5 text-sm"
+        style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+      >
+        No roles exist for your company yet — set one up on the{" "}
+        <a href="/team/roles" className="underline">
+          Roles &amp; Permissions
+        </a>{" "}
+        screen first.
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
@@ -72,12 +87,12 @@ export default function NewMemberForm({ roleOptions }: { roleOptions: readonly T
           <select
             className="border rounded-lg px-2 py-1.5 text-sm ml-1"
             style={{ borderColor: "var(--ch-line)" }}
-            value={role}
-            onChange={(e) => setRole(e.target.value as TenantRole)}
+            value={roleId}
+            onChange={(e) => setRoleId(e.target.value)}
           >
-            {roleOptions.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
               </option>
             ))}
           </select>
