@@ -3,11 +3,6 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import SignOutButton from "./signout-button";
 
-const NAV_ITEMS: { href: string; key: string; label: string }[] = [
-  { href: "/", key: "dashboard", label: "Dashboard" },
-  { href: "/actions", key: "actions", label: "Corrective Actions" },
-];
-
 export default async function AppShell({
   active,
   title,
@@ -39,6 +34,14 @@ export default async function AppShell({
       .eq("id", profile.org_id)
       .single();
     companyName = company?.name ?? "—";
+  }
+
+  const navItems: { href: string; key: string; label: string }[] = [
+    { href: "/", key: "dashboard", label: "Dashboard" },
+    { href: "/actions", key: "actions", label: "Corrective Actions" },
+  ];
+  if (profile?.role === "company_admin" && profile?.org_id) {
+    navItems.push({ href: "/team", key: "team", label: "Manage Users" });
   }
 
   const initials =
@@ -74,7 +77,7 @@ export default async function AppShell({
           Workspace
         </div>
         <nav className="px-2.5 flex-1 overflow-y-auto">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <Link
               key={item.key}
               href={item.href}
