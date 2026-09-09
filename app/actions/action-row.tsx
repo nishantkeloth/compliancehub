@@ -3,34 +3,57 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+type Member = { id: string; full_name: string | null };
+
 export default function ActionRow({
   action,
   overdue,
+  canManage,
+  members,
 }: {
   action: any;
   overdue: boolean;
+  canManage: boolean;
+  members: Member[];
 }) {
-  const [owner, setOwner] = useState(action.owner_name ?? "");
+  const [ownerId, setOwnerId] = useState<string>(action.owner_id ?? "");
+  const [ownerName, setOwnerName] = useState<string | null>(action.owner_name ?? null);
   const [due, setDue] = useState(action.due_date);
   const [status, setStatus] = useState(action.status);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const save = async (patch: Record<string, any>) => {
     setBusy(true);
+    setError(null);
     const supabase = createClient();
-    await supabase.from("corrective_actions").update(patch).eq("id", action.id);
+    const { error: err } = await supabase.from("corrective_actions").update(patch).eq("id", action.id);
     setBusy(false);
+    if (err) setError(err.message);
+  };
+
+  const assign = (newOwnerId: string) => {
+    const member = members.find((m) => m.id === newOwnerId);
+    const newOwnerName = member?.full_name ?? null;
+    setOwnerId(newOwnerId);
+    setOwnerName(newOwnerName);
+    save({ owner_id: newOwnerId || null, owner_name: newOwnerName });
   };
 
   const closeOut = async () => {
     setBusy(true);
+    setError(null);
     const supabase = createClient();
-    const { error } = await supabase
+    const { error: err } = await supabase
       .from("corrective_actions")
       .update({ status: "closed", closed_at: new Date().toISOString() })
       .eq("id", action.id);
     setBusy(false);
-    if (!error) setStatus("closed");
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setStatus("closed");
   };
 
   const borderColor =
@@ -76,34 +99,57 @@ export default function ActionRow({
             {status === "closed" && action.closed_at
               ? ` · Closed ${new Date(action.closed_at).toLocaleDateString()}`
               : ""}
+            {status !== "closed" ? (ownerName ? ` · Assigned to ${ownerName}` : " · Unassigned") : ""}
           </div>
         </div>
 
         {status !== "closed" ? (
-          <div className="flex items-center gap-2 flex-wrap">
-            <input
-              className="border rounded-lg px-3 py-2 text-xs w-36"
-              style={{ borderColor: "var(--ch-line)" }}
-              placeholder="Owner"
-              value={owner}
-              onChange={(e) => setOwner(e.target.value)}
-              onBlur={() => save({ owner_name: owner })}
-            />
-            <input
-              type="date"
-              className="border rounded-lg px-3 py-2 text-xs"
-              style={{ borderColor: "var(--ch-line)" }}
-              value={due}
-              onChange={(e) => { setDue(e.target.value); save({ due_date: e.target.value }); }}
-            />
-            <button
-              onClick={closeOut}
-              disabled={busy}
-              className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-50"
+          canManage ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                className="border rounded-lg px-3 py-2 text-xs w-40"
+                style={{ borderColor: "var(--ch-line)" }}
+                value={ownerId}
+                onChange={(e) => assign(e.target.value)}
+                disabled={busy}
+              >
+                <option value="">Unassigned</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.full_name ?? "Unnamed"}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="date"
+                className="border rounded-lg px-3 py-2 text-xs"
+                style={{ borderColor: "var(--ch-line)" }}
+                value={due}
+                onChange={(e) => {
+                  setDue(e.target.value);
+                  save({ due_date: e.target.value });
+                }}
+              />
+              <button
+                onClick={closeOut}
+                disabled={busy}
+                className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-50"
+              >
+                Close out
+              </button>
+            </div>
+          ) : (
+            <span
+              className="text-xs font-semibold uppercase rounded-full px-3 py-1"
+              style={
+                overdue
+                  ? { background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }
+                  : { background: "#f3f4f6", color: "var(--ch-sub)" }
+              }
             >
-              Close out
-            </button>
-          </div>
+              {status === "in_progress" ? "In progress" : "Open"}
+            </span>
+          )
         ) : (
           <span
             className="text-xs font-bold uppercase rounded-full px-3 py-1"
@@ -113,6 +159,11 @@ export default function ActionRow({
           </span>
         )}
       </div>
+      {error && (
+        <div className="text-xs mt-2" style={{ color: "var(--ch-fail)" }}>
+          {error}
+        </div>
+      )}
     </div>
   );
 }

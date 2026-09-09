@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import ActionRow from "./action-row";
 import AppShell from "../app-shell";
+import { getEffectiveAccess, can } from "@/lib/rbac";
 
 export default async function ActionsPage() {
   const supabase = await createClient();
@@ -9,12 +10,25 @@ export default async function ActionsPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const access = await getEffectiveAccess(supabase, user.id);
+  const canManage = can(access, "actions.close");
+
   const { data: actions } = await supabase
     .from("corrective_actions")
     .select(
-      "id, title, finding, owner_name, priority, due_date, status, closed_at, created_at, sites(name), inspection_responses(photo_urls)"
+      "id, title, finding, owner_id, owner_name, priority, due_date, status, closed_at, created_at, sites(name), inspection_responses(photo_urls)"
     )
     .order("created_at", { ascending: false });
+
+  let members: { id: string; full_name: string | null }[] = [];
+  if (access.orgId) {
+    const { data: memberRows } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .eq("org_id", access.orgId)
+      .order("full_name");
+    members = memberRows ?? [];
+  }
 
   const open = (actions ?? []).filter((a: any) => a.status === "open" || a.status === "in_progress");
   const closed = (actions ?? []).filter((a: any) => a.status === "closed");
@@ -37,7 +51,7 @@ export default async function ActionsPage() {
         ) : (
           <div className="space-y-3">
             {open.map((a: any) => (
-              <ActionRow key={a.id} action={a} overdue={a.due_date < today} />
+              <ActionRow key={a.id} action={a} overdue={a.due_date < today} canManage={canManage} members={members} />
             ))}
           </div>
         )}
@@ -50,7 +64,7 @@ export default async function ActionsPage() {
           </div>
           <div className="space-y-3">
             {closed.map((a: any) => (
-              <ActionRow key={a.id} action={a} overdue={false} />
+              <ActionRow key={a.id} action={a} overdue={false} canManage={canManage} members={members} />
             ))}
           </div>
         </div>
