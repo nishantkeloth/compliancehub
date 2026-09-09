@@ -39,30 +39,45 @@ export default async function AppShell({
     companyName = company?.name ?? "—";
   }
 
-  const navItems: { href: string; key: string; label: string }[] = [
-    { href: "/", key: "dashboard", label: "Dashboard" },
+  type NavItem = { href: string; key: string; label: string };
+  type NavSection = { title: string; items: NavItem[] };
+
+  const overviewItems: NavItem[] = [{ href: "/", key: "dashboard", label: "Dashboard" }];
+
+  const complianceItems: NavItem[] = [
     { href: "/actions", key: "actions", label: "Corrective Actions" },
   ];
   if (access.orgId) {
     // Visible to every company member (not permission-gated) — someone a
     // schedule is assigned to needs to see it even if they can't create one.
-    navItems.push({ href: "/team/schedules", key: "schedules", label: "Inspection Schedules" });
-  }
-  if (can(access, "team.view")) {
-    navItems.push({ href: "/team", key: "team", label: "Manage Users" });
-  }
-  if (can(access, "team.manage_roles")) {
-    navItems.push({ href: "/team/roles", key: "roles", label: "Roles & Permissions" });
+    complianceItems.push({ href: "/team/schedules", key: "schedules", label: "Inspection Schedules" });
   }
   if (can(access, "templates.manage")) {
-    navItems.push({ href: "/team/templates", key: "templates", label: "Checklist Templates" });
+    complianceItems.push({ href: "/team/templates", key: "templates", label: "Checklist Templates" });
   }
+
+  const crewItems: NavItem[] = [];
   if (can(access, "crew.view")) {
-    navItems.push({ href: "/crew/profiles", key: "crew-profiles", label: "Crew Profiles" });
+    crewItems.push({ href: "/crew/profiles", key: "crew-profiles", label: "Crew Profiles" });
   }
   if (can(access, "crew.manage")) {
-    navItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
+    crewItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
   }
+
+  const adminItems: NavItem[] = [];
+  if (can(access, "team.view")) {
+    adminItems.push({ href: "/team", key: "team", label: "Manage Users" });
+  }
+  if (can(access, "team.manage_roles")) {
+    adminItems.push({ href: "/team/roles", key: "roles", label: "Roles & Permissions" });
+  }
+
+  const navSections: NavSection[] = [
+    { title: "Overview", items: overviewItems },
+    { title: "Compliance & Inspections", items: complianceItems },
+    { title: "Crew Matrix", items: crewItems },
+    { title: "Administration", items: adminItems },
+  ].filter((section) => section.items.length > 0);
 
   const initials =
     (profile?.full_name || user.email || "?").trim()[0]?.toUpperCase() || "?";
@@ -90,26 +105,30 @@ export default async function AppShell({
           </div>
         </div>
 
-        <div
-          className="px-[18px] pt-4 pb-1.5 text-[10.5px] font-bold tracking-wider uppercase"
-          style={{ color: "#5c6a82" }}
-        >
-          Workspace
-        </div>
-        <nav className="px-2.5 flex-1 overflow-y-auto">
-          {navItems.map((item) => (
-            <Link
-              key={item.key}
-              href={item.href}
-              className="flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-[13.5px] font-semibold mb-0.5"
-              style={
-                active === item.key
-                  ? { background: "var(--ch-sidebar-active)", color: "#fff" }
-                  : { color: "#aeb9cc" }
-              }
-            >
-              {item.label}
-            </Link>
+        <nav className="px-2.5 pt-3.5 flex-1 overflow-y-auto">
+          {navSections.map((section, i) => (
+            <div key={section.title} className={i === 0 ? "" : "mt-3.5"}>
+              <div
+                className="px-2.5 pb-1.5 text-[10.5px] font-bold tracking-wider uppercase"
+                style={{ color: "#5c6a82" }}
+              >
+                {section.title}
+              </div>
+              {section.items.map((item) => (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  className="flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-[13.5px] font-semibold mb-0.5"
+                  style={
+                    active === item.key
+                      ? { background: "var(--ch-sidebar-active)", color: "#fff" }
+                      : { color: "#aeb9cc" }
+                  }
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
 
