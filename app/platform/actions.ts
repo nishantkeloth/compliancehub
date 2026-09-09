@@ -16,6 +16,7 @@ function randomToken(bytes = 24) {
 
 export async function createCompany(formData: FormData) {
   const companyName = (formData.get("companyName") as string | null)?.trim();
+  const notifyPrefix = (formData.get("notifyPrefix") as string | null)?.trim() || null;
   const mode = ((formData.get("mode") as string | null) || "none") as "none" | "direct" | "invite";
   const adminName = (formData.get("adminName") as string | null)?.trim() || null;
   const adminEmail = (formData.get("adminEmail") as string | null)?.trim() || null;
@@ -53,7 +54,7 @@ export async function createCompany(formData: FormData) {
 
   const { data: company, error: companyError } = await admin
     .from("companies")
-    .insert({ name: companyName, created_by: user.id })
+    .insert({ name: companyName, notify_prefix: notifyPrefix, created_by: user.id })
     .select("id, name")
     .single();
   if (companyError || !company) {

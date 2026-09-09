@@ -43,6 +43,11 @@ export default async function AppShell({
     { href: "/", key: "dashboard", label: "Dashboard" },
     { href: "/actions", key: "actions", label: "Corrective Actions" },
   ];
+  if (access.orgId) {
+    // Visible to every company member (not permission-gated) — someone a
+    // schedule is assigned to needs to see it even if they can't create one.
+    navItems.push({ href: "/team/schedules", key: "schedules", label: "Inspection Schedules" });
+  }
   if (can(access, "team.view")) {
     navItems.push({ href: "/team", key: "team", label: "Manage Users" });
   }

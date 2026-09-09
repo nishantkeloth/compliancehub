@@ -7,6 +7,7 @@ type Mode = "none" | "direct" | "invite";
 
 export default function NewCompanyForm() {
   const [companyName, setCompanyName] = useState("");
+  const [notifyPrefix, setNotifyPrefix] = useState("");
   const [mode, setMode] = useState<Mode>("none");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
@@ -20,6 +21,7 @@ export default function NewCompanyForm() {
 
   const reset = () => {
     setCompanyName("");
+    setNotifyPrefix("");
     setMode("none");
     setAdminName("");
     setAdminEmail("");
@@ -33,6 +35,7 @@ export default function NewCompanyForm() {
     setInviteResult(null);
     const formData = new FormData();
     formData.set("companyName", companyName.trim());
+    formData.set("notifyPrefix", notifyPrefix.trim());
     formData.set("mode", mode);
     formData.set("adminName", adminName.trim());
     formData.set("adminEmail", adminEmail.trim());
@@ -48,13 +51,27 @@ export default function NewCompanyForm() {
 
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
-      <input
-        className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-        style={{ borderColor: "var(--ch-line)" }}
-        placeholder="Company name"
-        value={companyName}
-        onChange={(e) => setCompanyName(e.target.value)}
-      />
+      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+        <input
+          className="border rounded-lg px-3 py-2 text-sm"
+          style={{ borderColor: "var(--ch-line)" }}
+          placeholder="Company name"
+          value={companyName}
+          onChange={(e) => setCompanyName(e.target.value)}
+        />
+        <input
+          className="border rounded-lg px-3 py-2 text-sm"
+          style={{ borderColor: "var(--ch-line)" }}
+          placeholder="Notification email prefix, e.g. AHM (optional)"
+          value={notifyPrefix}
+          onChange={(e) => setNotifyPrefix(e.target.value)}
+        />
+      </div>
+      <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        Reminder emails for this company will come from{" "}
+        <strong>{(notifyPrefix.trim() || companyName.trim().split(/\s+/)[0] || "…").toUpperCase()}.notification@aifexis.com</strong>
+        . Leave blank to derive it from the company name.
+      </p>
 
       <div
         className="text-xs font-semibold uppercase tracking-wide mb-2"
