@@ -20,6 +20,8 @@
   --ch-sub: #6b7280;
   --ch-line: #e5e7eb;
   --ch-paper: #f4f5f6;
+  --ch-sidebar: #0f1c33;       /* sidebar shell, matches original AHM layout */
+  --ch-sidebar-active: #1c2f52;
 }
 
 input, textarea, select {
