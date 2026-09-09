@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { can, getEffectiveRole } from "@/lib/rbac";
 import SignOutButton from "../signout-button";
 import NewCompanyForm from "./new-company-form";
 
@@ -10,15 +11,11 @@ export default async function PlatformPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: platformAdminRow } = await supabase
-    .from("platform_admins")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const { role } = await getEffectiveRole(supabase, user.id);
 
   // Not a platform admin -> this console isn't theirs, send them to their
   // normal tenant dashboard instead.
-  if (!platformAdminRow) redirect("/");
+  if (!can(role, "platform.manage_companies")) redirect("/");
 
   const { data: companies } = await supabase
     .from("companies")

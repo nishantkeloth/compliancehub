@@ -2,20 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { inviteTeamMember } from "./actions";
+import { ROLE_LABELS, type TenantRole } from "@/lib/rbac";
 
 type Mode = "direct" | "invite";
 
-const ROLE_OPTIONS = [
-  { value: "inspector", label: "Inspector" },
-  { value: "supervisor", label: "Supervisor" },
-  { value: "auditor", label: "Auditor" },
-  { value: "company_admin", label: "Company Admin" },
-];
-
-export default function NewMemberForm() {
+export default function NewMemberForm({ roleOptions }: { roleOptions: readonly TenantRole[] }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("inspector");
+  const [role, setRole] = useState<TenantRole>(roleOptions[0] ?? "inspector");
   const [mode, setMode] = useState<Mode>("invite");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +22,7 @@ export default function NewMemberForm() {
   const reset = () => {
     setName("");
     setEmail("");
-    setRole("inspector");
+    setRole(roleOptions[0] ?? "inspector");
     setPassword("");
   };
 
@@ -79,11 +73,11 @@ export default function NewMemberForm() {
             className="border rounded-lg px-2 py-1.5 text-sm ml-1"
             style={{ borderColor: "var(--ch-line)" }}
             value={role}
-            onChange={(e) => setRole(e.target.value)}
+            onChange={(e) => setRole(e.target.value as TenantRole)}
           >
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
+            {roleOptions.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
               </option>
             ))}
           </select>

@@ -2,12 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { can, canAssignRole, getEffectiveRole } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import crypto from "crypto";
-
-const ROLES = ["company_admin", "supervisor", "inspector", "auditor"] as const;
-type Role = (typeof ROLES)[number];
 
 function randomTempPassword() {
   return crypto.randomBytes(9).toString("base64").replace(/[+/=]/g, "x") + "!1";
@@ -19,13 +17,12 @@ function randomToken(bytes = 24) {
 export async function inviteTeamMember(formData: FormData) {
   const name = (formData.get("name") as string | null)?.trim();
   const email = (formData.get("email") as string | null)?.trim();
-  const role = (formData.get("role") as string | null) as Role | null;
+  const role = (formData.get("role") as string | null)?.trim();
   const mode = ((formData.get("mode") as string | null) || "invite") as "direct" | "invite";
   const password = (formData.get("password") as string | null)?.trim() || null;
 
   if (!name) return { error: "Name is required." };
   if (!email) return { error: "Email is required." };
-  if (!role || !ROLES.includes(role)) return { error: "Choose a valid role." };
   if (mode === "direct" && password && password.length < 6) {
     return { error: "Password must be at least 6 characters." };
   }
@@ -36,16 +33,18 @@ export async function inviteTeamMember(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("org_id, role")
-    .eq("id", user.id)
-    .single();
+  const { role: callerRole, orgId } = await getEffectiveRole(supabase, user.id);
 
-  if (profile?.role !== "company_admin" || !profile.org_id) {
+  // Authorization check — everything below uses the service-role client,
+  // which bypasses RLS entirely, so this check IS the security boundary
+  // for this action. Both the action itself and the specific role being
+  // handed out go through the rbac matrix — never a raw string compare.
+  if (!can(callerRole, "team.invite") || !orgId) {
     return { error: "Only a company admin can do this." };
   }
-  const orgId = profile.org_id;
+  if (!role || !canAssignRole(callerRole, role)) {
+    return { error: "Choose a valid role." };
+  }
 
   const admin = createAdminClient();
 
@@ -121,12 +120,8 @@ export async function setUserStatus(userId: string, status: "active" | "inactive
   if (!user) return { error: "Not authenticated." };
   if (userId === user.id) return { error: "You can't deactivate your own account." };
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("org_id, role")
-    .eq("id", user.id)
-    .single();
-  if (profile?.role !== "company_admin" || !profile.org_id) {
+  const { role: callerRole, orgId } = await getEffectiveRole(supabase, user.id);
+  if (!can(callerRole, "team.manage_status") || !orgId) {
     return { error: "Only a company admin can do this." };
   }
 
@@ -135,7 +130,7 @@ export async function setUserStatus(userId: string, status: "active" | "inactive
     .select("org_id")
     .eq("id", userId)
     .single();
-  if (!target || target.org_id !== profile.org_id) {
+  if (!target || target.org_id !== orgId) {
     return { error: "That user isn't in your company." };
   }
 

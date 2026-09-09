@@ -3,9 +3,13 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+// Sign-in only. There is intentionally no self-service "Create account"
+// path here — every account in the system has to come from a platform
+// admin onboarding a company, a company admin onboarding a team member,
+// or someone redeeming an invite link (/accept-invite/[token]), so that
+// every account starts out with a company and a role someone in authority
+// actually assigned. Do not re-add a public signup form to this page.
 export default function LoginPage() {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -16,14 +20,7 @@ export default function LoginPage() {
     setBusy(true);
     const supabase = createClient();
 
-    const { error } =
-      mode === "signin"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({
-            email,
-            password,
-            options: { data: { full_name: fullName } },
-          });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     setBusy(false);
     if (error) {
@@ -40,18 +37,9 @@ export default function LoginPage() {
           Compliance<span style={{ color: "var(--ch-ink)", opacity: 0.6 }}>Hub</span>
         </h1>
         <p className="text-sm mt-1 mb-6" style={{ color: "var(--ch-sub)" }}>
-          {mode === "signin" ? "Sign in to your workspace" : "Create your account"}
+          Sign in to your workspace
         </p>
 
-        {mode === "signup" && (
-          <input
-            className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-            style={{ borderColor: "var(--ch-line)" }}
-            placeholder="Full name"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-          />
-        )}
         <input
           className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
           style={{ borderColor: "var(--ch-line)" }}
@@ -63,7 +51,7 @@ export default function LoginPage() {
         <input
           className="w-full border rounded-lg px-3 py-2 text-sm mb-4"
           style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Password (min 6 characters)"
+          placeholder="Password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -84,18 +72,12 @@ export default function LoginPage() {
           disabled={busy}
           className="w-full ch-btn-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
         >
-          {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
+          {busy ? "Please wait…" : "Sign in"}
         </button>
 
-        <button
-          onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); }}
-          className="w-full text-sm mt-4"
-          style={{ color: "var(--ch-sub)" }}
-        >
-          {mode === "signin"
-            ? "New here? Create an account"
-            : "Already have an account? Sign in"}
-        </button>
+        <p className="text-xs text-center mt-4" style={{ color: "var(--ch-sub)" }}>
+          Accounts are created by your admin, or by an invite link they send you.
+        </p>
       </div>
     </main>
   );

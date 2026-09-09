@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { can, getEffectiveRole } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import crypto from "crypto";
@@ -37,15 +38,17 @@ export async function createCompany(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
 
-  // Explicit authorization check — everything below uses the service-role
-  // client, which bypasses RLS entirely, so this check IS the security
-  // boundary for this action.
-  const { data: platformAdminRow } = await supabase
-    .from("platform_admins")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!platformAdminRow) return { error: "Only a platform admin can do this." };
+  // Authorization check — everything below uses the service-role client,
+  // which bypasses RLS entirely, so this check IS the security boundary
+  // for this action. Routed through the rbac matrix rather than a raw
+  // table lookup comparison.
+  const { role: callerRole } = await getEffectiveRole(supabase, user.id);
+  if (!can(callerRole, "platform.manage_companies")) {
+    return { error: "Only a platform admin can do this." };
+  }
+  if (mode !== "none" && !can(callerRole, "company.onboard_admin")) {
+    return { error: "Only a platform admin can onboard a company's admin." };
+  }
 
   const admin = createAdminClient();
 

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import SignOutButton from "./signout-button";
+import { can, getEffectiveRole } from "@/lib/rbac";
 
 export default async function AppShell({
   active,
@@ -26,12 +27,14 @@ export default async function AppShell({
     .eq("id", user.id)
     .single();
 
+  const { role: effectiveRole, orgId } = await getEffectiveRole(supabase, user.id);
+
   let companyName = "Platform Admin";
-  if (profile?.org_id) {
+  if (orgId) {
     const { data: company } = await supabase
       .from("companies")
       .select("name")
-      .eq("id", profile.org_id)
+      .eq("id", orgId)
       .single();
     companyName = company?.name ?? "—";
   }
@@ -40,7 +43,7 @@ export default async function AppShell({
     { href: "/", key: "dashboard", label: "Dashboard" },
     { href: "/actions", key: "actions", label: "Corrective Actions" },
   ];
-  if (profile?.role === "company_admin" && profile?.org_id) {
+  if (can(effectiveRole, "team.view")) {
     navItems.push({ href: "/team", key: "team", label: "Manage Users" });
   }
 

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { can, assignableRoles, getEffectiveRole } from "@/lib/rbac";
 import AppShell from "../app-shell";
 import NewMemberForm from "./new-member-form";
 import MemberRow from "./member-row";
@@ -11,20 +12,16 @@ export default async function TeamPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, org_id")
-    .eq("id", user.id)
-    .single();
+  const { role, orgId } = await getEffectiveRole(supabase, user.id);
 
-  if (profile?.role !== "company_admin" || !profile.org_id) {
+  if (!can(role, "team.view") || !orgId) {
     redirect("/");
   }
 
   const { data: members } = await supabase
     .from("profiles")
     .select("id, full_name, role, status")
-    .eq("org_id", profile.org_id)
+    .eq("org_id", orgId)
     .order("full_name");
 
   return (
@@ -35,7 +32,7 @@ export default async function TeamPage() {
       >
         Add a team member
       </h2>
-      <NewMemberForm />
+      <NewMemberForm roleOptions={assignableRoles(role)} />
 
       <h2
         className="text-sm font-semibold uppercase tracking-wide mb-3 mt-8"
