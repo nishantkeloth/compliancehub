@@ -17,6 +17,10 @@ export default async function Home() {
     .eq("id", user.id)
     .single();
 
+  // Platform admins have org_id = null — they aren't a tenant, so they get
+  // the platform console instead of a specific company's operational data.
+  if (!profile?.org_id) redirect("/platform");
+
   const { data: templates } = await supabase
     .from("templates")
     .select("id, code, name, revision, scoring_type")
