@@ -56,6 +56,9 @@ const revalidateDetail = (id: string) => revalidatePath(`/crew/profiles/${id}`);
 // as the per-crew detail page, so any write from either screen needs to
 // invalidate both.
 const revalidateMatrix = () => revalidatePath("/crew/documents");
+// Same reasoning for the vessel-first roster board (/crew/roster) — it
+// reads the same crew_assignments rows as this per-crew detail page.
+const revalidateRoster = () => revalidatePath("/crew/roster");
 
 /* ---------------- Crew profile ---------------- */
 
@@ -252,6 +255,7 @@ export async function assignCrewToSite(crewId: string, formData: FormData) {
   });
   if (error) return { error: error.message };
   revalidateDetail(crewId);
+  revalidateRoster();
   return {};
 }
 
@@ -264,6 +268,7 @@ export async function endCrewAssignment(id: string, crewId: string, formData: Fo
     .eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(crewId);
+  revalidateRoster();
   return {};
 }
 
@@ -272,6 +277,7 @@ export async function deleteCrewAssignment(id: string, crewId: string) {
   const { error } = await supabase.from("crew_assignments").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(crewId);
+  revalidateRoster();
   return {};
 }
 
