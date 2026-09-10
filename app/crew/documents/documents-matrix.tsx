@@ -42,6 +42,12 @@ type SiteRef = { id: string; name: string };
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 
+// Minimum width for a document-type column in the matrix, in px. Sized to
+// fit the longest header label ("COVID VACCINATION") plus its status line
+// ("Expired · -20d") on one line each, so no column is narrower than that
+// and cell text never wraps.
+const COL_MIN_WIDTH = 132;
+
 const STATUS_PILLS: { key: "all" | "expiring" | "expired"; label: string }[] = [
   { key: "all", label: "All" },
   { key: "expiring", label: "Expiring soon" },
@@ -247,7 +253,7 @@ export default function DocumentsMatrix({
                 <th
                   key={col.id}
                   className="sticky top-0 z-10 bg-white text-left px-3 py-2 border-b text-xs font-bold uppercase tracking-wide whitespace-nowrap"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)", minWidth: COL_MIN_WIDTH }}
                 >
                   {col.name}
                 </th>
@@ -279,11 +285,11 @@ export default function DocumentsMatrix({
                   const colors = DOCUMENT_STATUS_COLORS[status];
                   const isPending = pendingCell === cellKey(c.id, col.id);
                   return (
-                    <td key={col.id} className="border-b px-2 py-1.5" style={{ borderColor: "var(--ch-line)" }}>
+                    <td key={col.id} className="border-b px-2 py-1.5" style={{ borderColor: "var(--ch-line)", minWidth: COL_MIN_WIDTH }}>
                       <button
                         onClick={() => setPopover({ crewId: c.id, crewName: c.fullName, documentTypeId: col.id })}
                         disabled={isPending}
-                        className="w-full text-left rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-60"
+                        className="w-full text-left rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-60 whitespace-nowrap"
                         style={{ background: colors.bg, color: colors.fg }}
                       >
                         {cell?.expiry_date ? (
