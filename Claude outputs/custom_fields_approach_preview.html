@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Typed Columns vs JSONB Custom Fields — Preview</title>
+<style>
+  :root {
+    --bg: #f4f6f9; --panel: #ffffff; --border: #e2e6ec; --text: #1f2a3d; --muted: #6b7686;
+    --navy: #16233f; --accent: #2354c9;
+    --ok-bg:#e6f6ec; --ok-fg:#1a7d3d;
+    --tag-bg:#eef2fb; --tag-fg:#2354c9;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--text); padding:24px 20px 60px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header h1 { font-size: 20px; margin: 0 0 4px; color: var(--navy); }
+  header p { margin: 0 0 18px; color: var(--muted); font-size: 13.5px; }
+
+  .switcher { display:flex; gap:8px; margin-bottom:22px; border:1px solid var(--border); background:var(--panel); border-radius:12px; padding:4px; width:fit-content; }
+  .switcher button { border:none; background:transparent; padding:9px 16px; border-radius:9px; font-size:13.5px; font-weight:600; color:var(--muted); cursor:pointer; }
+  .switcher button.active { background:var(--navy); color:#fff; }
+
+  .panel { display:none; }
+  .panel.active { display:block; }
+
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:20px 22px; margin-bottom:16px; }
+  .card h2 { font-size:14px; margin:0 0 4px; color:var(--navy); }
+  .card .desc { font-size:12.5px; color:var(--muted); margin:0 0 16px; }
+
+  .field { margin-bottom: 12px; }
+  .field label { display:block; font-size:11.5px; color:var(--muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:.02em; }
+  .field input, .field select { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; color:var(--text); background:#fff; }
+  .row2 { display:flex; gap:12px; }
+  .row2 .field { flex:1; }
+  .row3 { display:flex; gap:12px; }
+  .row3 .field { flex:1; }
+
+  .btn { padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid transparent; }
+  .btn.primary { background:var(--navy); color:#fff; }
+  .btn.ghost { background:transparent; color:var(--muted); border-color:var(--border); }
+
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--border); }
+  th { font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); }
+  .tag { display:inline-flex; padding:2px 8px; border-radius:20px; font-size:11.5px; font-weight:600; background:var(--tag-bg); color:var(--tag-fg); }
+  .muted { color:var(--muted); font-size:12px; }
+  .edit-link { font-size:12px; font-weight:600; color:var(--navy); cursor:pointer; margin-right:10px; }
+  .del-link { font-size:12px; font-weight:600; color:#b3261e; cursor:pointer; }
+
+  .divider { border-top:1px dashed var(--border); margin:16px 0; padding-top:14px; }
+  .divider .label { font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); margin-bottom:10px; font-weight:700; }
+
+  .custom-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .custom-row .field { flex:1; margin-bottom:0; }
+  .add-field-btn { font-size:12.5px; font-weight:600; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; }
+
+  .note { font-size:12.5px; color:var(--muted); background:#eef1f6; border:1px dashed var(--border); border-radius:10px; padding:12px 14px; margin-top:4px; }
+  .note b { color:var(--text); }
+  .warn-note { background:#fff6e0; border-color:#f0d488; }
+
+  .col-compare { display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top: 4px; }
+  .col-compare .card { margin-bottom:0; }
+  .col-compare h3 { font-size:13px; margin:0 0 8px; }
+  .col-compare ul { margin:0; padding-left:18px; font-size:12.5px; color:var(--muted); line-height:1.7; }
+  @media (max-width:680px) { .col-compare { grid-template-columns: 1fr; } .row2, .row3 { flex-direction:column; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Typed columns vs. JSONB custom fields</h1>
+    <p>Same document-edit popover, built two ways. Toggle to compare — this is illustrative, nothing here is wired to real data.</p>
+  </header>
+
+  <div class="switcher">
+    <button class="active" onclick="show('typed')">Typed columns (current plan)</button>
+    <button onclick="show('jsonb')">JSONB custom fields</button>
+  </div>
+
+  <!-- TYPED COLUMNS PANEL -->
+  <div class="panel active" id="typed">
+    <div class="card">
+      <h2>Editing: STCW — Arjun Nair</h2>
+      <p class="desc">Every field below is a real, typed column on crew_documents. Adding "Issuing Authority" later means one migration + one new input here.</p>
+      <div class="field"><label>Document number</label><input value="—"></div>
+      <div class="row2">
+        <div class="field"><label>Issue date</label><input value="2024-09-01"></div>
+        <div class="field"><label>Expiry date</label><input value="2026-09-01"></div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn ghost">Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>What adding "Issuing Authority" looks like</h2>
+      <p class="desc">One migration, then the same form gains one more line — nothing else about the page changes.</p>
+      <div class="field"><label>Document number</label><input value="—"></div>
+      <div class="row2">
+        <div class="field"><label>Issue date</label><input value="2024-09-01"></div>
+        <div class="field"><label>Expiry date</label><input value="2026-09-01"></div>
+      </div>
+      <div class="field"><label>Issuing authority <span class="tag" style="margin-left:6px;">new column</span></label><input value="DNV GL"></div>
+    </div>
+
+    <div class="note"><b>Trade-off:</b> every new attribute is a small SQL migration + a form edit. In exchange, every field is properly typed, validated, sortable and exportable from day one — no extra UI work needed to make it usable.</div>
+  </div>
+
+  <!-- JSONB PANEL -->
+  <div class="panel" id="jsonb">
+    <div class="card">
+      <h2>Org settings → Custom Fields</h2>
+      <p class="desc">An admin-managed list, same pattern as Job Roles or Skills — except these fields describe attributes on documents rather than documents themselves.</p>
+      <div class="row3" style="margin-bottom:10px;">
+        <div class="field"><label>Field label</label><input placeholder="e.g. Issuing Authority"></div>
+        <div class="field"><label>Field type</label>
+          <select><option>Text</option><option>Number</option><option>Date</option></select>
+        </div>
+        <div class="field"><label>Applies to</label>
+          <select><option>All document types</option><option>STCW only</option><option>Passport only</option></select>
+        </div>
+      </div>
+      <button class="btn primary">+ Add custom field</button>
+
+      <table style="margin-top:18px;">
+        <thead><tr><th>Label</th><th>Type</th><th>Applies to</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Issuing Authority</td>
+            <td><span class="tag">Text</span></td>
+            <td class="muted">All document types</td>
+            <td><span class="edit-link">Edit</span><span class="del-link">Delete</span></td>
+          </tr>
+          <tr>
+            <td>Renewal Fee</td>
+            <td><span class="tag">Number</span></td>
+            <td class="muted">All document types</td>
+            <td><span class="edit-link">Edit</span><span class="del-link">Delete</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Editing: STCW — Arjun Nair</h2>
+      <p class="desc">Core fields stay typed columns. Custom fields render dynamically underneath, generated from whatever the org has defined above — no code change when a new one is added.</p>
+      <div class="field"><label>Document number</label><input value="—"></div>
+      <div class="row2">
+        <div class="field"><label>Issue date</label><input value="2024-09-01"></div>
+        <div class="field"><label>Expiry date</label><input value="2026-09-01"></div>
+      </div>
+      <div class="divider">
+        <div class="label">Custom fields</div>
+        <div class="custom-row">
+          <div class="field"><label>Issuing Authority</label><input value="DNV GL"></div>
+        </div>
+        <div class="custom-row">
+          <div class="field"><label>Renewal Fee</label><input value="450"></div>
+        </div>
+        <button class="add-field-btn">+ define another custom field in Org Settings</button>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn ghost">Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </div>
+
+    <div class="note warn-note"><b>Trade-off:</b> no migration to add a field — an admin does it themselves in Org Settings, live. In exchange: values live in one JSONB blob (<code>custom_fields->>'issuing_authority'</code> instead of a plain column), so filtering/sorting the matrix on a custom field needs a JSONB index to stay fast, and every custom field needs this generic renderer rather than a hand-built input.</div>
+  </div>
+
+  <div class="col-compare">
+    <div class="card">
+      <h3>Typed columns — best when</h3>
+      <ul>
+        <li>The attribute set is dictated by the domain (maritime/HSE compliance), not by each customer</li>
+        <li>You want every field validated, sortable, exportable with zero extra work</li>
+        <li>New attributes are occasional, not a self-serve customer expectation</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>JSONB custom fields — best when</h3>
+      <ul>
+        <li>Different customer orgs genuinely need different tracked attributes</li>
+        <li>You want admins to self-serve new fields without engineering</li>
+        <li>You're prepared to build (and maintain) the generic field renderer once</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+  function show(id) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.switcher button').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>
