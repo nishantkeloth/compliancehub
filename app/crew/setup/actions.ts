@@ -94,9 +94,16 @@ export async function createClient_(formData: FormData) {
   const name = str(formData, "name");
   if (!name) return { error: "Name is required." };
 
+  const { data: code, error: codeError } = await supabase.rpc("next_number_range_code", {
+    p_org_id: access.orgId,
+    p_entity_type: "client",
+  });
+  if (codeError) return { error: `Could not assign a client code: ${codeError.message}` };
+
   const { error } = await supabase.from("clients").insert({
     org_id: access.orgId,
     name,
+    code,
     contract_number: optStr(formData, "contractNumber"),
     contract_start_date: optStr(formData, "contractStartDate"),
     contract_end_date: optStr(formData, "contractEndDate"),
@@ -150,10 +157,17 @@ export async function createContractor(formData: FormData) {
   const clientId = str(formData, "clientId");
   if (!clientId) return { error: "Client is required." };
 
+  const { data: code, error: codeError } = await supabase.rpc("next_number_range_code", {
+    p_org_id: access.orgId,
+    p_entity_type: "contractor",
+  });
+  if (codeError) return { error: `Could not assign a contractor code: ${codeError.message}` };
+
   const { error } = await supabase.from("contractors").insert({
     org_id: access.orgId,
     client_id: clientId,
     name,
+    code,
     notes: optStr(formData, "notes"),
     created_by: userId,
     updated_by: userId,

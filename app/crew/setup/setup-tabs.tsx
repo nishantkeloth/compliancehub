@@ -35,6 +35,7 @@ type Skill = { id: string; name: string };
 type Client = {
   id: string;
   name: string;
+  code: string | null;
   contract_number: string | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
@@ -45,6 +46,7 @@ type Client = {
 type Contractor = {
   id: string;
   name: string;
+  code: string | null;
   client_id: string;
   notes: string | null;
   is_active: boolean;
@@ -339,6 +341,14 @@ function ClientsPanel({ clients, onChanged }: { clients: Client[]; onChanged: ()
           ) : (
             <div key={c.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
               <div className="flex-1 min-w-[200px]">
+                {c.code && (
+                  <span
+                    className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5 mr-2"
+                    style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
+                  >
+                    {c.code}
+                  </span>
+                )}
                 <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{c.name}</span>
                 {c.contract_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>Contract {c.contract_number}</span>}
                 {(c.contract_start_date || c.contract_end_date) && (
@@ -389,6 +399,14 @@ function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () 
 
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      {client && (
+        <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+          Code:{" "}
+          <span className="font-mono font-semibold" style={{ color: "var(--ch-ink)" }}>
+            {client.code ?? "—"}
+          </span>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
         <input className={inputCls} style={inputStyle} placeholder="Client name" value={name} onChange={(e) => setName(e.target.value)} />
         <input className={inputCls} style={inputStyle} placeholder="Contract number" value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} />
@@ -465,6 +483,14 @@ function ContractorsPanel({
           ) : (
             <div key={c.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
               <div className="flex-1 min-w-[200px]">
+                {c.code && (
+                  <span
+                    className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5 mr-2"
+                    style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
+                  >
+                    {c.code}
+                  </span>
+                )}
                 <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{c.name}</span>
                 <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>under {clientName(c.client_id)}</span>
                 {!c.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
@@ -514,6 +540,14 @@ function ContractorForm({
 
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      {contractor && (
+        <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+          Code:{" "}
+          <span className="font-mono font-semibold" style={{ color: "var(--ch-ink)" }}>
+            {contractor.code ?? "—"}
+          </span>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
         <input className={inputCls} style={inputStyle} placeholder="Contractor name, e.g. Allianz Marine Service" value={name} onChange={(e) => setName(e.target.value)} />
         <select className={inputCls} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>

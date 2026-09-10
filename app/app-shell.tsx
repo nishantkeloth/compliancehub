@@ -74,6 +74,9 @@ export default async function AppShell({
   if (can(access, "team.manage_roles")) {
     adminItems.push({ href: "/team/roles", key: "roles", label: "Roles & Permissions" });
   }
+  if (can(access, "team.manage_number_ranges")) {
+    adminItems.push({ href: "/team/number-ranges", key: "number-ranges", label: "Number Ranges" });
+  }
 
   const navSections: NavSection[] = [
     { title: "Overview", items: overviewItems },

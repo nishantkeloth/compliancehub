@@ -17,8 +17,8 @@ export default async function CrewSetupPage() {
   const [jobRolesRes, skillsRes, clientsRes, contractorsRes, rotationTemplatesRes, offshoreSitesRes, manningRes, documentTypesRes, customFieldDefinitionsRes] = await Promise.all([
     supabase.from("job_roles").select("id, name, category, is_active").eq("org_id", access.orgId).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
-    supabase.from("clients").select("id, name, contract_number, contract_start_date, contract_end_date, billing_model, notes, is_active").eq("org_id", access.orgId).order("name"),
-    supabase.from("contractors").select("id, name, client_id, notes, is_active").eq("org_id", access.orgId).order("name"),
+    supabase.from("clients").select("id, name, code, contract_number, contract_start_date, contract_end_date, billing_model, notes, is_active").eq("org_id", access.orgId).order("name"),
+    supabase.from("contractors").select("id, name, code, client_id, notes, is_active").eq("org_id", access.orgId).order("name"),
     supabase.from("rotation_templates").select("id, name, pattern_type, days_on, days_off, notes, is_active").eq("org_id", access.orgId).order("name"),
     supabase
       .from("offshore_sites")
