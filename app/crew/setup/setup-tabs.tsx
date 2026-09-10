@@ -25,6 +25,9 @@ import {
   createContractor,
   updateContractor,
   deleteContractor,
+  createCustomFieldDefinition,
+  updateCustomFieldDefinition,
+  deleteCustomFieldDefinition,
 } from "./actions";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
@@ -79,8 +82,17 @@ type DocumentType = {
   tracks_number: boolean;
   is_active: boolean;
 };
+type CustomFieldDefinition = {
+  id: string;
+  label: string;
+  field_key: string;
+  field_type: string;
+  applies_to_document_type_id: string | null;
+  sort_order: number;
+  is_active: boolean;
+};
 
-const TABS = ["Job Roles", "Skills", "Clients", "Contractors", "Rotation Templates", "Offshore Sites", "Document Types"] as const;
+const TABS = ["Job Roles", "Skills", "Clients", "Contractors", "Rotation Templates", "Offshore Sites", "Document Types", "Custom Fields"] as const;
 type Tab = (typeof TABS)[number];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -97,6 +109,7 @@ export default function SetupTabs({
   offshoreSites,
   manningRequirements,
   documentTypes,
+  customFieldDefinitions,
 }: {
   jobRoles: JobRole[];
   skills: Skill[];
@@ -106,6 +119,7 @@ export default function SetupTabs({
   offshoreSites: OffshoreSite[];
   manningRequirements: ManningReq[];
   documentTypes: DocumentType[];
+  customFieldDefinitions: CustomFieldDefinition[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
   const router = useRouter();
@@ -147,6 +161,9 @@ export default function SetupTabs({
         />
       )}
       {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} onChanged={refresh} />}
+      {tab === "Custom Fields" && (
+        <CustomFieldDefinitionsPanel customFieldDefinitions={customFieldDefinitions} documentTypes={documentTypes} onChanged={refresh} />
+      )}
     </div>
   );
 }
@@ -981,6 +998,137 @@ function DocumentTypeForm({
       </div>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          {pending ? "Saving…" : "Save"}
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
+/* ================= Custom Field Definitions ================= */
+
+const FIELD_TYPES = [
+  { value: "text", label: "Text" },
+  { value: "number", label: "Number" },
+  { value: "date", label: "Date" },
+];
+
+function CustomFieldDefinitionsPanel({
+  customFieldDefinitions,
+  documentTypes,
+  onChanged,
+}: {
+  customFieldDefinitions: CustomFieldDefinition[];
+  documentTypes: DocumentType[];
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const appliesToLabel = (id: string | null) => (id ? documentTypes.find((t) => t.id === id)?.name ?? "—" : "All document types");
+
+  return (
+    <div>
+      <p className="text-sm mb-4" style={{ color: "var(--ch-sub)" }}>
+        Org-defined attributes for documents & certifications — beyond the standard document
+        number, issue/expiry dates and sponsor. A field defined here shows up automatically in
+        every relevant document's edit form, no code change needed.
+      </p>
+      {adding ? (
+        <CustomFieldDefinitionForm documentTypes={documentTypes} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+      ) : (
+        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add custom field</button>
+      )}
+
+      <div className="space-y-2 mt-4">
+        {customFieldDefinitions.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No custom fields defined yet.</div>}
+        {customFieldDefinitions.map((f) =>
+          editingId === f.id ? (
+            <CustomFieldDefinitionForm
+              key={f.id}
+              definition={f}
+              documentTypes={documentTypes}
+              onDone={() => { setEditingId(null); onChanged(); }}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <div key={f.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
+              <div className="flex-1 min-w-[200px]">
+                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{f.label}</span>
+                <span className="text-xs ml-2 uppercase font-semibold" style={{ color: "var(--ch-navy)" }}>
+                  {FIELD_TYPES.find((t) => t.value === f.field_type)?.label ?? f.field_type}
+                </span>
+                <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{appliesToLabel(f.applies_to_document_type_id)}</span>
+                {!f.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+              </div>
+              <button onClick={() => setEditingId(f.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onDelete={() => deleteCustomFieldDefinition(f.id).then(onChanged)} label="custom field" />
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CustomFieldDefinitionForm({
+  definition,
+  documentTypes,
+  onDone,
+  onCancel,
+}: {
+  definition?: CustomFieldDefinition;
+  documentTypes: DocumentType[];
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState(definition?.label ?? "");
+  const [fieldType, setFieldType] = useState(definition?.field_type ?? "text");
+  const [appliesTo, setAppliesTo] = useState(definition?.applies_to_document_type_id ?? "");
+  const [isActive, setIsActive] = useState(definition?.is_active ?? true);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const save = () => {
+    if (!label.trim()) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("label", label.trim());
+    fd.set("fieldType", fieldType);
+    fd.set("appliesToDocumentTypeId", appliesTo);
+    if (isActive) fd.set("isActive", "on");
+    startTransition(async () => {
+      const res = definition ? await updateCustomFieldDefinition(definition.id, fd) : await createCustomFieldDefinition(fd);
+      if (res?.error) { setError(res.error); return; }
+      onDone();
+    });
+  };
+
+  return (
+    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        <input className={inputCls} style={inputStyle} placeholder="Field label, e.g. Issuing Authority" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <select className={inputCls} style={inputStyle} value={fieldType} onChange={(e) => setFieldType(e.target.value)}>
+          {FIELD_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </select>
+        <select className={inputCls} style={inputStyle} value={appliesTo} onChange={(e) => setAppliesTo(e.target.value)}>
+          <option value="">All document types</option>
+          {documentTypes.map((t) => (
+            <option key={t.id} value={t.id}>{t.name} only</option>
+          ))}
+        </select>
+      </div>
+      {definition && (
+        <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
+        </label>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={pending || !label.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           {pending ? "Saving…" : "Save"}
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

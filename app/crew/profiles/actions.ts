@@ -273,6 +273,20 @@ export async function deleteCrewAssignment(id: string, crewId: string) {
 
 /* ---------------- Crew documents & certifications ---------------- */
 
+// Custom-field values are submitted as a single JSON-encoded object (the
+// client only includes keys for definitions that apply to the selected
+// document type), so this just needs to parse it defensively.
+function parseCustomFields(formData: FormData): Record<string, unknown> {
+  const raw = str(formData, "customFields");
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function createCrewDocument(crewId: string, formData: FormData) {
   const { supabase, access, userId } = await requireDocumentsManage();
   const documentTypeId = str(formData, "documentTypeId");
@@ -291,6 +305,7 @@ export async function createCrewDocument(crewId: string, formData: FormData) {
     dose_number: optStr(formData, "doseNumber"),
     reliever_crew_id: optStr(formData, "relieverCrewId"),
     notes: optStr(formData, "notes"),
+    custom_fields: parseCustomFields(formData),
     created_by: userId,
     updated_by: userId,
   });
@@ -317,6 +332,7 @@ export async function updateCrewDocument(id: string, crewId: string, formData: F
       dose_number: optStr(formData, "doseNumber"),
       reliever_crew_id: optStr(formData, "relieverCrewId"),
       notes: optStr(formData, "notes"),
+      custom_fields: parseCustomFields(formData),
       updated_by: userId,
     })
     .eq("id", id);

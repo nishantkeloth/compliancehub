@@ -396,3 +396,65 @@ export async function deleteDocumentType(id: string) {
   revalidateSetup();
   return {};
 }
+
+/* ---------------- Document custom field definitions ---------------- */
+
+function slugify(label: string) {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+export async function createCustomFieldDefinition(formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const label = str(formData, "label");
+  if (!label) return { error: "Label is required." };
+  const fieldType = str(formData, "fieldType") || "text";
+  const fieldKey = slugify(label);
+  if (!fieldKey) return { error: "Label must contain at least one letter or number." };
+
+  const { error } = await supabase.from("document_custom_field_definitions").insert({
+    org_id: access.orgId,
+    label,
+    field_key: fieldKey,
+    field_type: fieldType,
+    applies_to_document_type_id: optStr(formData, "appliesToDocumentTypeId"),
+    created_by: userId,
+  });
+  if (error) {
+    if (error.code === "23505") return { error: "A custom field with a similar name already exists." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  return {};
+}
+
+export async function updateCustomFieldDefinition(id: string, formData: FormData) {
+  const { supabase } = await requireCrewManage();
+  const label = str(formData, "label");
+  if (!label) return { error: "Label is required." };
+  const fieldType = str(formData, "fieldType") || "text";
+
+  const { error } = await supabase
+    .from("document_custom_field_definitions")
+    .update({
+      label,
+      field_type: fieldType,
+      applies_to_document_type_id: optStr(formData, "appliesToDocumentTypeId"),
+      is_active: formData.get("isActive") === "on",
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function deleteCustomFieldDefinition(id: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("document_custom_field_definitions").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}

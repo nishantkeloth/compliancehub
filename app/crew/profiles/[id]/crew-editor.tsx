@@ -80,6 +80,16 @@ type CrewDocument = {
   dose_number: string | null;
   reliever_crew_id: string | null;
   notes: string | null;
+  custom_fields: Record<string, unknown> | null;
+};
+type CustomFieldDefinition = {
+  id: string;
+  label: string;
+  field_key: string;
+  field_type: string;
+  applies_to_document_type_id: string | null;
+  sort_order: number;
+  is_active: boolean;
 };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -111,6 +121,7 @@ export default function CrewEditor({
   documentTypes,
   crewDocuments,
   crewList,
+  customFieldDefinitions,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -129,6 +140,7 @@ export default function CrewEditor({
   documentTypes: DocumentType[];
   crewDocuments: CrewDocument[];
   crewList: Ref[];
+  customFieldDefinitions: CustomFieldDefinition[];
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -149,6 +161,7 @@ export default function CrewEditor({
           documentTypes={documentTypes}
           crewDocuments={crewDocuments}
           crewList={crewList}
+          customFieldDefinitions={customFieldDefinitions}
           canManage={canManageDocuments}
           onChanged={refresh}
         />
@@ -576,6 +589,7 @@ function DocumentsSection({
   documentTypes,
   crewDocuments,
   crewList,
+  customFieldDefinitions,
   canManage,
   onChanged,
 }: {
@@ -583,6 +597,7 @@ function DocumentsSection({
   documentTypes: DocumentType[];
   crewDocuments: CrewDocument[];
   crewList: Ref[];
+  customFieldDefinitions: CustomFieldDefinition[];
   canManage: boolean;
   onChanged: () => void;
 }) {
@@ -591,6 +606,9 @@ function DocumentsSection({
 
   const typeById = (id: string) => documentTypes.find((d) => d.id === id);
   const sorted = [...crewDocuments].sort((a, b) => (typeById(a.document_type_id)?.name ?? "").localeCompare(typeById(b.document_type_id)?.name ?? ""));
+
+  const applicableFields = (documentTypeId: string) =>
+    customFieldDefinitions.filter((f) => f.applies_to_document_type_id === null || f.applies_to_document_type_id === documentTypeId);
 
   return (
     <div className={cardCls} style={cardStyle}>
@@ -608,6 +626,7 @@ function DocumentsSection({
                 crewDocument={d}
                 documentTypes={documentTypes}
                 crewList={crewList}
+                customFieldDefinitions={customFieldDefinitions}
                 onDone={() => { setEditingId(null); onChanged(); }}
                 onCancel={() => setEditingId(null)}
               />
@@ -615,6 +634,13 @@ function DocumentsSection({
           }
           const { status, daysRemaining } = computeDocumentStatus(d.expiry_date, type?.warning_threshold_days ?? null, type?.category ?? null);
           const colors = DOCUMENT_STATUS_COLORS[status];
+          const fields = applicableFields(d.document_type_id);
+          const customValues = fields
+            .map((f) => {
+              const v = d.custom_fields?.[f.field_key];
+              return v !== undefined && v !== null && v !== "" ? `${f.label}: ${v}` : null;
+            })
+            .filter(Boolean);
           return (
             <div key={d.id} className="flex items-center gap-3 flex-wrap rounded-lg border px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
               <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ background: colors.bg, color: colors.fg }}>
@@ -627,6 +653,9 @@ function DocumentsSection({
                   <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
                     expires {d.expiry_date}{daysRemaining != null ? ` (${daysRemaining}d)` : ""}
                   </span>
+                )}
+                {customValues.length > 0 && (
+                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>· {customValues.join(" · ")}</span>
                 )}
               </div>
               {canManage && (
@@ -646,6 +675,7 @@ function DocumentsSection({
             crewId={crewId}
             documentTypes={documentTypes}
             crewList={crewList}
+            customFieldDefinitions={customFieldDefinitions}
             onDone={() => { setAdding(false); onChanged(); }}
             onCancel={() => setAdding(false)}
           />
@@ -673,6 +703,7 @@ function DocumentForm({
   crewDocument,
   documentTypes,
   crewList,
+  customFieldDefinitions,
   onDone,
   onCancel,
 }: {
@@ -680,6 +711,7 @@ function DocumentForm({
   crewDocument?: CrewDocument;
   documentTypes: DocumentType[];
   crewList: Ref[];
+  customFieldDefinitions: CustomFieldDefinition[];
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -693,6 +725,13 @@ function DocumentForm({
   const [doseNumber, setDoseNumber] = useState(crewDocument?.dose_number ?? "");
   const [relieverCrewId, setRelieverCrewId] = useState(crewDocument?.reliever_crew_id ?? "");
   const [notes, setNotes] = useState(crewDocument?.notes ?? "");
+  const [customValues, setCustomValues] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const [k, v] of Object.entries(crewDocument?.custom_fields ?? {})) {
+      initial[k] = v == null ? "" : String(v);
+    }
+    return initial;
+  });
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -700,6 +739,9 @@ function DocumentForm({
   const isVisa = selectedType?.category === "visa";
   const isVaccination = selectedType?.category === "vaccination";
   const tracksNumber = selectedType?.tracks_number ?? true;
+  const applicableFields = customFieldDefinitions.filter(
+    (f) => f.applies_to_document_type_id === null || f.applies_to_document_type_id === documentTypeId
+  );
 
   const save = () => {
     if (!documentTypeId) return;
@@ -715,6 +757,13 @@ function DocumentForm({
     fd.set("doseNumber", doseNumber.trim());
     fd.set("relieverCrewId", relieverCrewId);
     fd.set("notes", notes.trim());
+    const customFieldsPayload: Record<string, string | number> = {};
+    for (const f of applicableFields) {
+      const raw = (customValues[f.field_key] ?? "").trim();
+      if (!raw) continue;
+      customFieldsPayload[f.field_key] = f.field_type === "number" ? Number(raw) : raw;
+    }
+    fd.set("customFields", JSON.stringify(customFieldsPayload));
     startTransition(async () => {
       const res = crewDocument
         ? await updateCrewDocument(crewDocument.id, crewId, fd)
@@ -773,6 +822,25 @@ function DocumentForm({
             <option value="">No reliever</option>
             {crewList.filter((c) => c.id !== crewId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+        </div>
+      )}
+      {applicableFields.length > 0 && (
+        <div className="mb-3 pt-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
+          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-sub)" }}>Custom fields</div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {applicableFields.map((f) => (
+              <label key={f.id} className="text-xs" style={{ color: "var(--ch-sub)" }}>
+                {f.label}
+                <input
+                  type={f.field_type === "date" ? "date" : f.field_type === "number" ? "number" : "text"}
+                  className={`${inputCls} w-full mt-1`}
+                  style={inputStyle}
+                  value={customValues[f.field_key] ?? ""}
+                  onChange={(e) => setCustomValues((v) => ({ ...v, [f.field_key]: e.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
         </div>
       )}
       <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />

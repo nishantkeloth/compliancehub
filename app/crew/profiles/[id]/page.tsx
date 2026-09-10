@@ -48,6 +48,7 @@ export default async function CrewProfileDetailPage({
     documentTypesRes,
     crewDocumentsRes,
     crewListRes,
+    customFieldDefinitionsRes,
   ] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -75,12 +76,20 @@ export default async function CrewProfileDetailPage({
       ? supabase
           .from("crew_documents")
           .select(
-            "id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes"
+            "id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields"
           )
           .eq("crew_id", id)
       : Promise.resolve({ data: [] }),
     canViewDocuments
       ? supabase.from("crew_profiles").select("id, full_name").eq("org_id", access.orgId).order("full_name")
+      : Promise.resolve({ data: [] }),
+    canViewDocuments
+      ? supabase
+          .from("document_custom_field_definitions")
+          .select("id, label, field_key, field_type, applies_to_document_type_id, sort_order, is_active")
+          .eq("org_id", access.orgId)
+          .eq("is_active", true)
+          .order("sort_order")
       : Promise.resolve({ data: [] }),
   ]);
 
@@ -108,6 +117,7 @@ export default async function CrewProfileDetailPage({
         documentTypes={documentTypesRes.data ?? []}
         crewDocuments={crewDocumentsRes.data ?? []}
         crewList={(crewListRes.data ?? []).map((c: any) => ({ id: c.id, name: c.full_name }))}
+        customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
       />
     </AppShell>
   );
