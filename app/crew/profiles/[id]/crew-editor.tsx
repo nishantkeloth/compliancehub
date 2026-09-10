@@ -160,17 +160,53 @@ export default function CrewEditor({
   const router = useRouter();
   const refresh = () => router.refresh();
 
+  // Same nine sections as before, just grouped into tabs instead of one
+  // long stack of cards — nothing about how any individual section works
+  // (optimistic updates, its own save/add/remove logic) changed at all.
+  // Tabs only present when there's something to show in them (a viewer
+  // without canViewCost/canViewSensitive never sees an empty "Restricted"
+  // tab, etc).
+  const tabs: { key: string; label: string }[] = [
+    { key: "general", label: "General" },
+    { key: "skills", label: "Skills & Roles" },
+    { key: "assignment", label: "Assignment" },
+    ...(canViewDocuments ? [{ key: "documents", label: "Documents" }] : []),
+    ...(canViewCost || canViewSensitive ? [{ key: "restricted", label: "Cost & Sensitive" }] : []),
+    ...(canManage ? [{ key: "account", label: "Account" }] : []),
+  ];
+  const [activeTab, setActiveTab] = useState(tabs[0].key);
+
   return (
     <div className="mt-4 max-w-3xl">
-      <GeneralForm crew={crew} canManage={canManage} jobRoles={jobRoles} rotationTemplates={rotationTemplates} onSaved={refresh} />
+      <div className="flex items-center gap-1 rounded-lg border p-1 mb-4 flex-wrap w-fit" style={{ borderColor: "var(--ch-line)" }}>
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className="px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap"
+            style={activeTab === t.key ? { background: "var(--ch-navy)", color: "#fff" } : { color: "var(--ch-sub)" }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-      <SkillsSection crewId={crew.id} skills={skills} crewSkills={crewSkills} canManage={canManage} onChanged={refresh} />
+      {activeTab === "general" && (
+        <GeneralForm crew={crew} canManage={canManage} jobRoles={jobRoles} rotationTemplates={rotationTemplates} onSaved={refresh} />
+      )}
 
-      <SecondaryRolesSection crewId={crew.id} jobRoles={jobRoles} secondaryRoles={secondaryRoles} canManage={canManage} onChanged={refresh} />
+      {activeTab === "skills" && (
+        <>
+          <SkillsSection crewId={crew.id} skills={skills} crewSkills={crewSkills} canManage={canManage} onChanged={refresh} />
+          <SecondaryRolesSection crewId={crew.id} jobRoles={jobRoles} secondaryRoles={secondaryRoles} canManage={canManage} onChanged={refresh} />
+        </>
+      )}
 
-      <AssignmentSection crewId={crew.id} offshoreSites={offshoreSites} assignments={assignments} canManage={canManage} onChanged={refresh} />
+      {activeTab === "assignment" && (
+        <AssignmentSection crewId={crew.id} offshoreSites={offshoreSites} assignments={assignments} canManage={canManage} onChanged={refresh} />
+      )}
 
-      {canViewDocuments && (
+      {activeTab === "documents" && canViewDocuments && (
         <DocumentsSection
           crewId={crew.id}
           documentTypes={documentTypes}
@@ -182,13 +218,19 @@ export default function CrewEditor({
         />
       )}
 
-      {canViewCost && <CostForm crew={crew} canManage={canManage} onSaved={refresh} />}
+      {activeTab === "restricted" && (
+        <>
+          {canViewCost && <CostForm crew={crew} canManage={canManage} onSaved={refresh} />}
+          {canViewSensitive && <SensitiveForm crew={crew} canManage={canManage} onSaved={refresh} />}
+        </>
+      )}
 
-      {canViewSensitive && <SensitiveForm crew={crew} canManage={canManage} onSaved={refresh} />}
-
-      {canManage && <LinkedUserForm crew={crew} profiles={profiles} onSaved={refresh} />}
-
-      {canManage && <DangerZone crewId={crew.id} />}
+      {activeTab === "account" && canManage && (
+        <>
+          <LinkedUserForm crew={crew} profiles={profiles} onSaved={refresh} />
+          <DangerZone crewId={crew.id} />
+        </>
+      )}
     </div>
   );
 }
