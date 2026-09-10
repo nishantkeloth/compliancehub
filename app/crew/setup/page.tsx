@@ -14,15 +14,16 @@ export default async function CrewSetupPage() {
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "crew.manage")) redirect("/");
 
-  const [jobRolesRes, skillsRes, clientsRes, rotationTemplatesRes, offshoreSitesRes, manningRes] = await Promise.all([
+  const [jobRolesRes, skillsRes, clientsRes, contractorsRes, rotationTemplatesRes, offshoreSitesRes, manningRes, documentTypesRes] = await Promise.all([
     supabase.from("job_roles").select("id, name, category, is_active").eq("org_id", access.orgId).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
     supabase.from("clients").select("id, name, contract_number, contract_start_date, contract_end_date, billing_model, notes, is_active").eq("org_id", access.orgId).order("name"),
+    supabase.from("contractors").select("id, name, client_id, notes, is_active").eq("org_id", access.orgId).order("name"),
     supabase.from("rotation_templates").select("id, name, pattern_type, days_on, days_off, notes, is_active").eq("org_id", access.orgId).order("name"),
     supabase
       .from("offshore_sites")
       .select(
-        "id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status, notes, client_id, standard_rotation_template_id"
+        "id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status, notes, contractor_id, standard_rotation_template_id"
       )
       .eq("org_id", access.orgId)
       .order("name"),
@@ -30,6 +31,11 @@ export default async function CrewSetupPage() {
       .from("site_manning_requirements")
       .select("id, offshore_site_id, job_role_id, minimum_headcount")
       .eq("org_id", access.orgId),
+    supabase
+      .from("document_types")
+      .select("id, name, category, default_validity_months, warning_threshold_days, tracks_number, is_active")
+      .eq("org_id", access.orgId)
+      .order("name"),
   ]);
 
   return (
@@ -44,9 +50,11 @@ export default async function CrewSetupPage() {
         jobRoles={jobRolesRes.data ?? []}
         skills={skillsRes.data ?? []}
         clients={clientsRes.data ?? []}
+        contractors={contractorsRes.data ?? []}
         rotationTemplates={rotationTemplatesRes.data ?? []}
         offshoreSites={offshoreSitesRes.data ?? []}
         manningRequirements={manningRes.data ?? []}
+        documentTypes={documentTypesRes.data ?? []}
       />
     </AppShell>
   );

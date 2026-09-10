@@ -18,6 +18,25 @@ async function requireCrewManage() {
   return { supabase, access, userId: user.id };
 }
 
+// Documents/certifications are gated behind their own crew.documents.manage
+// permission (mirrors crew.view_cost / crew.view_sensitive) rather than the
+// general crew.manage, since sponsor/document-number fields are sensitive
+// enough to warrant a separate grant — matches the RLS policies on
+// crew_documents, which check the same permission key.
+async function requireDocumentsManage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in.");
+  const access = await getEffectiveAccess(supabase, user.id);
+  if (!can(access, "crew.documents.manage")) {
+    throw new Error("You don't have permission to manage crew documents.");
+  }
+  if (!access.orgId) throw new Error("No company context.");
+  return { supabase, access, userId: user.id };
+}
+
 function str(formData: FormData, key: string) {
   const v = formData.get(key);
   return typeof v === "string" ? v.trim() : "";
@@ -196,6 +215,119 @@ export async function addCrewSecondaryRole(crewId: string, jobRoleId: string) {
 export async function removeCrewSecondaryRole(id: string, crewId: string) {
   const { supabase } = await requireCrewManage();
   const { error } = await supabase.from("crew_secondary_roles").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  return {};
+}
+
+/* ---------------- Crew vessel assignments ---------------- */
+
+export async function assignCrewToSite(crewId: string, formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const offshoreSiteId = str(formData, "offshoreSiteId");
+  if (!offshoreSiteId) return { error: "Select a vessel." };
+  const startDate = str(formData, "startDate") || new Date().toISOString().slice(0, 10);
+
+  // Close out any currently-open assignment for this crew member first — only
+  // one open (end_date is null) assignment per crew_id is allowed (DB constraint).
+  const { error: closeError } = await supabase
+    .from("crew_assignments")
+    .update({ end_date: startDate, updated_by: userId })
+    .eq("crew_id", crewId)
+    .is("end_date", null);
+  if (closeError) return { error: closeError.message };
+
+  const { error } = await supabase.from("crew_assignments").insert({
+    org_id: access.orgId,
+    crew_id: crewId,
+    offshore_site_id: offshoreSiteId,
+    start_date: startDate,
+    notes: optStr(formData, "notes"),
+    created_by: userId,
+    updated_by: userId,
+  });
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  return {};
+}
+
+export async function endCrewAssignment(id: string, crewId: string, formData: FormData) {
+  const { supabase, userId } = await requireCrewManage();
+  const endDate = str(formData, "endDate") || new Date().toISOString().slice(0, 10);
+  const { error } = await supabase
+    .from("crew_assignments")
+    .update({ end_date: endDate, updated_by: userId })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  return {};
+}
+
+export async function deleteCrewAssignment(id: string, crewId: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("crew_assignments").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  return {};
+}
+
+/* ---------------- Crew documents & certifications ---------------- */
+
+export async function createCrewDocument(crewId: string, formData: FormData) {
+  const { supabase, access, userId } = await requireDocumentsManage();
+  const documentTypeId = str(formData, "documentTypeId");
+  if (!documentTypeId) return { error: "Select a document type." };
+
+  const { error } = await supabase.from("crew_documents").insert({
+    org_id: access.orgId,
+    crew_id: crewId,
+    document_type_id: documentTypeId,
+    document_number: optStr(formData, "documentNumber"),
+    sponsor: optStr(formData, "sponsor"),
+    issue_date: optStr(formData, "issueDate"),
+    expiry_date: optStr(formData, "expiryDate"),
+    entry_date: optStr(formData, "entryDate"),
+    extension_date: optStr(formData, "extensionDate"),
+    dose_number: optStr(formData, "doseNumber"),
+    reliever_crew_id: optStr(formData, "relieverCrewId"),
+    notes: optStr(formData, "notes"),
+    created_by: userId,
+    updated_by: userId,
+  });
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  return {};
+}
+
+export async function updateCrewDocument(id: string, crewId: string, formData: FormData) {
+  const { supabase, userId } = await requireDocumentsManage();
+  const documentTypeId = str(formData, "documentTypeId");
+  if (!documentTypeId) return { error: "Select a document type." };
+
+  const { error } = await supabase
+    .from("crew_documents")
+    .update({
+      document_type_id: documentTypeId,
+      document_number: optStr(formData, "documentNumber"),
+      sponsor: optStr(formData, "sponsor"),
+      issue_date: optStr(formData, "issueDate"),
+      expiry_date: optStr(formData, "expiryDate"),
+      entry_date: optStr(formData, "entryDate"),
+      extension_date: optStr(formData, "extensionDate"),
+      dose_number: optStr(formData, "doseNumber"),
+      reliever_crew_id: optStr(formData, "relieverCrewId"),
+      notes: optStr(formData, "notes"),
+      updated_by: userId,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  return {};
+}
+
+export async function deleteCrewDocument(id: string, crewId: string) {
+  const { supabase } = await requireDocumentsManage();
+  const { error } = await supabase.from("crew_documents").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(crewId);
   return {};

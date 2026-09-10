@@ -19,6 +19,12 @@ import {
   deleteOffshoreSite,
   setManningRequirement,
   deleteManningRequirement,
+  createDocumentType,
+  updateDocumentType,
+  deleteDocumentType,
+  createContractor,
+  updateContractor,
+  deleteContractor,
 } from "./actions";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
@@ -30,6 +36,13 @@ type Client = {
   contract_start_date: string | null;
   contract_end_date: string | null;
   billing_model: string | null;
+  notes: string | null;
+  is_active: boolean;
+};
+type Contractor = {
+  id: string;
+  name: string;
+  client_id: string;
   notes: string | null;
   is_active: boolean;
 };
@@ -53,12 +66,21 @@ type OffshoreSite = {
   crew_change_location: string | null;
   status: string;
   notes: string | null;
-  client_id: string | null;
+  contractor_id: string | null;
   standard_rotation_template_id: string | null;
 };
 type ManningReq = { id: string; offshore_site_id: string; job_role_id: string; minimum_headcount: number };
+type DocumentType = {
+  id: string;
+  name: string;
+  category: string | null;
+  default_validity_months: number | null;
+  warning_threshold_days: number | null;
+  tracks_number: boolean;
+  is_active: boolean;
+};
 
-const TABS = ["Job Roles", "Skills", "Clients", "Rotation Templates", "Offshore Sites"] as const;
+const TABS = ["Job Roles", "Skills", "Clients", "Contractors", "Rotation Templates", "Offshore Sites", "Document Types"] as const;
 type Tab = (typeof TABS)[number];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -70,16 +92,20 @@ export default function SetupTabs({
   jobRoles,
   skills,
   clients,
+  contractors,
   rotationTemplates,
   offshoreSites,
   manningRequirements,
+  documentTypes,
 }: {
   jobRoles: JobRole[];
   skills: Skill[];
   clients: Client[];
+  contractors: Contractor[];
   rotationTemplates: RotationTemplate[];
   offshoreSites: OffshoreSite[];
   manningRequirements: ManningReq[];
+  documentTypes: DocumentType[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
   const router = useRouter();
@@ -107,10 +133,12 @@ export default function SetupTabs({
       {tab === "Job Roles" && <JobRolesPanel jobRoles={jobRoles} onChanged={refresh} />}
       {tab === "Skills" && <SkillsPanel skills={skills} onChanged={refresh} />}
       {tab === "Clients" && <ClientsPanel clients={clients} onChanged={refresh} />}
+      {tab === "Contractors" && <ContractorsPanel contractors={contractors} clients={clients} onChanged={refresh} />}
       {tab === "Rotation Templates" && <RotationTemplatesPanel templates={rotationTemplates} onChanged={refresh} />}
       {tab === "Offshore Sites" && (
         <OffshoreSitesPanel
           sites={offshoreSites}
+          contractors={contractors}
           clients={clients}
           rotationTemplates={rotationTemplates}
           jobRoles={jobRoles}
@@ -118,6 +146,7 @@ export default function SetupTabs({
           onChanged={refresh}
         />
       )}
+      {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} onChanged={refresh} />}
     </div>
   );
 }
@@ -376,6 +405,122 @@ function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () 
   );
 }
 
+/* ================= Contractors (EPC contractors, under a client) ================= */
+
+function ContractorsPanel({
+  contractors,
+  clients,
+  onChanged,
+}: {
+  contractors: Contractor[];
+  clients: Client[];
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "—";
+
+  return (
+    <div>
+      {clients.length === 0 && (
+        <div className="text-sm mb-4" style={{ color: "var(--ch-sub)" }}>
+          Add a client first (Clients tab) before adding EPC contractors under them.
+        </div>
+      )}
+      {adding ? (
+        <ContractorForm clients={clients} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+      ) : (
+        <button
+          onClick={() => setAdding(true)}
+          disabled={clients.length === 0}
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4 disabled:opacity-50"
+        >
+          + Add contractor
+        </button>
+      )}
+
+      <div className="space-y-2 mt-4">
+        {contractors.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No EPC contractors yet.</div>}
+        {contractors.map((c) =>
+          editingId === c.id ? (
+            <ContractorForm key={c.id} contractor={c} clients={clients} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
+          ) : (
+            <div key={c.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
+              <div className="flex-1 min-w-[200px]">
+                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{c.name}</span>
+                <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>under {clientName(c.client_id)}</span>
+                {!c.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+              </div>
+              <button onClick={() => setEditingId(c.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onDelete={() => deleteContractor(c.id).then(onChanged)} label="contractor" />
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ContractorForm({
+  contractor,
+  clients,
+  onDone,
+  onCancel,
+}: {
+  contractor?: Contractor;
+  clients: Client[];
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(contractor?.name ?? "");
+  const [clientId, setClientId] = useState(contractor?.client_id ?? clients[0]?.id ?? "");
+  const [notes, setNotes] = useState(contractor?.notes ?? "");
+  const [isActive, setIsActive] = useState(contractor?.is_active ?? true);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const save = () => {
+    if (!name.trim() || !clientId) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("name", name.trim());
+    fd.set("clientId", clientId);
+    fd.set("notes", notes.trim());
+    if (isActive) fd.set("isActive", "on");
+    startTransition(async () => {
+      const res = contractor ? await updateContractor(contractor.id, fd) : await createContractor(fd);
+      if (res?.error) { setError(res.error); return; }
+      onDone();
+    });
+  };
+
+  return (
+    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+        <input className={inputCls} style={inputStyle} placeholder="Contractor name, e.g. Allianz Marine Service" value={name} onChange={(e) => setName(e.target.value)} />
+        <select className={inputCls} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
+          <option value="">Select client…</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </div>
+      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
+        </label>
+        <button onClick={save} disabled={pending || !name.trim() || !clientId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          {pending ? "Saving…" : "Save"}
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
 /* ================= Rotation Templates ================= */
 
 function RotationTemplatesPanel({ templates, onChanged }: { templates: RotationTemplate[]; onChanged: () => void }) {
@@ -480,6 +625,7 @@ const SITE_TYPES = ["vessel", "rig", "platform", "barge", "camp", "fpso", "other
 
 function OffshoreSitesPanel({
   sites,
+  contractors,
   clients,
   rotationTemplates,
   jobRoles,
@@ -487,6 +633,7 @@ function OffshoreSitesPanel({
   onChanged,
 }: {
   sites: OffshoreSite[];
+  contractors: Contractor[];
   clients: Client[];
   rotationTemplates: RotationTemplate[];
   jobRoles: JobRole[];
@@ -497,13 +644,17 @@ function OffshoreSitesPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const clientName = (id: string | null) => clients.find((c) => c.id === id)?.name ?? "—";
-  const rotationName = (id: string | null) => rotationTemplates.find((r) => r.id === id)?.name ?? "—";
+  const contractorLabel = (id: string | null) => {
+    const contractor = contractors.find((c) => c.id === id);
+    if (!contractor) return "—";
+    const client = clients.find((cl) => cl.id === contractor.client_id);
+    return client ? `${contractor.name} (${client.name})` : contractor.name;
+  };
 
   return (
     <div>
       {adding ? (
-        <OffshoreSiteForm clients={clients} rotationTemplates={rotationTemplates} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+        <OffshoreSiteForm contractors={contractors} rotationTemplates={rotationTemplates} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
       ) : (
         <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add offshore site</button>
       )}
@@ -515,7 +666,7 @@ function OffshoreSitesPanel({
             <OffshoreSiteForm
               key={s.id}
               site={s}
-              clients={clients}
+              contractors={contractors}
               rotationTemplates={rotationTemplates}
               onDone={() => { setEditingId(null); onChanged(); }}
               onCancel={() => setEditingId(null)}
@@ -527,7 +678,7 @@ function OffshoreSitesPanel({
                   <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{s.name}</span>
                   {s.code && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{s.code}</span>}
                   <span className="text-xs ml-2 uppercase font-semibold" style={{ color: "var(--ch-navy)" }}>{s.site_type}</span>
-                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{clientName(s.client_id)}</span>
+                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{contractorLabel(s.contractor_id)}</span>
                   {s.status !== "active" && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
                 </div>
                 <button onClick={() => setExpandedId(expandedId === s.id ? null : s.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>
@@ -556,13 +707,13 @@ function OffshoreSitesPanel({
 
 function OffshoreSiteForm({
   site,
-  clients,
+  contractors,
   rotationTemplates,
   onDone,
   onCancel,
 }: {
   site?: OffshoreSite;
-  clients: Client[];
+  contractors: Contractor[];
   rotationTemplates: RotationTemplate[];
   onDone: () => void;
   onCancel: () => void;
@@ -570,7 +721,7 @@ function OffshoreSiteForm({
   const [name, setName] = useState(site?.name ?? "");
   const [code, setCode] = useState(site?.code ?? "");
   const [siteType, setSiteType] = useState(site?.site_type ?? "other");
-  const [clientId, setClientId] = useState(site?.client_id ?? "");
+  const [contractorId, setContractorId] = useState(site?.contractor_id ?? "");
   const [country, setCountry] = useState(site?.country ?? "");
   const [operatingRegion, setOperatingRegion] = useState(site?.operating_region ?? "");
   const [portOrHeliport, setPortOrHeliport] = useState(site?.port_or_heliport ?? "");
@@ -588,7 +739,7 @@ function OffshoreSiteForm({
     fd.set("name", name.trim());
     fd.set("code", code.trim());
     fd.set("siteType", siteType);
-    fd.set("clientId", clientId);
+    fd.set("contractorId", contractorId);
     fd.set("country", country.trim());
     fd.set("operatingRegion", operatingRegion.trim());
     fd.set("portOrHeliport", portOrHeliport.trim());
@@ -615,9 +766,9 @@ function OffshoreSiteForm({
         </select>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select className={inputCls} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-          <option value="">No client</option>
-          {clients.map((c) => (
+        <select className={inputCls} style={inputStyle} value={contractorId} onChange={(e) => setContractorId(e.target.value)}>
+          <option value="">No EPC contractor</option>
+          {contractors.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
@@ -706,6 +857,135 @@ function ManningRequirementsEditor({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ================= Document Types ================= */
+
+const DOCUMENT_CATEGORIES = [
+  { value: "visa", label: "Visa" },
+  { value: "travel_document", label: "Travel document" },
+  { value: "certificate", label: "Certificate" },
+  { value: "vaccination", label: "Vaccination" },
+];
+
+function DocumentTypesPanel({ documentTypes, onChanged }: { documentTypes: DocumentType[]; onChanged: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  return (
+    <div>
+      {adding ? (
+        <DocumentTypeForm onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+      ) : (
+        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add document type</button>
+      )}
+
+      <div className="space-y-2 mt-4">
+        {documentTypes.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types yet.</div>}
+        {documentTypes.map((d) =>
+          editingId === d.id ? (
+            <DocumentTypeForm key={d.id} documentType={d} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
+          ) : (
+            <div key={d.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
+              <div className="flex-1 min-w-[200px]">
+                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{d.name}</span>
+                {d.category && (
+                  <span className="text-xs ml-2 uppercase font-semibold" style={{ color: "var(--ch-navy)" }}>
+                    {DOCUMENT_CATEGORIES.find((c) => c.value === d.category)?.label ?? d.category}
+                  </span>
+                )}
+                {d.default_validity_months != null && (
+                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{d.default_validity_months}mo validity</span>
+                )}
+                {!d.tracks_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>No document number</span>}
+                {!d.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+              </div>
+              <button onClick={() => setEditingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onDelete={() => deleteDocumentType(d.id).then(onChanged)} label="document type" />
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DocumentTypeForm({
+  documentType,
+  onDone,
+  onCancel,
+}: {
+  documentType?: DocumentType;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(documentType?.name ?? "");
+  const [category, setCategory] = useState(documentType?.category ?? "certificate");
+  const [defaultValidityMonths, setDefaultValidityMonths] = useState(
+    documentType?.default_validity_months != null ? String(documentType.default_validity_months) : ""
+  );
+  const [warningThresholdDays, setWarningThresholdDays] = useState(
+    documentType?.warning_threshold_days != null ? String(documentType.warning_threshold_days) : ""
+  );
+  const [tracksNumber, setTracksNumber] = useState(documentType?.tracks_number ?? true);
+  const [isActive, setIsActive] = useState(documentType?.is_active ?? true);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const save = () => {
+    if (!name.trim()) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("name", name.trim());
+    fd.set("category", category);
+    fd.set("defaultValidityMonths", defaultValidityMonths);
+    fd.set("warningThresholdDays", warningThresholdDays);
+    if (tracksNumber) fd.set("tracksNumber", "on");
+    if (isActive) fd.set("isActive", "on");
+    startTransition(async () => {
+      const res = documentType ? await updateDocumentType(documentType.id, fd) : await createDocumentType(fd);
+      if (res?.error) { setError(res.error); return; }
+      onDone();
+    });
+  };
+
+  return (
+    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+        <input className={inputCls} style={inputStyle} placeholder="Document type name, e.g. STCW" value={name} onChange={(e) => setName(e.target.value)} />
+        <select className={inputCls} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)}>
+          {DOCUMENT_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>{c.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Default validity (months)
+          <input type="number" min={1} className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. 60" value={defaultValidityMonths} onChange={(e) => setDefaultValidityMonths(e.target.value)} />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Warning threshold (days before expiry)
+          <input type="number" min={1} className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. 75" value={warningThresholdDays} onChange={(e) => setWarningThresholdDays(e.target.value)} />
+        </label>
+      </div>
+      <div className="flex items-center gap-4 mb-3">
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={tracksNumber} onChange={(e) => setTracksNumber(e.target.checked)} /> Has a document number
+        </label>
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          {pending ? "Saving…" : "Save"}
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+      <ErrorLine error={error} />
     </div>
   );
 }

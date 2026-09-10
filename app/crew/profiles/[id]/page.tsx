@@ -25,6 +25,8 @@ export default async function CrewProfileDetailPage({
   const canManage = can(access, "crew.manage");
   const canViewCost = can(access, "crew.view_cost");
   const canViewSensitive = can(access, "crew.view_sensitive");
+  const canViewDocuments = can(access, "crew.documents.view");
+  const canManageDocuments = can(access, "crew.documents.manage");
 
   const fields =
     BASE_FIELDS +
@@ -34,7 +36,19 @@ export default async function CrewProfileDetailPage({
   const { data: crew } = await supabase.from("crew_profiles").select(fields).eq("id", id).single();
   if (!crew || (crew as any).org_id !== access.orgId) notFound();
 
-  const [jobRolesRes, rotationTemplatesRes, skillsRes, crewSkillsRes, secondaryRolesRes, profilesRes] = await Promise.all([
+  const [
+    jobRolesRes,
+    rotationTemplatesRes,
+    skillsRes,
+    crewSkillsRes,
+    secondaryRolesRes,
+    profilesRes,
+    offshoreSitesRes,
+    assignmentsRes,
+    documentTypesRes,
+    crewDocumentsRes,
+    crewListRes,
+  ] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
@@ -42,6 +56,31 @@ export default async function CrewProfileDetailPage({
     supabase.from("crew_secondary_roles").select("id, job_role_id, job_roles(name)").eq("crew_id", id),
     canManage
       ? supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).order("full_name")
+      : Promise.resolve({ data: [] }),
+    supabase.from("offshore_sites").select("id, name").eq("org_id", access.orgId).eq("status", "active").order("name"),
+    supabase
+      .from("crew_assignments")
+      .select("id, offshore_site_id, start_date, end_date, notes, offshore_sites(name, code)")
+      .eq("crew_id", id)
+      .order("start_date", { ascending: false }),
+    canViewDocuments
+      ? supabase
+          .from("document_types")
+          .select("id, name, category, tracks_number, warning_threshold_days, is_active")
+          .eq("org_id", access.orgId)
+          .eq("is_active", true)
+          .order("name")
+      : Promise.resolve({ data: [] }),
+    canViewDocuments
+      ? supabase
+          .from("crew_documents")
+          .select(
+            "id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes"
+          )
+          .eq("crew_id", id)
+      : Promise.resolve({ data: [] }),
+    canViewDocuments
+      ? supabase.from("crew_profiles").select("id, full_name").eq("org_id", access.orgId).order("full_name")
       : Promise.resolve({ data: [] }),
   ]);
 
@@ -62,6 +101,13 @@ export default async function CrewProfileDetailPage({
         crewSkills={crewSkillsRes.data ?? []}
         secondaryRoles={secondaryRolesRes.data ?? []}
         profiles={(profilesRes.data ?? []).map((p: any) => ({ id: p.id, name: p.full_name }))}
+        offshoreSites={offshoreSitesRes.data ?? []}
+        assignments={assignmentsRes.data ?? []}
+        canViewDocuments={canViewDocuments}
+        canManageDocuments={canManageDocuments}
+        documentTypes={documentTypesRes.data ?? []}
+        crewDocuments={crewDocumentsRes.data ?? []}
+        crewList={(crewListRes.data ?? []).map((c: any) => ({ id: c.id, name: c.full_name }))}
       />
     </AppShell>
   );

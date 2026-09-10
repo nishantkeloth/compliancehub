@@ -12,7 +12,14 @@ import {
   removeCrewSkill,
   addCrewSecondaryRole,
   removeCrewSecondaryRole,
+  assignCrewToSite,
+  endCrewAssignment,
+  deleteCrewAssignment,
+  createCrewDocument,
+  updateCrewDocument,
+  deleteCrewDocument,
 } from "../actions";
+import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 
 type Crew = {
   id: string;
@@ -45,6 +52,35 @@ type Crew = {
 type Ref = { id: string; name: string };
 type CrewSkill = { id: string; skill_id: string; years_experience: number | null; competency_grade: string | null; skills: { name: string } | { name: string }[] | null };
 type SecondaryRole = { id: string; job_role_id: string; job_roles: { name: string } | { name: string }[] | null };
+type Assignment = {
+  id: string;
+  offshore_site_id: string;
+  start_date: string;
+  end_date: string | null;
+  notes: string | null;
+  offshore_sites: { name: string; code: string | null } | { name: string; code: string | null }[] | null;
+};
+type DocumentType = {
+  id: string;
+  name: string;
+  category: string | null;
+  tracks_number: boolean;
+  warning_threshold_days: number | null;
+  is_active: boolean;
+};
+type CrewDocument = {
+  id: string;
+  document_type_id: string;
+  document_number: string | null;
+  sponsor: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  entry_date: string | null;
+  extension_date: string | null;
+  dose_number: string | null;
+  reliever_crew_id: string | null;
+  notes: string | null;
+};
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
@@ -68,6 +104,13 @@ export default function CrewEditor({
   crewSkills,
   secondaryRoles,
   profiles,
+  offshoreSites,
+  assignments,
+  canViewDocuments,
+  canManageDocuments,
+  documentTypes,
+  crewDocuments,
+  crewList,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -79,6 +122,13 @@ export default function CrewEditor({
   crewSkills: CrewSkill[];
   secondaryRoles: SecondaryRole[];
   profiles: Ref[];
+  offshoreSites: Ref[];
+  assignments: Assignment[];
+  canViewDocuments: boolean;
+  canManageDocuments: boolean;
+  documentTypes: DocumentType[];
+  crewDocuments: CrewDocument[];
+  crewList: Ref[];
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -90,6 +140,19 @@ export default function CrewEditor({
       <SkillsSection crewId={crew.id} skills={skills} crewSkills={crewSkills} canManage={canManage} onChanged={refresh} />
 
       <SecondaryRolesSection crewId={crew.id} jobRoles={jobRoles} secondaryRoles={secondaryRoles} canManage={canManage} onChanged={refresh} />
+
+      <AssignmentSection crewId={crew.id} offshoreSites={offshoreSites} assignments={assignments} canManage={canManage} onChanged={refresh} />
+
+      {canViewDocuments && (
+        <DocumentsSection
+          crewId={crew.id}
+          documentTypes={documentTypes}
+          crewDocuments={crewDocuments}
+          crewList={crewList}
+          canManage={canManageDocuments}
+          onChanged={refresh}
+        />
+      )}
 
       {canViewCost && <CostForm crew={crew} canManage={canManage} onSaved={refresh} />}
 
@@ -396,6 +459,329 @@ function SecondaryRolesSection({
           <button onClick={add} disabled={pending || !jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
+/* ================= Vessel assignment ================= */
+
+function AssignmentSection({
+  crewId,
+  offshoreSites,
+  assignments,
+  canManage,
+  onChanged,
+}: {
+  crewId: string;
+  offshoreSites: Ref[];
+  assignments: Assignment[];
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const [offshoreSiteId, setOffshoreSiteId] = useState("");
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const current = assignments.find((a) => a.end_date === null) ?? null;
+  const history = assignments.filter((a) => a.end_date !== null);
+
+  const assign = () => {
+    if (!offshoreSiteId) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("offshoreSiteId", offshoreSiteId);
+    fd.set("startDate", startDate);
+    startTransition(async () => {
+      const res = await assignCrewToSite(crewId, fd);
+      if (res?.error) { setError(res.error); return; }
+      setOffshoreSiteId("");
+      onChanged();
+    });
+  };
+
+  const endAssignment = (id: string) => {
+    setError(null);
+    const fd = new FormData();
+    fd.set("endDate", new Date().toISOString().slice(0, 10));
+    startTransition(async () => {
+      const res = await endCrewAssignment(id, crewId, fd);
+      if (res?.error) { setError(res.error); return; }
+      onChanged();
+    });
+  };
+
+  return (
+    <div className={cardCls} style={cardStyle}>
+      <div className={labelCls} style={labelStyle}>Vessel Assignment</div>
+
+      {current ? (
+        <div className="flex items-center gap-3 flex-wrap mb-3 rounded-lg border px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
+          <div>
+            <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{unwrap(current.offshore_sites)?.name ?? "Unknown vessel"}</span>
+            <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>since {current.start_date}</span>
+          </div>
+          {canManage && (
+            <button onClick={() => endAssignment(current.id)} disabled={pending} className="text-xs font-semibold ml-auto disabled:opacity-50" style={{ color: "var(--ch-fail)" }}>
+              End assignment
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="text-sm mb-3" style={{ color: "var(--ch-sub)" }}>Not currently assigned to a vessel.</div>
+      )}
+
+      {canManage && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className={inputCls} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
+            <option value="">{current ? "Reassign to…" : "Assign to…"}</option>
+            {offshoreSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Start date
+            <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+          <button onClick={assign} disabled={pending || !offshoreSiteId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+            {current ? "Reassign" : "Assign"}
+          </button>
+        </div>
+      )}
+      <ErrorLine error={error} />
+
+      {history.length > 0 && (
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
+          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-sub)" }}>History</div>
+          <div className="space-y-1">
+            {history.map((a) => (
+              <div key={a.id} className="flex items-center gap-2 text-xs">
+                <span style={{ color: "var(--ch-ink)" }}>{unwrap(a.offshore_sites)?.name ?? "Unknown vessel"}</span>
+                <span style={{ color: "var(--ch-sub)" }}>{a.start_date} – {a.end_date}</span>
+                {canManage && (
+                  <button onClick={() => deleteCrewAssignment(a.id, crewId).then(onChanged)} style={{ color: "var(--ch-fail)" }}>Remove</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ================= Documents & Certifications (permission-gated) ================= */
+
+function DocumentsSection({
+  crewId,
+  documentTypes,
+  crewDocuments,
+  crewList,
+  canManage,
+  onChanged,
+}: {
+  crewId: string;
+  documentTypes: DocumentType[];
+  crewDocuments: CrewDocument[];
+  crewList: Ref[];
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const typeById = (id: string) => documentTypes.find((d) => d.id === id);
+  const sorted = [...crewDocuments].sort((a, b) => (typeById(a.document_type_id)?.name ?? "").localeCompare(typeById(b.document_type_id)?.name ?? ""));
+
+  return (
+    <div className={cardCls} style={cardStyle}>
+      <div className={labelCls} style={labelStyle}>Documents & Certifications (restricted)</div>
+
+      <div className="space-y-2 mb-3">
+        {sorted.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No documents recorded.</div>}
+        {sorted.map((d) => {
+          const type = typeById(d.document_type_id);
+          if (editingId === d.id) {
+            return (
+              <DocumentForm
+                key={d.id}
+                crewId={crewId}
+                crewDocument={d}
+                documentTypes={documentTypes}
+                crewList={crewList}
+                onDone={() => { setEditingId(null); onChanged(); }}
+                onCancel={() => setEditingId(null)}
+              />
+            );
+          }
+          const { status, daysRemaining } = computeDocumentStatus(d.expiry_date, type?.warning_threshold_days ?? null, type?.category ?? null);
+          const colors = DOCUMENT_STATUS_COLORS[status];
+          return (
+            <div key={d.id} className="flex items-center gap-3 flex-wrap rounded-lg border px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
+              <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ background: colors.bg, color: colors.fg }}>
+                {DOCUMENT_STATUS_LABELS[status]}
+              </span>
+              <div className="flex-1 min-w-[160px]">
+                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{type?.name ?? "Unknown type"}</span>
+                {d.document_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>#{d.document_number}</span>}
+                {d.expiry_date && (
+                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
+                    expires {d.expiry_date}{daysRemaining != null ? ` (${daysRemaining}d)` : ""}
+                  </span>
+                )}
+              </div>
+              {canManage && (
+                <>
+                  <button onClick={() => setEditingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
+                  <button onClick={() => deleteCrewDocument(d.id, crewId).then(onChanged)} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Remove</button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {canManage && (
+        adding ? (
+          <DocumentForm
+            crewId={crewId}
+            documentTypes={documentTypes}
+            crewList={crewList}
+            onDone={() => { setAdding(false); onChanged(); }}
+            onCancel={() => setAdding(false)}
+          />
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            disabled={documentTypes.length === 0}
+            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          >
+            + Add document
+          </button>
+        )
+      )}
+      {documentTypes.length === 0 && (
+        <div className="text-xs mt-2" style={{ color: "var(--ch-sub)" }}>
+          Add document types first in Crew Setup → Document Types.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentForm({
+  crewId,
+  crewDocument,
+  documentTypes,
+  crewList,
+  onDone,
+  onCancel,
+}: {
+  crewId: string;
+  crewDocument?: CrewDocument;
+  documentTypes: DocumentType[];
+  crewList: Ref[];
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [documentTypeId, setDocumentTypeId] = useState(crewDocument?.document_type_id ?? documentTypes[0]?.id ?? "");
+  const [documentNumber, setDocumentNumber] = useState(crewDocument?.document_number ?? "");
+  const [sponsor, setSponsor] = useState(crewDocument?.sponsor ?? "");
+  const [issueDate, setIssueDate] = useState(crewDocument?.issue_date ?? "");
+  const [expiryDate, setExpiryDate] = useState(crewDocument?.expiry_date ?? "");
+  const [entryDate, setEntryDate] = useState(crewDocument?.entry_date ?? "");
+  const [extensionDate, setExtensionDate] = useState(crewDocument?.extension_date ?? "");
+  const [doseNumber, setDoseNumber] = useState(crewDocument?.dose_number ?? "");
+  const [relieverCrewId, setRelieverCrewId] = useState(crewDocument?.reliever_crew_id ?? "");
+  const [notes, setNotes] = useState(crewDocument?.notes ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const selectedType = documentTypes.find((t) => t.id === documentTypeId);
+  const isVisa = selectedType?.category === "visa";
+  const isVaccination = selectedType?.category === "vaccination";
+  const tracksNumber = selectedType?.tracks_number ?? true;
+
+  const save = () => {
+    if (!documentTypeId) return;
+    setError(null);
+    const fd = new FormData();
+    fd.set("documentTypeId", documentTypeId);
+    fd.set("documentNumber", documentNumber.trim());
+    fd.set("sponsor", sponsor.trim());
+    fd.set("issueDate", issueDate);
+    fd.set("expiryDate", expiryDate);
+    fd.set("entryDate", entryDate);
+    fd.set("extensionDate", extensionDate);
+    fd.set("doseNumber", doseNumber.trim());
+    fd.set("relieverCrewId", relieverCrewId);
+    fd.set("notes", notes.trim());
+    startTransition(async () => {
+      const res = crewDocument
+        ? await updateCrewDocument(crewDocument.id, crewId, fd)
+        : await createCrewDocument(crewId, fd);
+      if (res?.error) { setError(res.error); return; }
+      onDone();
+    });
+  };
+
+  return (
+    <div className="rounded-lg border p-3 mb-2" style={{ borderColor: "var(--ch-line)" }}>
+      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+        <select className={inputCls} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)}>
+          <option value="">Select document type…</option>
+          {documentTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        {tracksNumber && (
+          <input className={inputCls} style={inputStyle} placeholder="Document number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
+        )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Issue date
+          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Expiry date
+          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+        </label>
+        {isVisa && (
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Entry date
+            <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
+          </label>
+        )}
+        {isVaccination && (
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Dose
+            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={doseNumber} onChange={(e) => setDoseNumber(e.target.value)}>
+              <option value="">—</option>
+              <option value="1st">1st</option>
+              <option value="2nd">2nd</option>
+              <option value="booster">Booster</option>
+            </select>
+          </label>
+        )}
+      </div>
+      {isVisa && (
+        <div className="grid gap-3 sm:grid-cols-3 mb-3">
+          <input className={inputCls} style={inputStyle} placeholder="Sponsor" value={sponsor} onChange={(e) => setSponsor(e.target.value)} />
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Extension date
+            <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={extensionDate} onChange={(e) => setExtensionDate(e.target.value)} />
+          </label>
+          <select className={inputCls} style={inputStyle} value={relieverCrewId} onChange={(e) => setRelieverCrewId(e.target.value)}>
+            <option value="">No reliever</option>
+            {crewList.filter((c) => c.id !== crewId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      )}
+      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={pending || !documentTypeId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          {pending ? "Saving…" : "Save"}
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
       <ErrorLine error={error} />
     </div>
   );

@@ -141,6 +141,58 @@ export async function deleteClient(id: string) {
   return {};
 }
 
+/* ---------------- Contractors (EPC contractors, under a client) ---------------- */
+
+export async function createContractor(formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const name = str(formData, "name");
+  if (!name) return { error: "Name is required." };
+  const clientId = str(formData, "clientId");
+  if (!clientId) return { error: "Client is required." };
+
+  const { error } = await supabase.from("contractors").insert({
+    org_id: access.orgId,
+    client_id: clientId,
+    name,
+    notes: optStr(formData, "notes"),
+    created_by: userId,
+    updated_by: userId,
+  });
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function updateContractor(id: string, formData: FormData) {
+  const { supabase, userId } = await requireCrewManage();
+  const name = str(formData, "name");
+  if (!name) return { error: "Name is required." };
+  const clientId = str(formData, "clientId");
+  if (!clientId) return { error: "Client is required." };
+
+  const { error } = await supabase
+    .from("contractors")
+    .update({
+      name,
+      client_id: clientId,
+      notes: optStr(formData, "notes"),
+      is_active: formData.get("isActive") === "on",
+      updated_by: userId,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function deleteContractor(id: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("contractors").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
 /* ---------------- Rotation templates ---------------- */
 
 export async function createRotationTemplate(formData: FormData) {
@@ -207,7 +259,7 @@ export async function createOffshoreSite(formData: FormData) {
 
   const { error } = await supabase.from("offshore_sites").insert({
     org_id: access.orgId,
-    client_id: optStr(formData, "clientId"),
+    contractor_id: optStr(formData, "contractorId"),
     name,
     code: optStr(formData, "code"),
     site_type: str(formData, "siteType") || "other",
@@ -233,7 +285,7 @@ export async function updateOffshoreSite(id: string, formData: FormData) {
   const { error } = await supabase
     .from("offshore_sites")
     .update({
-      client_id: optStr(formData, "clientId"),
+      contractor_id: optStr(formData, "contractorId"),
       name,
       code: optStr(formData, "code"),
       site_type: str(formData, "siteType") || "other",
@@ -286,6 +338,60 @@ export async function setManningRequirement(offshoreSiteId: string, formData: Fo
 export async function deleteManningRequirement(id: string) {
   const { supabase } = await requireCrewManage();
   const { error } = await supabase.from("site_manning_requirements").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+/* ---------------- Document types ---------------- */
+
+export async function createDocumentType(formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const name = str(formData, "name");
+  if (!name) return { error: "Name is required." };
+  const validityRaw = str(formData, "defaultValidityMonths");
+  const warningRaw = str(formData, "warningThresholdDays");
+
+  const { error } = await supabase.from("document_types").insert({
+    org_id: access.orgId,
+    name,
+    category: optStr(formData, "category"),
+    default_validity_months: validityRaw ? Number(validityRaw) : null,
+    warning_threshold_days: warningRaw ? Number(warningRaw) : null,
+    tracks_number: formData.get("tracksNumber") === "on",
+    created_by: userId,
+  });
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function updateDocumentType(id: string, formData: FormData) {
+  const { supabase } = await requireCrewManage();
+  const name = str(formData, "name");
+  if (!name) return { error: "Name is required." };
+  const validityRaw = str(formData, "defaultValidityMonths");
+  const warningRaw = str(formData, "warningThresholdDays");
+
+  const { error } = await supabase
+    .from("document_types")
+    .update({
+      name,
+      category: optStr(formData, "category"),
+      default_validity_months: validityRaw ? Number(validityRaw) : null,
+      warning_threshold_days: warningRaw ? Number(warningRaw) : null,
+      tracks_number: formData.get("tracksNumber") === "on",
+      is_active: formData.get("isActive") === "on",
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function deleteDocumentType(id: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("document_types").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateSetup();
   return {};
