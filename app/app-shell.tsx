@@ -65,6 +65,9 @@ export default async function AppShell({
     crewItems.push({ href: "/crew/profiles", key: "crew-profiles", label: "Crew Profiles" });
     crewItems.push({ href: "/crew/roster", key: "crew-roster", label: "Vessel Roster" });
   }
+  if (can(access, "crew.matrix.view")) {
+    crewItems.push({ href: "/crew/matrices", key: "crew-matrices", label: "Crew Matrices" });
+  }
   if (can(access, "crew.documents.view")) {
     crewItems.push({ href: "/crew/documents", key: "crew-documents", label: "Crew Documents" });
   }

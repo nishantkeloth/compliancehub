@@ -32,6 +32,12 @@ export const STATUS_PILLS: Record<string, { bg: string; fg: string }> = {
   cancelled: { bg: "var(--ch-fail-bg)", fg: "var(--ch-fail)" },
   planned: { bg: "var(--ch-paper)", fg: "var(--ch-sub)" },
   demobilizing: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  // Crew matrix workflow statuses (app/crew/matrices)
+  pending_internal_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  pending_client_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  approved: { bg: "var(--ch-pass-bg)", fg: "var(--ch-pass)" },
+  superseded: { bg: "var(--ch-paper)", fg: "var(--ch-sub)" },
+  rejected: { bg: "var(--ch-fail-bg)", fg: "var(--ch-fail)" },
 };
 
 export function StatusPill({ status }: { status: string }) {
@@ -41,7 +47,7 @@ export function StatusPill({ status }: { status: string }) {
       className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5"
       style={{ background: colors.bg, color: colors.fg }}
     >
-      {status}
+      {status.replace(/_/g, " ")}
     </span>
   );
 }

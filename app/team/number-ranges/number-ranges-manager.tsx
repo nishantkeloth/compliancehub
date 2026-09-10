@@ -5,7 +5,7 @@ import { updateNumberRange } from "./actions";
 
 type Range = {
   id: string;
-  entity_type: "client" | "contractor" | "contract" | "project";
+  entity_type: "client" | "contractor" | "contract" | "project" | "crew_matrix";
   prefix: string;
   padding_length: number;
   current_number: number;
@@ -33,6 +33,11 @@ const ENTITY_LABELS: Record<Range["entity_type"], { title: string; help: string;
     help: "Assigned automatically when a new Project/Campaign is created.",
     defaultPrefix: "PRJ",
   },
+  crew_matrix: {
+    title: "Crew Matrix Codes",
+    help: "Assigned automatically when a new Crew Matrix is created or generated from manning requirements.",
+    defaultPrefix: "CMX",
+  },
 };
 
 function nextCodePreview(prefix: string, paddingLength: number, currentNumber: number) {
@@ -47,11 +52,12 @@ export default function NumberRangesManager({ ranges }: { ranges: Range[] }) {
     contractor: ranges.find((r) => r.entity_type === "contractor"),
     contract: ranges.find((r) => r.entity_type === "contract"),
     project: ranges.find((r) => r.entity_type === "project"),
+    crew_matrix: ranges.find((r) => r.entity_type === "crew_matrix"),
   };
 
   return (
     <div className="space-y-4">
-      {(["client", "contractor", "contract", "project"] as const).map((entityType) => (
+      {(["client", "contractor", "contract", "project", "crew_matrix"] as const).map((entityType) => (
         <RangeCard key={entityType} entityType={entityType} range={byType[entityType]} />
       ))}
     </div>
