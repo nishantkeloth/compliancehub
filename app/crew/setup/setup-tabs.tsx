@@ -8,9 +8,6 @@ import {
   deleteJobRole,
   createSkill,
   deleteSkill,
-  createClient_,
-  updateClient,
-  deleteClient,
   createRotationTemplate,
   updateRotationTemplate,
   deleteRotationTemplate,
@@ -22,9 +19,6 @@ import {
   createDocumentType,
   updateDocumentType,
   deleteDocumentType,
-  createContractor,
-  updateContractor,
-  deleteContractor,
   createCustomFieldDefinition,
   updateCustomFieldDefinition,
   deleteCustomFieldDefinition,
@@ -94,7 +88,7 @@ type CustomFieldDefinition = {
   is_active: boolean;
 };
 
-const TABS = ["Job Roles", "Skills", "Clients", "Contractors", "Rotation Templates", "Offshore Sites", "Document Types", "Custom Fields"] as const;
+const TABS = ["Job Roles", "Skills", "Rotation Templates", "Offshore Sites", "Document Types", "Custom Fields"] as const;
 type Tab = (typeof TABS)[number];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -148,8 +142,6 @@ export default function SetupTabs({
 
       {tab === "Job Roles" && <JobRolesPanel jobRoles={jobRoles} onChanged={refresh} />}
       {tab === "Skills" && <SkillsPanel skills={skills} onChanged={refresh} />}
-      {tab === "Clients" && <ClientsPanel clients={clients} onChanged={refresh} />}
-      {tab === "Contractors" && <ContractorsPanel contractors={contractors} clients={clients} onChanged={refresh} />}
       {tab === "Rotation Templates" && <RotationTemplatesPanel templates={rotationTemplates} onChanged={refresh} />}
       {tab === "Offshore Sites" && (
         <OffshoreSitesPanel
@@ -320,257 +312,6 @@ function SkillsPanel({ skills, onChanged }: { skills: Skill[]; onChanged: () => 
 }
 
 /* ================= Clients ================= */
-
-function ClientsPanel({ clients, onChanged }: { clients: Client[]; onChanged: () => void }) {
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  return (
-    <div>
-      {adding ? (
-        <ClientForm onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
-      ) : (
-        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add client</button>
-      )}
-
-      <div className="space-y-2 mt-4">
-        {clients.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No clients yet.</div>}
-        {clients.map((c) =>
-          editingId === c.id ? (
-            <ClientForm key={c.id} client={c} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
-          ) : (
-            <div key={c.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
-              <div className="flex-1 min-w-[200px]">
-                {c.code && (
-                  <span
-                    className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5 mr-2"
-                    style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
-                  >
-                    {c.code}
-                  </span>
-                )}
-                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{c.name}</span>
-                {c.contract_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>Contract {c.contract_number}</span>}
-                {(c.contract_start_date || c.contract_end_date) && (
-                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
-                    {c.contract_start_date ?? "…"} – {c.contract_end_date ?? "…"}
-                  </span>
-                )}
-                {!c.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
-              </div>
-              <button onClick={() => setEditingId(c.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteClient(c.id).then(onChanged)} label="client" />
-            </div>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () => void; onCancel: () => void }) {
-  const [name, setName] = useState(client?.name ?? "");
-  const [contractNumber, setContractNumber] = useState(client?.contract_number ?? "");
-  const [start, setStart] = useState(client?.contract_start_date ?? "");
-  const [end, setEnd] = useState(client?.contract_end_date ?? "");
-  const [billingModel, setBillingModel] = useState(client?.billing_model ?? "");
-  const [notes, setNotes] = useState(client?.notes ?? "");
-  const [isActive, setIsActive] = useState(client?.is_active ?? true);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  const save = () => {
-    if (!name.trim()) return;
-    setError(null);
-    const fd = new FormData();
-    fd.set("name", name.trim());
-    fd.set("contractNumber", contractNumber.trim());
-    fd.set("contractStartDate", start);
-    fd.set("contractEndDate", end);
-    fd.set("billingModel", billingModel.trim());
-    fd.set("notes", notes.trim());
-    if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = client ? await updateClient(client.id, fd) : await createClient_(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
-    });
-  };
-
-  return (
-    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
-      {client && (
-        <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-          Code:{" "}
-          <span className="font-mono font-semibold" style={{ color: "var(--ch-ink)" }}>
-            {client.code ?? "—"}
-          </span>
-        </div>
-      )}
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Client name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Contract number" value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} />
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Contract start
-          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} />
-        </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Contract end
-          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} />
-        </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Billing model
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. Monthly invoicing" value={billingModel} onChange={(e) => setBillingModel(e.target.value)} />
-        </label>
-      </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
-          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
-        </label>
-        <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
-        </button>
-        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
-      </div>
-      <ErrorLine error={error} />
-    </div>
-  );
-}
-
-/* ================= Contractors (EPC contractors, under a client) ================= */
-
-function ContractorsPanel({
-  contractors,
-  clients,
-  onChanged,
-}: {
-  contractors: Contractor[];
-  clients: Client[];
-  onChanged: () => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "—";
-
-  return (
-    <div>
-      {clients.length === 0 && (
-        <div className="text-sm mb-4" style={{ color: "var(--ch-sub)" }}>
-          Add a client first (Clients tab) before adding EPC contractors under them.
-        </div>
-      )}
-      {adding ? (
-        <ContractorForm clients={clients} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          disabled={clients.length === 0}
-          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4 disabled:opacity-50"
-        >
-          + Add contractor
-        </button>
-      )}
-
-      <div className="space-y-2 mt-4">
-        {contractors.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No EPC contractors yet.</div>}
-        {contractors.map((c) =>
-          editingId === c.id ? (
-            <ContractorForm key={c.id} contractor={c} clients={clients} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
-          ) : (
-            <div key={c.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
-              <div className="flex-1 min-w-[200px]">
-                {c.code && (
-                  <span
-                    className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5 mr-2"
-                    style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
-                  >
-                    {c.code}
-                  </span>
-                )}
-                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{c.name}</span>
-                <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>under {clientName(c.client_id)}</span>
-                {!c.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
-              </div>
-              <button onClick={() => setEditingId(c.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteContractor(c.id).then(onChanged)} label="contractor" />
-            </div>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ContractorForm({
-  contractor,
-  clients,
-  onDone,
-  onCancel,
-}: {
-  contractor?: Contractor;
-  clients: Client[];
-  onDone: () => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(contractor?.name ?? "");
-  const [clientId, setClientId] = useState(contractor?.client_id ?? clients[0]?.id ?? "");
-  const [notes, setNotes] = useState(contractor?.notes ?? "");
-  const [isActive, setIsActive] = useState(contractor?.is_active ?? true);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  const save = () => {
-    if (!name.trim() || !clientId) return;
-    setError(null);
-    const fd = new FormData();
-    fd.set("name", name.trim());
-    fd.set("clientId", clientId);
-    fd.set("notes", notes.trim());
-    if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = contractor ? await updateContractor(contractor.id, fd) : await createContractor(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
-    });
-  };
-
-  return (
-    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
-      {contractor && (
-        <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-          Code:{" "}
-          <span className="font-mono font-semibold" style={{ color: "var(--ch-ink)" }}>
-            {contractor.code ?? "—"}
-          </span>
-        </div>
-      )}
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Contractor name, e.g. Allianz Marine Service" value={name} onChange={(e) => setName(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-          <option value="">Select client…</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-      </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
-          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
-        </label>
-        <button onClick={save} disabled={pending || !name.trim() || !clientId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
-        </button>
-        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
-      </div>
-      <ErrorLine error={error} />
-    </div>
-  );
-}
 
 /* ================= Rotation Templates ================= */
 
