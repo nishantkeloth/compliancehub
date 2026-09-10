@@ -54,23 +54,25 @@ function RangeCard({ entityType, range }: { entityType: Range["entity_type"]; ra
   const [isActive, setIsActive] = useState(range?.is_active ?? true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
 
   const save = () => {
     setError(null);
-    setSaved(false);
     const fd = new FormData();
     fd.set("prefix", prefix.trim());
     fd.set("paddingLength", String(paddingLength));
     fd.set("currentNumber", String(currentNumber));
     if (isActive) fd.set("isActive", "on");
+    // Optimistic: show "Saved" immediately, let the write happen in the
+    // background. If it turns out to have failed, surface the error —
+    // the fields stay as typed so the user can just hit Save again.
+    setSaved(true);
     startTransition(async () => {
       const res = await updateNumberRange(entityType, fd);
       if (res?.error) {
+        setSaved(false);
         setError(res.error);
-        return;
       }
-      setSaved(true);
     });
   };
 
@@ -137,10 +139,9 @@ function RangeCard({ entityType, range }: { entityType: Range["entity_type"]; ra
       <div className="flex items-center gap-2">
         <button
           onClick={save}
-          disabled={pending}
-          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold"
         >
-          {pending ? "Saving…" : "Save"}
+          Save
         </button>
         {saved && !error && (
           <span className="text-xs font-semibold" style={{ color: "var(--ch-ok, #1a7f37)" }}>

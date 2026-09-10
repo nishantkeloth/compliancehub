@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { createRole, renameRole, deleteRole, setRolePermission } from "./actions";
+import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
 type Role = { id: string; name: string; isSystem: boolean; systemKey: string | null };
 type Permission = { key: string; label: string; description: string | null };
@@ -22,6 +24,15 @@ export default function RolesManager({
   permissions: Permission[];
   grants: Record<string, string[]>;
 }) {
+  const router = useRouter();
+  const {
+    items: roleItems,
+    addOptimistic: addOptimisticRole,
+    updateOptimistic: updateOptimisticRole,
+    removeOptimistic: removeOptimisticRole,
+    restoreOptimistic: restoreOptimisticRole,
+  } = useOptimisticList(roles);
+
   const [localGrants, setLocalGrants] = useState<Record<string, Set<string>>>(() =>
     Object.fromEntries(roles.map((r) => [r.id, new Set(grants[r.id] ?? [])]))
   );
@@ -31,7 +42,7 @@ export default function RolesManager({
   const [newName, setNewName] = useState("");
   const [newBaseRank, setNewBaseRank] = useState("inspector");
   const [createError, setCreateError] = useState<string | null>(null);
-  const [creating, startCreating] = useTransition();
+  const [, startCreating] = useTransition();
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -66,46 +77,57 @@ export default function RolesManager({
   const submitCreate = () => {
     if (!newName.trim()) return;
     setCreateError(null);
-    const formData = new FormData();
-    formData.set("name", newName.trim());
-    formData.set("baseRank", newBaseRank);
+    const fd = new FormData();
+    fd.set("name", newName.trim());
+    fd.set("baseRank", newBaseRank);
+
+    const optimisticRole: Role = { id: tempId(), name: newName.trim(), isSystem: false, systemKey: null };
+    addOptimisticRole(optimisticRole);
+    setLocalGrants((prev) => ({ ...prev, [optimisticRole.id]: new Set() }));
+    setNewName("");
+    setNewBaseRank("inspector");
+
     startCreating(async () => {
-      const res = await createRole(formData);
+      const res = await createRole(fd);
       if (res?.error) {
+        removeOptimisticRole(optimisticRole.id);
         setCreateError(res.error);
         return;
       }
-      setNewName("");
-      setNewBaseRank("inspector");
-      // The new role only has an id/name locally until the server
-      // re-renders this page with its full data — reload to pick it up
-      // as a manageable row with an empty permission set.
-      window.location.reload();
+      router.refresh();
     });
   };
 
   const submitRename = (roleId: string) => {
     if (!renameValue.trim()) return;
+    const previous = roleItems.find((r) => r.id === roleId);
+    updateOptimisticRole(roleId, { name: renameValue.trim() });
+    setRenamingId(null);
     startRenaming(async () => {
       const res = await renameRole(roleId, renameValue.trim());
-      if (!res?.error) {
-        setRenamingId(null);
-      } else {
+      if (res?.error) {
+        if (previous) updateOptimisticRole(roleId, { name: previous.name });
         setRowError({ roleId, message: res.error });
+        return;
       }
+      router.refresh();
     });
   };
 
   const submitDelete = (roleId: string) => {
     setDeleteError(null);
     if (!window.confirm("Delete this role? This can't be undone.")) return;
+    const index = roleItems.findIndex((r) => r.id === roleId);
+    const role = roleItems[index];
+    removeOptimisticRole(roleId);
     startDeleting(async () => {
       const res = await deleteRole(roleId);
       if (res?.error) {
+        if (role) restoreOptimisticRole(role, index);
         setDeleteError({ roleId, message: res.error });
         return;
       }
-      window.location.reload();
+      router.refresh();
     });
   };
 
@@ -140,10 +162,10 @@ export default function RolesManager({
           </label>
           <button
             onClick={submitCreate}
-            disabled={creating || !newName.trim()}
+            disabled={!newName.trim()}
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
-            {creating ? "Creating…" : "Create role"}
+            Create role
           </button>
         </div>
         <p className="text-xs mt-2" style={{ color: "var(--ch-sub)" }}>
@@ -158,7 +180,7 @@ export default function RolesManager({
       </div>
 
       <div className="space-y-4">
-        {roles.map((role) => {
+        {roleItems.map((role) => {
           const roleGrants = localGrants[role.id] ?? new Set<string>();
           return (
             <div key={role.id} className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
@@ -200,12 +222,18 @@ export default function RolesManager({
                         Built-in
                       </span>
                     )}
+                    {isTempId(role.id) && (
+                      <span className="text-xs italic" style={{ color: "var(--ch-sub)" }}>
+                        Saving…
+                      </span>
+                    )}
                     <button
                       onClick={() => {
                         setRenamingId(role.id);
                         setRenameValue(role.name);
                       }}
-                      className="text-xs"
+                      disabled={isTempId(role.id)}
+                      className="text-xs disabled:opacity-40"
                       style={{ color: "var(--ch-sub)" }}
                     >
                       Rename
@@ -216,7 +244,7 @@ export default function RolesManager({
                 {!role.isSystem && (
                   <button
                     onClick={() => submitDelete(role.id)}
-                    disabled={deletingId === role.id}
+                    disabled={deletingId === role.id || isTempId(role.id)}
                     className="text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-50"
                     style={{ color: "var(--ch-fail)" }}
                   >
@@ -232,6 +260,7 @@ export default function RolesManager({
                       type="checkbox"
                       className="mt-0.5"
                       checked={roleGrants.has(p.key)}
+                      disabled={isTempId(role.id)}
                       onChange={(e) => toggle(role.id, p.key, e.target.checked)}
                     />
                     <span>

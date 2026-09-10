@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewDocument, updateCrewDocument } from "../profiles/actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS, type DocumentStatus } from "@/lib/document-status";
+import { tempId } from "@/lib/use-optimistic-list";
 
 type CrewRow = {
   id: string;
@@ -47,6 +48,10 @@ const STATUS_PILLS: { key: "all" | "expiring" | "expired"; label: string }[] = [
   { key: "expired", label: "Expired" },
 ];
 
+function cellKey(crewId: string, documentTypeId: string) {
+  return `${crewId}:${documentTypeId}`;
+}
+
 export default function DocumentsMatrix({
   crew,
   documentTypes,
@@ -60,17 +65,43 @@ export default function DocumentsMatrix({
   offshoreSites: SiteRef[];
   canManage: boolean;
 }) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+
+  // Optimistic overlay on top of the server-provided cellMap: edits show up
+  // immediately, the real write happens in the background, and this resyncs
+  // from `cellMap` once a background `router.refresh()` lands fresh data.
+  const [localCellMap, setLocalCellMap] = useState(cellMap);
+  useEffect(() => {
+    setLocalCellMap(cellMap);
+  }, [cellMap]);
+
+  const [pendingCell, setPendingCell] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
+
   const [search, setSearch] = useState("");
   const [siteFilter, setSiteFilter] = useState("");
   const [docTypeFilter, setDocTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "expiring" | "expired">("all");
   const [popover, setPopover] = useState<{ crewId: string; crewName: string; documentTypeId: string } | null>(null);
 
+  const setCellOptimistic = (crewId: string, documentTypeId: string, record: CellRecord | null) => {
+    setLocalCellMap((prev) => {
+      const next = { ...prev, [crewId]: { ...prev[crewId] } };
+      if (record) {
+        next[crewId][documentTypeId] = record;
+      } else {
+        delete next[crewId][documentTypeId];
+      }
+      return next;
+    });
+  };
+
   const columns = docTypeFilter ? documentTypes.filter((t) => t.id === docTypeFilter) : documentTypes;
 
   const statusFor = (crewId: string, docTypeId: string) => {
     const type = documentTypes.find((t) => t.id === docTypeId);
-    const cell = cellMap[crewId]?.[docTypeId];
+    const cell = localCellMap[crewId]?.[docTypeId];
     return computeDocumentStatus(cell?.expiry_date ?? null, type?.warning_threshold_days ?? null, type?.category ?? null).status;
   };
 
@@ -87,14 +118,15 @@ export default function DocumentsMatrix({
       }
       return true;
     });
-  }, [crew, search, siteFilter, statusFilter, columns, cellMap, documentTypes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crew, search, siteFilter, statusFilter, columns, localCellMap, documentTypes]);
 
   const exportCsv = () => {
     const header = ["Crew member", "Role", "Vessel", ...columns.map((c) => c.name)];
     const lines = [header];
     for (const c of rows) {
       const cells = columns.map((col) => {
-        const cell = cellMap[c.id]?.[col.id];
+        const cell = localCellMap[c.id]?.[col.id];
         if (!cell?.expiry_date) return "";
         const { status, daysRemaining } = computeDocumentStatus(cell.expiry_date, col.warning_threshold_days, col.category);
         return `${cell.expiry_date} (${DOCUMENT_STATUS_LABELS[status]}${daysRemaining != null ? `, ${daysRemaining}d` : ""})`;
@@ -111,8 +143,47 @@ export default function DocumentsMatrix({
     URL.revokeObjectURL(url);
   };
 
+  const submitCell = (
+    crewId: string,
+    crewName: string,
+    documentType: DocumentType,
+    existing: CellRecord | undefined,
+    fd: FormData,
+    patch: Omit<CellRecord, "id" | "crew_id" | "document_type_id">
+  ) => {
+    setBgError(null);
+    const key = cellKey(crewId, documentType.id);
+    const previous = existing ?? null;
+    const optimisticRecord: CellRecord = {
+      id: existing?.id ?? tempId(),
+      crew_id: crewId,
+      document_type_id: documentType.id,
+      ...patch,
+    };
+    setCellOptimistic(crewId, documentType.id, optimisticRecord);
+    setPendingCell(key);
+    setPopover(null);
+
+    startTransition(async () => {
+      const res = existing ? await updateCrewDocument(existing.id, crewId, fd) : await createCrewDocument(crewId, fd);
+      setPendingCell((p) => (p === key ? null : p));
+      if (res?.error) {
+        setCellOptimistic(crewId, documentType.id, previous);
+        setBgError(`Couldn't save ${documentType.name} for ${crewName}: ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
   return (
     <div>
+      {bgError && (
+        <div className="text-sm mb-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+          {bgError}
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap mb-4">
         <input
@@ -203,25 +274,27 @@ export default function DocumentsMatrix({
                   </div>
                 </td>
                 {columns.map((col) => {
-                  const cell = cellMap[c.id]?.[col.id];
+                  const cell = localCellMap[c.id]?.[col.id];
                   const { status, daysRemaining } = computeDocumentStatus(cell?.expiry_date ?? null, col.warning_threshold_days, col.category);
                   const colors = DOCUMENT_STATUS_COLORS[status];
+                  const isPending = pendingCell === cellKey(c.id, col.id);
                   return (
                     <td key={col.id} className="border-b px-2 py-1.5" style={{ borderColor: "var(--ch-line)" }}>
                       <button
                         onClick={() => setPopover({ crewId: c.id, crewName: c.fullName, documentTypeId: col.id })}
-                        className="w-full text-left rounded-lg px-2 py-1.5 text-xs font-semibold"
+                        disabled={isPending}
+                        className="w-full text-left rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-60"
                         style={{ background: colors.bg, color: colors.fg }}
                       >
                         {cell?.expiry_date ? (
                           <>
                             {cell.expiry_date}
                             <span className="block font-normal opacity-80">
-                              {DOCUMENT_STATUS_LABELS[status]}{daysRemaining != null ? ` · ${daysRemaining}d` : ""}
+                              {isPending ? "Saving…" : `${DOCUMENT_STATUS_LABELS[status]}${daysRemaining != null ? ` · ${daysRemaining}d` : ""}`}
                             </span>
                           </>
                         ) : (
-                          <span className="opacity-70">{DOCUMENT_STATUS_LABELS[status]}</span>
+                          <span className="opacity-70">{isPending ? "Saving…" : DOCUMENT_STATUS_LABELS[status]}</span>
                         )}
                       </button>
                     </td>
@@ -238,8 +311,18 @@ export default function DocumentsMatrix({
           crewId={popover.crewId}
           crewName={popover.crewName}
           documentType={documentTypes.find((t) => t.id === popover.documentTypeId)!}
-          existing={cellMap[popover.crewId]?.[popover.documentTypeId]}
+          existing={localCellMap[popover.crewId]?.[popover.documentTypeId]}
           canManage={canManage}
+          onSubmit={(fd, patch) =>
+            submitCell(
+              popover.crewId,
+              popover.crewName,
+              documentTypes.find((t) => t.id === popover.documentTypeId)!,
+              localCellMap[popover.crewId]?.[popover.documentTypeId],
+              fd,
+              patch
+            )
+          }
           onClose={() => setPopover(null)}
         />
       )}
@@ -253,6 +336,7 @@ function CellEditor({
   documentType,
   existing,
   canManage,
+  onSubmit,
   onClose,
 }: {
   crewId: string;
@@ -260,20 +344,19 @@ function CellEditor({
   documentType: DocumentType;
   existing?: CellRecord;
   canManage: boolean;
+  onSubmit: (fd: FormData, patch: Omit<CellRecord, "id" | "crew_id" | "document_type_id">) => void;
   onClose: () => void;
 }) {
-  const router = useRouter();
   const [documentNumber, setDocumentNumber] = useState(existing?.document_number ?? "");
   const [sponsor, setSponsor] = useState(existing?.sponsor ?? "");
   const [issueDate, setIssueDate] = useState(existing?.issue_date ?? "");
   const [expiryDate, setExpiryDate] = useState(existing?.expiry_date ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const isVisa = documentType.category === "visa";
 
   const save = () => {
-    setError(null);
+    if (submitted) return;
     const fd = new FormData();
     fd.set("documentTypeId", documentType.id);
     fd.set("documentNumber", documentNumber.trim());
@@ -288,11 +371,18 @@ function CellEditor({
     fd.set("relieverCrewId", existing?.reliever_crew_id ?? "");
     fd.set("notes", existing?.notes ?? "");
     fd.set("customFields", JSON.stringify(existing?.custom_fields ?? {}));
-    startTransition(async () => {
-      const res = existing ? await updateCrewDocument(existing.id, crewId, fd) : await createCrewDocument(crewId, fd);
-      if (res?.error) { setError(res.error); return; }
-      router.refresh();
-      onClose();
+    setSubmitted(true);
+    onSubmit(fd, {
+      document_number: documentNumber.trim() || null,
+      sponsor: sponsor.trim() || null,
+      issue_date: issueDate || null,
+      expiry_date: expiryDate || null,
+      entry_date: existing?.entry_date ?? null,
+      extension_date: existing?.extension_date ?? null,
+      dose_number: existing?.dose_number ?? null,
+      reliever_crew_id: existing?.reliever_crew_id ?? null,
+      notes: existing?.notes ?? null,
+      custom_fields: existing?.custom_fields ?? null,
     });
   };
 
@@ -331,12 +421,10 @@ function CellEditor({
           </div>
         )}
 
-        {error && <div className="text-xs mb-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
-
         <div className="flex items-center gap-2 mt-2">
           {canManage && (
-            <button onClick={save} disabled={pending} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-              {pending ? "Saving…" : "Save"}
+            <button onClick={save} disabled={submitted} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+              Save
             </button>
           )}
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>

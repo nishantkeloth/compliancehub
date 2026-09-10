@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient_, updateClient, deleteClient } from "./actions";
+import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
 type Client = {
   id: string;
@@ -30,45 +31,87 @@ function ErrorLine({ error }: { error: string | null }) {
   );
 }
 
-function DeleteButton({ onDelete, label }: { onDelete: () => Promise<any>; label: string }) {
-  const [pending, startTransition] = useTransition();
-  return (
-    <button
-      onClick={() => {
-        if (!window.confirm(`Delete this ${label}?`)) return;
-        startTransition(async () => {
-          await onDelete();
-        });
-      }}
-      disabled={pending}
-      className="text-xs font-semibold disabled:opacity-50"
-      style={{ color: "var(--ch-fail)" }}
-    >
-      Delete
-    </button>
-  );
-}
-
 export default function ClientsManager({ clients }: { clients: Client[] }) {
   const router = useRouter();
-  const onChanged = () => router.refresh();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(clients);
+  const [, startTransition] = useTransition();
 
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
+
+  const submitCreate = (fd: FormData, optimisticItem: Client) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createClient_(fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't save "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (client: Client, fd: FormData, patch: Partial<Client>) => {
+    setBgError(null);
+    updateOptimistic(client.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateClient(client.id, fd);
+      if (res?.error) {
+        updateOptimistic(client.id, client);
+        setBgError(`Couldn't update "${client.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (client: Client, index: number) => {
+    if (!window.confirm("Delete this client?")) return;
+    setBgError(null);
+    removeOptimistic(client.id);
+    startTransition(async () => {
+      const res = await deleteClient(client.id);
+      if (res?.error) {
+        restoreOptimistic(client, index);
+        setBgError(`Couldn't delete "${client.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
 
   return (
     <div>
+      {bgError && (
+        <div className="text-sm mb-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+          {bgError}
+        </div>
+      )}
+
       {adding ? (
-        <ClientForm onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+        <ClientForm
+          onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), code: null, ...values })}
+          onCancel={() => setAdding(false)}
+        />
       ) : (
         <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add client</button>
       )}
 
       <div className="space-y-2 mt-4">
-        {clients.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No clients yet.</div>}
-        {clients.map((c) =>
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No clients yet.</div>}
+        {items.map((c, i) =>
           editingId === c.id ? (
-            <ClientForm key={c.id} client={c} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
+            <ClientForm
+              key={c.id}
+              client={c}
+              onSubmit={(fd, values) => submitUpdate(c, fd, values)}
+              onCancel={() => setEditingId(null)}
+            />
           ) : (
             <div key={c.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
               <div className="flex-1 min-w-[200px]">
@@ -88,9 +131,24 @@ export default function ClientsManager({ clients }: { clients: Client[] }) {
                   </span>
                 )}
                 {!c.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                {isTempId(c.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
               </div>
-              <button onClick={() => setEditingId(c.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteClient(c.id).then(onChanged)} label="client" />
+              <button
+                onClick={() => setEditingId(c.id)}
+                disabled={isTempId(c.id)}
+                className="text-xs font-semibold disabled:opacity-40"
+                style={{ color: "var(--ch-navy)" }}
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => submitDelete(c, i)}
+                disabled={isTempId(c.id)}
+                className="text-xs font-semibold disabled:opacity-40"
+                style={{ color: "var(--ch-fail)" }}
+              >
+                Delete
+              </button>
             </div>
           )
         )}
@@ -99,7 +157,15 @@ export default function ClientsManager({ clients }: { clients: Client[] }) {
   );
 }
 
-function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () => void; onCancel: () => void }) {
+function ClientForm({
+  client,
+  onSubmit,
+  onCancel,
+}: {
+  client?: Client;
+  onSubmit: (fd: FormData, values: Omit<Client, "id" | "code">) => void;
+  onCancel: () => void;
+}) {
   const [name, setName] = useState(client?.name ?? "");
   const [contractNumber, setContractNumber] = useState(client?.contract_number ?? "");
   const [start, setStart] = useState(client?.contract_start_date ?? "");
@@ -108,10 +174,10 @@ function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () 
   const [notes, setNotes] = useState(client?.notes ?? "");
   const [isActive, setIsActive] = useState(client?.is_active ?? true);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const save = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || submitted) return;
     setError(null);
     const fd = new FormData();
     fd.set("name", name.trim());
@@ -121,10 +187,15 @@ function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () 
     fd.set("billingModel", billingModel.trim());
     fd.set("notes", notes.trim());
     if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = client ? await updateClient(client.id, fd) : await createClient_(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
+    setSubmitted(true);
+    onSubmit(fd, {
+      name: name.trim(),
+      contract_number: contractNumber.trim() || null,
+      contract_start_date: start || null,
+      contract_end_date: end || null,
+      billing_model: billingModel.trim() || null,
+      notes: notes.trim() || null,
+      is_active: isActive,
     });
   };
 
@@ -161,8 +232,8 @@ function ClientForm({ client, onDone, onCancel }: { client?: Client; onDone: () 
         <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
         </label>
-        <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>

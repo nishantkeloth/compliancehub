@@ -20,6 +20,7 @@ import {
   deleteCrewDocument,
 } from "../actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
+import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
 type Crew = {
   id: string;
@@ -103,6 +104,20 @@ function unwrap<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
+function ErrorLine({ error }: { error: string | null }) {
+  if (!error) return null;
+  return <div className="text-xs mt-1.5" style={{ color: "var(--ch-fail)" }}>{error}</div>;
+}
+
+function BgErrorBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+      {error}
+    </div>
+  );
+}
+
 export default function CrewEditor({
   crew,
   canManage,
@@ -178,11 +193,6 @@ export default function CrewEditor({
   );
 }
 
-function ErrorLine({ error }: { error: string | null }) {
-  if (!error) return null;
-  return <div className="text-xs mt-1.5" style={{ color: "var(--ch-fail)" }}>{error}</div>;
-}
-
 /* ================= General ================= */
 
 function GeneralForm({
@@ -220,7 +230,8 @@ function GeneralForm({
   const [emergencyContactPhone, setEmergencyContactPhone] = useState(crew.emergency_contact_phone ?? "");
   const [notes, setNotes] = useState(crew.notes ?? "");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [, startTransition] = useTransition();
 
   const save = () => {
     if (!fullName.trim()) return;
@@ -247,9 +258,17 @@ function GeneralForm({
     fd.set("emergencyContactName", emergencyContactName.trim());
     fd.set("emergencyContactPhone", emergencyContactPhone.trim());
     fd.set("notes", notes.trim());
+    // Optimistic: the fields already show what was typed, so treat the
+    // save as done immediately and let the write happen in the
+    // background; only surface it if it actually failed.
+    setSaved(true);
     startTransition(async () => {
       const res = await updateCrewProfile(crew.id, fd);
-      if (res?.error) { setError(res.error); return; }
+      if (res?.error) {
+        setSaved(false);
+        setError(res.error);
+        return;
+      }
       onSaved();
     });
   };
@@ -260,9 +279,9 @@ function GeneralForm({
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Identity</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
-        <input className={inputCls} style={inputStyle} placeholder="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Employee code" value={employeeCode} onChange={(e) => setEmployeeCode(e.target.value)} disabled={disabled} />
-        <select className={inputCls} style={inputStyle} value={employmentStatus} onChange={(e) => setEmploymentStatus(e.target.value)} disabled={disabled}>
+        <input className={inputCls} style={inputStyle} placeholder="Full name" value={fullName} onChange={(e) => { setFullName(e.target.value); setSaved(false); }} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Employee code" value={employeeCode} onChange={(e) => { setEmployeeCode(e.target.value); setSaved(false); }} disabled={disabled} />
+        <select className={inputCls} style={inputStyle} value={employmentStatus} onChange={(e) => { setEmploymentStatus(e.target.value); setSaved(false); }} disabled={disabled}>
           <option value="candidate">Candidate</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
@@ -270,41 +289,41 @@ function GeneralForm({
           <option value="terminated">Terminated</option>
         </select>
       </div>
-      <input className={`${inputCls} w-full mb-4`} style={inputStyle} placeholder="Photo URL (optional)" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} disabled={disabled} />
+      <input className={`${inputCls} w-full mb-4`} style={inputStyle} placeholder="Photo URL (optional)" value={photoUrl} onChange={(e) => { setPhotoUrl(e.target.value); setSaved(false); }} disabled={disabled} />
 
       <div className={labelCls} style={labelStyle}>Personal</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Nationality" value={nationality} onChange={(e) => setNationality(e.target.value)} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Nationality" value={nationality} onChange={(e) => { setNationality(e.target.value); setSaved(false); }} disabled={disabled} />
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Date of birth
-          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} disabled={disabled} />
+          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={dateOfBirth} onChange={(e) => { setDateOfBirth(e.target.value); setSaved(false); }} disabled={disabled} />
         </label>
-        <input className={inputCls} style={inputStyle} placeholder="Gender" value={gender} onChange={(e) => setGender(e.target.value)} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Gender" value={gender} onChange={(e) => { setGender(e.target.value); setSaved(false); }} disabled={disabled} />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Phone" value={phone} onChange={(e) => { setPhone(e.target.value); setSaved(false); }} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Email" value={email} onChange={(e) => { setEmail(e.target.value); setSaved(false); }} disabled={disabled} />
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
-        <input className={inputCls} style={inputStyle} placeholder="Home country" value={homeCountry} onChange={(e) => setHomeCountry(e.target.value)} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Current location" value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Nearest airport" value={nearestAirport} onChange={(e) => setNearestAirport(e.target.value)} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Home country" value={homeCountry} onChange={(e) => { setHomeCountry(e.target.value); setSaved(false); }} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Current location" value={currentLocation} onChange={(e) => { setCurrentLocation(e.target.value); setSaved(false); }} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Nearest airport" value={nearestAirport} onChange={(e) => { setNearestAirport(e.target.value); setSaved(false); }} disabled={disabled} />
       </div>
 
       <div className={labelCls} style={labelStyle}>Role & Employment</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select className={inputCls} style={inputStyle} value={primaryJobRoleId} onChange={(e) => setPrimaryJobRoleId(e.target.value)} disabled={disabled}>
+        <select className={inputCls} style={inputStyle} value={primaryJobRoleId} onChange={(e) => { setPrimaryJobRoleId(e.target.value); setSaved(false); }} disabled={disabled}>
           <option value="">No primary role</option>
           {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
-        <select className={inputCls} style={inputStyle} value={employmentType} onChange={(e) => setEmploymentType(e.target.value)} disabled={disabled}>
+        <select className={inputCls} style={inputStyle} value={employmentType} onChange={(e) => { setEmploymentType(e.target.value); setSaved(false); }} disabled={disabled}>
           <option value="">Employment type</option>
           <option value="permanent">Permanent</option>
           <option value="temporary">Temporary</option>
           <option value="subcontractor">Subcontractor</option>
           <option value="freelancer">Freelancer</option>
         </select>
-        <select className={inputCls} style={inputStyle} value={defaultRotationTemplateId} onChange={(e) => setDefaultRotationTemplateId(e.target.value)} disabled={disabled}>
+        <select className={inputCls} style={inputStyle} value={defaultRotationTemplateId} onChange={(e) => { setDefaultRotationTemplateId(e.target.value); setSaved(false); }} disabled={disabled}>
           <option value="">No default rotation</option>
           {rotationTemplates.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
@@ -312,32 +331,33 @@ function GeneralForm({
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Joining date
-          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} disabled={disabled} />
+          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={joiningDate} onChange={(e) => { setJoiningDate(e.target.value); setSaved(false); }} disabled={disabled} />
         </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Notice period (days)
-          <input type="number" min={0} className={`${inputCls} w-full mt-1`} style={inputStyle} value={noticePeriodDays} onChange={(e) => setNoticePeriodDays(e.target.value)} disabled={disabled} />
+          <input type="number" min={0} className={`${inputCls} w-full mt-1`} style={inputStyle} value={noticePeriodDays} onChange={(e) => { setNoticePeriodDays(e.target.value); setSaved(false); }} disabled={disabled} />
         </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Availability date
-          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={availabilityDate} onChange={(e) => setAvailabilityDate(e.target.value)} disabled={disabled} />
+          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={availabilityDate} onChange={(e) => { setAvailabilityDate(e.target.value); setSaved(false); }} disabled={disabled} />
         </label>
       </div>
 
       <div className={labelCls} style={labelStyle}>Emergency Contact</div>
       <div className="grid gap-3 sm:grid-cols-2 mb-4">
-        <input className={inputCls} style={inputStyle} placeholder="Name" value={emergencyContactName} onChange={(e) => setEmergencyContactName(e.target.value)} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Phone" value={emergencyContactPhone} onChange={(e) => setEmergencyContactPhone(e.target.value)} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Name" value={emergencyContactName} onChange={(e) => { setEmergencyContactName(e.target.value); setSaved(false); }} disabled={disabled} />
+        <input className={inputCls} style={inputStyle} placeholder="Phone" value={emergencyContactPhone} onChange={(e) => { setEmergencyContactPhone(e.target.value); setSaved(false); }} disabled={disabled} />
       </div>
 
       <div className={labelCls} style={labelStyle}>Notes</div>
-      <textarea className={`${inputCls} w-full`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={disabled} />
+      <textarea className={`${inputCls} w-full`} style={inputStyle} rows={2} value={notes} onChange={(e) => { setNotes(e.target.value); setSaved(false); }} disabled={disabled} />
 
       {canManage && (
         <div className="flex items-center gap-2 mt-4">
-          <button onClick={save} disabled={pending || !fullName.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-            {pending ? "Saving…" : "Save"}
+          <button onClick={save} disabled={!fullName.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+            Save
           </button>
+          {saved && !error && <span className="text-xs font-semibold" style={{ color: "var(--ch-ok, #1a7f37)" }}>Saved</span>}
           <ErrorLine error={error} />
         </div>
       )}
@@ -360,23 +380,53 @@ function SkillsSection({
   canManage: boolean;
   onChanged: () => void;
 }) {
+  const { items, addOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(crewSkills);
+  const [, startTransition] = useTransition();
   const [skillId, setSkillId] = useState("");
   const [years, setYears] = useState("");
   const [grade, setGrade] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const add = () => {
     if (!skillId) return;
     setError(null);
+    setBgError(null);
     const fd = new FormData();
     fd.set("skillId", skillId);
     fd.set("yearsExperience", years);
     fd.set("competencyGrade", grade);
+    const skillName = skills.find((s) => s.id === skillId)?.name ?? "";
+    const optimisticItem: CrewSkill = {
+      id: tempId(),
+      skill_id: skillId,
+      years_experience: years ? Number(years) : null,
+      competency_grade: grade.trim() || null,
+      skills: { name: skillName },
+    };
+    addOptimistic(optimisticItem);
+    setSkillId(""); setYears(""); setGrade("");
     startTransition(async () => {
       const res = await addCrewSkill(crewId, fd);
-      if (res?.error) { setError(res.error); return; }
-      setSkillId(""); setYears(""); setGrade("");
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
+  const remove = (cs: CrewSkill, index: number) => {
+    setBgError(null);
+    removeOptimistic(cs.id);
+    startTransition(async () => {
+      const res = await removeCrewSkill(cs.id, crewId);
+      if (res?.error) {
+        restoreOptimistic(cs, index);
+        setBgError(res.error);
+        return;
+      }
       onChanged();
     });
   };
@@ -384,17 +434,19 @@ function SkillsSection({
   return (
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Skills</div>
+      <BgErrorBanner error={bgError} />
       <div className="space-y-1.5 mb-3">
-        {crewSkills.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No skills recorded.</div>}
-        {crewSkills.map((cs) => {
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No skills recorded.</div>}
+        {items.map((cs, i) => {
           const skill = unwrap(cs.skills);
           return (
             <div key={cs.id} className="flex items-center gap-2 text-sm">
               <span style={{ color: "var(--ch-ink)" }}>{skill?.name ?? "Unknown skill"}</span>
               {cs.years_experience != null && <span style={{ color: "var(--ch-sub)" }}>{cs.years_experience} yrs</span>}
               {cs.competency_grade && <span style={{ color: "var(--ch-sub)" }}>({cs.competency_grade})</span>}
-              {canManage && (
-                <button onClick={() => removeCrewSkill(cs.id, crewId).then(onChanged)} className="text-xs" style={{ color: "var(--ch-fail)" }}>Remove</button>
+              {isTempId(cs.id) && <span className="text-xs italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
+              {canManage && !isTempId(cs.id) && (
+                <button onClick={() => remove(cs, i)} className="text-xs" style={{ color: "var(--ch-fail)" }}>Remove</button>
               )}
             </div>
           );
@@ -408,7 +460,7 @@ function SkillsSection({
           </select>
           <input type="number" min={0} step="0.5" className={`${inputCls} w-24`} style={inputStyle} placeholder="Years" value={years} onChange={(e) => setYears(e.target.value)} />
           <input className={`${inputCls} w-32`} style={inputStyle} placeholder="Grade" value={grade} onChange={(e) => setGrade(e.target.value)} />
-          <button onClick={add} disabled={pending || !skillId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
+          <button onClick={add} disabled={!skillId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
       <ErrorLine error={error} />
@@ -431,17 +483,41 @@ function SecondaryRolesSection({
   canManage: boolean;
   onChanged: () => void;
 }) {
+  const { items, addOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(secondaryRoles);
+  const [, startTransition] = useTransition();
   const [jobRoleId, setJobRoleId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const add = () => {
     if (!jobRoleId) return;
     setError(null);
+    setBgError(null);
+    const roleName = jobRoles.find((r) => r.id === jobRoleId)?.name ?? "";
+    const optimisticItem: SecondaryRole = { id: tempId(), job_role_id: jobRoleId, job_roles: { name: roleName } };
+    addOptimistic(optimisticItem);
+    setJobRoleId("");
     startTransition(async () => {
       const res = await addCrewSecondaryRole(crewId, jobRoleId);
-      if (res?.error) { setError(res.error); return; }
-      setJobRoleId("");
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
+  const remove = (sr: SecondaryRole, index: number) => {
+    setBgError(null);
+    removeOptimistic(sr.id);
+    startTransition(async () => {
+      const res = await removeCrewSecondaryRole(sr.id, crewId);
+      if (res?.error) {
+        restoreOptimistic(sr, index);
+        setBgError(res.error);
+        return;
+      }
       onChanged();
     });
   };
@@ -449,15 +525,18 @@ function SecondaryRolesSection({
   return (
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Secondary / Backup Roles</div>
+      <BgErrorBanner error={bgError} />
       <div className="flex flex-wrap gap-2 mb-3">
-        {secondaryRoles.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>None set.</div>}
-        {secondaryRoles.map((sr) => {
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>None set.</div>}
+        {items.map((sr, i) => {
           const role = unwrap(sr.job_roles);
           return (
             <div key={sr.id} className="flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm" style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}>
               {role?.name ?? "Unknown role"}
-              {canManage && (
-                <button onClick={() => removeCrewSecondaryRole(sr.id, crewId).then(onChanged)} className="text-xs" style={{ color: "var(--ch-fail)" }}>✕</button>
+              {isTempId(sr.id) ? (
+                <span className="text-xs italic" style={{ color: "var(--ch-sub)" }}>…</span>
+              ) : (
+                canManage && <button onClick={() => remove(sr, i)} className="text-xs" style={{ color: "var(--ch-fail)" }}>✕</button>
               )}
             </div>
           );
@@ -469,7 +548,7 @@ function SecondaryRolesSection({
             <option value="">Select role…</option>
             {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
-          <button onClick={add} disabled={pending || !jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
+          <button onClick={add} disabled={!jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
       <ErrorLine error={error} />
@@ -492,35 +571,78 @@ function AssignmentSection({
   canManage: boolean;
   onChanged: () => void;
 }) {
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(assignments);
+  const [, startTransition] = useTransition();
   const [offshoreSiteId, setOffshoreSiteId] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
 
-  const current = assignments.find((a) => a.end_date === null) ?? null;
-  const history = assignments.filter((a) => a.end_date !== null);
+  const current = items.find((a) => a.end_date === null) ?? null;
+  const history = items.filter((a) => a.end_date !== null);
 
   const assign = () => {
     if (!offshoreSiteId) return;
     setError(null);
+    setBgError(null);
     const fd = new FormData();
     fd.set("offshoreSiteId", offshoreSiteId);
     fd.set("startDate", startDate);
+
+    const siteName = offshoreSites.find((s) => s.id === offshoreSiteId)?.name ?? "";
+    const previousCurrent = current;
+    const optimisticNew: Assignment = {
+      id: tempId(),
+      offshore_site_id: offshoreSiteId,
+      start_date: startDate,
+      end_date: null,
+      notes: null,
+      offshore_sites: { name: siteName, code: null },
+    };
+    if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: startDate });
+    addOptimistic(optimisticNew);
+    setOffshoreSiteId("");
+
     startTransition(async () => {
       const res = await assignCrewToSite(crewId, fd);
-      if (res?.error) { setError(res.error); return; }
-      setOffshoreSiteId("");
+      if (res?.error) {
+        if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: null });
+        removeOptimistic(optimisticNew.id);
+        setBgError(res.error);
+        return;
+      }
       onChanged();
     });
   };
 
-  const endAssignment = (id: string) => {
+  const endAssignment = (assignment: Assignment) => {
     setError(null);
+    setBgError(null);
+    const today = new Date().toISOString().slice(0, 10);
     const fd = new FormData();
-    fd.set("endDate", new Date().toISOString().slice(0, 10));
+    fd.set("endDate", today);
+    updateOptimistic(assignment.id, { end_date: today });
     startTransition(async () => {
-      const res = await endCrewAssignment(id, crewId, fd);
-      if (res?.error) { setError(res.error); return; }
+      const res = await endCrewAssignment(assignment.id, crewId, fd);
+      if (res?.error) {
+        updateOptimistic(assignment.id, { end_date: null });
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
+  const removeHistory = (assignment: Assignment, index: number) => {
+    setBgError(null);
+    removeOptimistic(assignment.id);
+    startTransition(async () => {
+      const res = await deleteCrewAssignment(assignment.id, crewId);
+      if (res?.error) {
+        restoreOptimistic(assignment, index);
+        setBgError(res.error);
+        return;
+      }
       onChanged();
     });
   };
@@ -528,15 +650,17 @@ function AssignmentSection({
   return (
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Vessel Assignment</div>
+      <BgErrorBanner error={bgError} />
 
       {current ? (
         <div className="flex items-center gap-3 flex-wrap mb-3 rounded-lg border px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
           <div>
             <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{unwrap(current.offshore_sites)?.name ?? "Unknown vessel"}</span>
             <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>since {current.start_date}</span>
+            {isTempId(current.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
           </div>
           {canManage && (
-            <button onClick={() => endAssignment(current.id)} disabled={pending} className="text-xs font-semibold ml-auto disabled:opacity-50" style={{ color: "var(--ch-fail)" }}>
+            <button onClick={() => endAssignment(current)} disabled={isTempId(current.id)} className="text-xs font-semibold ml-auto disabled:opacity-50" style={{ color: "var(--ch-fail)" }}>
               End assignment
             </button>
           )}
@@ -555,7 +679,7 @@ function AssignmentSection({
             Start date
             <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </label>
-          <button onClick={assign} disabled={pending || !offshoreSiteId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+          <button onClick={assign} disabled={!offshoreSiteId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
             {current ? "Reassign" : "Assign"}
           </button>
         </div>
@@ -566,15 +690,18 @@ function AssignmentSection({
         <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
           <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-sub)" }}>History</div>
           <div className="space-y-1">
-            {history.map((a) => (
-              <div key={a.id} className="flex items-center gap-2 text-xs">
-                <span style={{ color: "var(--ch-ink)" }}>{unwrap(a.offshore_sites)?.name ?? "Unknown vessel"}</span>
-                <span style={{ color: "var(--ch-sub)" }}>{a.start_date} – {a.end_date}</span>
-                {canManage && (
-                  <button onClick={() => deleteCrewAssignment(a.id, crewId).then(onChanged)} style={{ color: "var(--ch-fail)" }}>Remove</button>
-                )}
-              </div>
-            ))}
+            {history.map((a) => {
+              const index = items.findIndex((x) => x.id === a.id);
+              return (
+                <div key={a.id} className="flex items-center gap-2 text-xs">
+                  <span style={{ color: "var(--ch-ink)" }}>{unwrap(a.offshore_sites)?.name ?? "Unknown vessel"}</span>
+                  <span style={{ color: "var(--ch-sub)" }}>{a.start_date} – {a.end_date}</span>
+                  {canManage && (
+                    <button onClick={() => removeHistory(a, index)} style={{ color: "var(--ch-fail)" }}>Remove</button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -601,18 +728,66 @@ function DocumentsSection({
   canManage: boolean;
   onChanged: () => void;
 }) {
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(crewDocuments);
+  const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const typeById = (id: string) => documentTypes.find((d) => d.id === id);
-  const sorted = [...crewDocuments].sort((a, b) => (typeById(a.document_type_id)?.name ?? "").localeCompare(typeById(b.document_type_id)?.name ?? ""));
+  const sorted = [...items].sort((a, b) => (typeById(a.document_type_id)?.name ?? "").localeCompare(typeById(b.document_type_id)?.name ?? ""));
 
   const applicableFields = (documentTypeId: string) =>
     customFieldDefinitions.filter((f) => f.applies_to_document_type_id === null || f.applies_to_document_type_id === documentTypeId);
 
+  const submitCreate = (fd: FormData, optimisticItem: CrewDocument) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createCrewDocument(crewId, fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
+  const submitUpdate = (doc: CrewDocument, fd: FormData, patch: Partial<CrewDocument>) => {
+    setBgError(null);
+    updateOptimistic(doc.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateCrewDocument(doc.id, crewId, fd);
+      if (res?.error) {
+        updateOptimistic(doc.id, doc);
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
+  const submitDelete = (doc: CrewDocument, index: number) => {
+    setBgError(null);
+    removeOptimistic(doc.id);
+    startTransition(async () => {
+      const res = await deleteCrewDocument(doc.id, crewId);
+      if (res?.error) {
+        restoreOptimistic(doc, index);
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
   return (
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Documents & Certifications (restricted)</div>
+      <BgErrorBanner error={bgError} />
 
       <div className="space-y-2 mb-3">
         {sorted.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No documents recorded.</div>}
@@ -627,13 +802,14 @@ function DocumentsSection({
                 documentTypes={documentTypes}
                 crewList={crewList}
                 customFieldDefinitions={customFieldDefinitions}
-                onDone={() => { setEditingId(null); onChanged(); }}
+                onSubmit={(fd, patch) => submitUpdate(d, fd, patch)}
                 onCancel={() => setEditingId(null)}
               />
             );
           }
           const { status, daysRemaining } = computeDocumentStatus(d.expiry_date, type?.warning_threshold_days ?? null, type?.category ?? null);
           const colors = DOCUMENT_STATUS_COLORS[status];
+          const index = items.findIndex((x) => x.id === d.id);
           const fields = applicableFields(d.document_type_id);
           const customValues = fields
             .map((f) => {
@@ -657,11 +833,12 @@ function DocumentsSection({
                 {customValues.length > 0 && (
                   <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>· {customValues.join(" · ")}</span>
                 )}
+                {isTempId(d.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
               </div>
-              {canManage && (
+              {canManage && !isTempId(d.id) && (
                 <>
                   <button onClick={() => setEditingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-                  <button onClick={() => deleteCrewDocument(d.id, crewId).then(onChanged)} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Remove</button>
+                  <button onClick={() => submitDelete(d, index)} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Remove</button>
                 </>
               )}
             </div>
@@ -676,7 +853,22 @@ function DocumentsSection({
             documentTypes={documentTypes}
             crewList={crewList}
             customFieldDefinitions={customFieldDefinitions}
-            onDone={() => { setAdding(false); onChanged(); }}
+            onSubmit={(fd, patch) =>
+              submitCreate(fd, {
+                id: tempId(),
+                document_type_id: patch.document_type_id ?? documentTypes[0]?.id ?? "",
+                document_number: patch.document_number ?? null,
+                sponsor: patch.sponsor ?? null,
+                issue_date: patch.issue_date ?? null,
+                expiry_date: patch.expiry_date ?? null,
+                entry_date: patch.entry_date ?? null,
+                extension_date: patch.extension_date ?? null,
+                dose_number: patch.dose_number ?? null,
+                reliever_crew_id: patch.reliever_crew_id ?? null,
+                notes: patch.notes ?? null,
+                custom_fields: patch.custom_fields ?? {},
+              })
+            }
             onCancel={() => setAdding(false)}
           />
         ) : (
@@ -704,7 +896,7 @@ function DocumentForm({
   documentTypes,
   crewList,
   customFieldDefinitions,
-  onDone,
+  onSubmit,
   onCancel,
 }: {
   crewId: string;
@@ -712,7 +904,7 @@ function DocumentForm({
   documentTypes: DocumentType[];
   crewList: Ref[];
   customFieldDefinitions: CustomFieldDefinition[];
-  onDone: () => void;
+  onSubmit: (fd: FormData, patch: Partial<CrewDocument>) => void;
   onCancel: () => void;
 }) {
   const [documentTypeId, setDocumentTypeId] = useState(crewDocument?.document_type_id ?? documentTypes[0]?.id ?? "");
@@ -732,8 +924,7 @@ function DocumentForm({
     }
     return initial;
   });
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const selectedType = documentTypes.find((t) => t.id === documentTypeId);
   const isVisa = selectedType?.category === "visa";
@@ -744,8 +935,7 @@ function DocumentForm({
   );
 
   const save = () => {
-    if (!documentTypeId) return;
-    setError(null);
+    if (!documentTypeId || submitted) return;
     const fd = new FormData();
     fd.set("documentTypeId", documentTypeId);
     fd.set("documentNumber", documentNumber.trim());
@@ -764,12 +954,19 @@ function DocumentForm({
       customFieldsPayload[f.field_key] = f.field_type === "number" ? Number(raw) : raw;
     }
     fd.set("customFields", JSON.stringify(customFieldsPayload));
-    startTransition(async () => {
-      const res = crewDocument
-        ? await updateCrewDocument(crewDocument.id, crewId, fd)
-        : await createCrewDocument(crewId, fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
+    setSubmitted(true);
+    onSubmit(fd, {
+      document_type_id: documentTypeId,
+      document_number: tracksNumber && documentNumber.trim() ? documentNumber.trim() : null,
+      sponsor: sponsor.trim() || null,
+      issue_date: issueDate || null,
+      expiry_date: expiryDate || null,
+      entry_date: entryDate || null,
+      extension_date: extensionDate || null,
+      dose_number: doseNumber || null,
+      reliever_crew_id: relieverCrewId || null,
+      notes: notes.trim() || null,
+      custom_fields: customFieldsPayload,
     });
   };
 
@@ -845,12 +1042,11 @@ function DocumentForm({
       )}
       <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={pending || !documentTypeId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} disabled={submitted || !documentTypeId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
-      <ErrorLine error={error} />
     </div>
   );
 }
@@ -861,16 +1057,22 @@ function CostForm({ crew, canManage, onSaved }: { crew: Crew; canManage: boolean
   const [dayRate, setDayRate] = useState(crew.day_rate != null ? String(crew.day_rate) : "");
   const [currency, setCurrency] = useState(crew.currency ?? "USD");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [, startTransition] = useTransition();
 
   const save = () => {
     setError(null);
     const fd = new FormData();
     fd.set("dayRate", dayRate);
     fd.set("currency", currency.trim() || "USD");
+    setSaved(true);
     startTransition(async () => {
       const res = await updateCrewCost(crew.id, fd);
-      if (res?.error) { setError(res.error); return; }
+      if (res?.error) {
+        setSaved(false);
+        setError(res.error);
+        return;
+      }
       onSaved();
     });
   };
@@ -879,13 +1081,14 @@ function CostForm({ crew, canManage, onSaved }: { crew: Crew; canManage: boolean
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Cost (restricted)</div>
       <div className="flex items-center gap-2 flex-wrap">
-        <input type="number" min={0} step="0.01" className={`${inputCls} w-32`} style={inputStyle} placeholder="Day rate" value={dayRate} onChange={(e) => setDayRate(e.target.value)} disabled={!canManage} />
-        <input className={`${inputCls} w-24`} style={inputStyle} placeholder="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!canManage} />
+        <input type="number" min={0} step="0.01" className={`${inputCls} w-32`} style={inputStyle} placeholder="Day rate" value={dayRate} onChange={(e) => { setDayRate(e.target.value); setSaved(false); }} disabled={!canManage} />
+        <input className={`${inputCls} w-24`} style={inputStyle} placeholder="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value); setSaved(false); }} disabled={!canManage} />
         {canManage && (
-          <button onClick={save} disabled={pending} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-            {pending ? "Saving…" : "Save"}
+          <button onClick={save} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold">
+            Save
           </button>
         )}
+        {saved && !error && <span className="text-xs font-semibold" style={{ color: "var(--ch-ok, #1a7f37)" }}>Saved</span>}
       </div>
       <ErrorLine error={error} />
     </div>
@@ -897,15 +1100,21 @@ function CostForm({ crew, canManage, onSaved }: { crew: Crew; canManage: boolean
 function SensitiveForm({ crew, canManage, onSaved }: { crew: Crew; canManage: boolean; onSaved: () => void }) {
   const [notes, setNotes] = useState(crew.dietary_medical_notes ?? "");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [, startTransition] = useTransition();
 
   const save = () => {
     setError(null);
     const fd = new FormData();
     fd.set("dietaryMedicalNotes", notes.trim());
+    setSaved(true);
     startTransition(async () => {
       const res = await updateCrewSensitive(crew.id, fd);
-      if (res?.error) { setError(res.error); return; }
+      if (res?.error) {
+        setSaved(false);
+        setError(res.error);
+        return;
+      }
       onSaved();
     });
   };
@@ -913,12 +1122,13 @@ function SensitiveForm({ crew, canManage, onSaved }: { crew: Crew; canManage: bo
   return (
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Dietary / Medical Accommodation Notes (restricted)</div>
-      <textarea className={`${inputCls} w-full`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!canManage} />
+      <textarea className={`${inputCls} w-full`} style={inputStyle} rows={2} value={notes} onChange={(e) => { setNotes(e.target.value); setSaved(false); }} disabled={!canManage} />
       {canManage && (
-        <div className="mt-2">
-          <button onClick={save} disabled={pending} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-            {pending ? "Saving…" : "Save"}
+        <div className="mt-2 flex items-center gap-2">
+          <button onClick={save} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold">
+            Save
           </button>
+          {saved && !error && <span className="text-xs font-semibold" style={{ color: "var(--ch-ok, #1a7f37)" }}>Saved</span>}
         </div>
       )}
       <ErrorLine error={error} />
@@ -931,15 +1141,21 @@ function SensitiveForm({ crew, canManage, onSaved }: { crew: Crew; canManage: bo
 function LinkedUserForm({ crew, profiles, onSaved }: { crew: Crew; profiles: Ref[]; onSaved: () => void }) {
   const [linkedProfileId, setLinkedProfileId] = useState(crew.linked_profile_id ?? "");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [, startTransition] = useTransition();
 
   const save = () => {
     setError(null);
     const fd = new FormData();
     fd.set("linkedProfileId", linkedProfileId);
+    setSaved(true);
     startTransition(async () => {
       const res = await linkCrewToUser(crew.id, fd);
-      if (res?.error) { setError(res.error); return; }
+      if (res?.error) {
+        setSaved(false);
+        setError(res.error);
+        return;
+      }
       onSaved();
     });
   };
@@ -951,13 +1167,14 @@ function LinkedUserForm({ crew, profiles, onSaved }: { crew: Crew; profiles: Ref
         Link this crew member to an existing ComplianceHub user account to give them self-service access to their own assignments and documents later.
       </p>
       <div className="flex items-center gap-2">
-        <select className={inputCls} style={inputStyle} value={linkedProfileId} onChange={(e) => setLinkedProfileId(e.target.value)}>
+        <select className={inputCls} style={inputStyle} value={linkedProfileId} onChange={(e) => { setLinkedProfileId(e.target.value); setSaved(false); }}>
           <option value="">Not linked</option>
           {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <button onClick={save} disabled={pending} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold">
+          Save
         </button>
+        {saved && !error && <span className="text-xs font-semibold" style={{ color: "var(--ch-ok, #1a7f37)" }}>Saved</span>}
       </div>
       <ErrorLine error={error} />
     </div>

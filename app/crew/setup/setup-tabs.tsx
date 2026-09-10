@@ -23,6 +23,7 @@ import {
   updateCustomFieldDefinition,
   deleteCustomFieldDefinition,
 } from "./actions";
+import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
 type Skill = { id: string; name: string };
@@ -96,6 +97,49 @@ const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
+function ErrorLine({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div className="text-xs mt-1.5" style={{ color: "var(--ch-fail)" }}>
+      {error}
+    </div>
+  );
+}
+
+function BgErrorBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div className="text-sm mb-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+      {error}
+    </div>
+  );
+}
+
+function SavingTag({ id }: { id: string }) {
+  if (!isTempId(id)) return null;
+  return (
+    <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>
+      Saving…
+    </span>
+  );
+}
+
+function DeleteButton({ onConfirm, disabled, label }: { onConfirm: () => void; disabled?: boolean; label: string }) {
+  return (
+    <button
+      onClick={() => {
+        if (!window.confirm(`Delete this ${label}?`)) return;
+        onConfirm();
+      }}
+      disabled={disabled}
+      className="text-xs font-semibold disabled:opacity-40"
+      style={{ color: "var(--ch-fail)" }}
+    >
+      Delete
+    </button>
+  );
+}
+
 export default function SetupTabs({
   jobRoles,
   skills,
@@ -118,8 +162,6 @@ export default function SetupTabs({
   customFieldDefinitions: CustomFieldDefinition[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
-  const router = useRouter();
-  const refresh = () => router.refresh();
 
   return (
     <div>
@@ -140,9 +182,9 @@ export default function SetupTabs({
         ))}
       </div>
 
-      {tab === "Job Roles" && <JobRolesPanel jobRoles={jobRoles} onChanged={refresh} />}
-      {tab === "Skills" && <SkillsPanel skills={skills} onChanged={refresh} />}
-      {tab === "Rotation Templates" && <RotationTemplatesPanel templates={rotationTemplates} onChanged={refresh} />}
+      {tab === "Job Roles" && <JobRolesPanel jobRoles={jobRoles} />}
+      {tab === "Skills" && <SkillsPanel skills={skills} />}
+      {tab === "Rotation Templates" && <RotationTemplatesPanel templates={rotationTemplates} />}
       {tab === "Offshore Sites" && (
         <OffshoreSitesPanel
           sites={offshoreSites}
@@ -151,77 +193,106 @@ export default function SetupTabs({
           rotationTemplates={rotationTemplates}
           jobRoles={jobRoles}
           manningRequirements={manningRequirements}
-          onChanged={refresh}
         />
       )}
-      {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} onChanged={refresh} />}
+      {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} />}
       {tab === "Custom Fields" && (
-        <CustomFieldDefinitionsPanel customFieldDefinitions={customFieldDefinitions} documentTypes={documentTypes} onChanged={refresh} />
+        <CustomFieldDefinitionsPanel customFieldDefinitions={customFieldDefinitions} documentTypes={documentTypes} />
       )}
-    </div>
-  );
-}
-
-function ErrorLine({ error }: { error: string | null }) {
-  if (!error) return null;
-  return (
-    <div className="text-xs mt-1.5" style={{ color: "var(--ch-fail)" }}>
-      {error}
     </div>
   );
 }
 
 /* ================= Job Roles ================= */
 
-function JobRolesPanel({ jobRoles, onChanged }: { jobRoles: JobRole[]; onChanged: () => void }) {
+function JobRolesPanel({ jobRoles }: { jobRoles: JobRole[] }) {
+  const router = useRouter();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(jobRoles);
+  const [, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const add = () => {
     if (!name.trim()) return;
     setError(null);
+    setBgError(null);
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("category", category.trim());
+    const optimisticItem: JobRole = { id: tempId(), name: name.trim(), category: category.trim() || null, is_active: true };
+    addOptimistic(optimisticItem);
+    setName("");
+    setCategory("");
     startTransition(async () => {
       const res = await createJobRole(fd);
-      if (res?.error) { setError(res.error); return; }
-      setName("");
-      setCategory("");
-      onChanged();
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't add "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (role: JobRole, fd: FormData, patch: Partial<JobRole>) => {
+    setBgError(null);
+    updateOptimistic(role.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateJobRole(role.id, fd);
+      if (res?.error) {
+        updateOptimistic(role.id, role);
+        setBgError(`Couldn't update "${role.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (role: JobRole, index: number) => {
+    setBgError(null);
+    removeOptimistic(role.id);
+    startTransition(async () => {
+      const res = await deleteJobRole(role.id);
+      if (res?.error) {
+        restoreOptimistic(role, index);
+        setBgError(`Couldn't delete "${role.name}": ${res.error}`);
+      }
     });
   };
 
   return (
     <div>
+      <BgErrorBanner error={bgError} />
       <div className={`${cardCls} p-4 mb-4`} style={cardStyle}>
         <div className="flex items-center gap-2 flex-wrap">
           <input className={`${inputCls} flex-1 min-w-[160px]`} style={inputStyle} placeholder="Role name, e.g. Head Chef" value={name} onChange={(e) => setName(e.target.value)} />
           <input className={`${inputCls} w-48`} style={inputStyle} placeholder="Category (optional)" value={category} onChange={(e) => setCategory(e.target.value)} />
-          <button onClick={add} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-            {pending ? "Adding…" : "+ Add role"}
+          <button onClick={add} disabled={!name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+            + Add role
           </button>
         </div>
         <ErrorLine error={error} />
       </div>
 
       <div className="space-y-2">
-        {jobRoles.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No job roles yet.</div>}
-        {jobRoles.map((r) =>
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No job roles yet.</div>}
+        {items.map((r, i) =>
           editingId === r.id ? (
-            <JobRoleEditRow key={r.id} role={r} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
+            <JobRoleEditRow key={r.id} role={r} onSubmit={(fd, patch) => submitUpdate(r, fd, patch)} onCancel={() => setEditingId(null)} />
           ) : (
             <div key={r.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
               <div className="flex-1 min-w-[160px]">
                 <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{r.name}</span>
                 {r.category && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{r.category}</span>}
                 {!r.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                <SavingTag id={r.id} />
               </div>
-              <button onClick={() => setEditingId(r.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteJobRole(r.id).then(onChanged)} label="role" />
+              <button onClick={() => setEditingId(r.id)} disabled={isTempId(r.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onConfirm={() => submitDelete(r, i)} disabled={isTempId(r.id)} label="role" />
             </div>
           )
         )}
@@ -230,24 +301,28 @@ function JobRolesPanel({ jobRoles, onChanged }: { jobRoles: JobRole[]; onChanged
   );
 }
 
-function JobRoleEditRow({ role, onDone, onCancel }: { role: JobRole; onDone: () => void; onCancel: () => void }) {
+function JobRoleEditRow({
+  role,
+  onSubmit,
+  onCancel,
+}: {
+  role: JobRole;
+  onSubmit: (fd: FormData, patch: Partial<JobRole>) => void;
+  onCancel: () => void;
+}) {
   const [name, setName] = useState(role.name);
   const [category, setCategory] = useState(role.category ?? "");
   const [isActive, setIsActive] = useState(role.is_active);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const save = () => {
-    setError(null);
+    if (submitted) return;
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("category", category.trim());
     if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = await updateJobRole(role.id, fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
-    });
+    setSubmitted(true);
+    onSubmit(fd, { name: name.trim(), category: category.trim() || null, is_active: isActive });
   };
 
   return (
@@ -258,52 +333,78 @@ function JobRoleEditRow({ role, onDone, onCancel }: { role: JobRole; onDone: () 
         <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
         </label>
-        <button onClick={save} disabled={pending} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Save</button>
+        <button onClick={save} disabled={submitted} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Save</button>
         <button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
-      <ErrorLine error={error} />
     </div>
   );
 }
 
 /* ================= Skills ================= */
 
-function SkillsPanel({ skills, onChanged }: { skills: Skill[]; onChanged: () => void }) {
+function SkillsPanel({ skills }: { skills: Skill[] }) {
+  const router = useRouter();
+  const { items, addOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(skills);
+  const [, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const add = () => {
     if (!name.trim()) return;
     setError(null);
+    setBgError(null);
     const fd = new FormData();
     fd.set("name", name.trim());
+    const optimisticItem: Skill = { id: tempId(), name: name.trim() };
+    addOptimistic(optimisticItem);
+    setName("");
     startTransition(async () => {
       const res = await createSkill(fd);
-      if (res?.error) { setError(res.error); return; }
-      setName("");
-      onChanged();
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't add "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (skill: Skill, index: number) => {
+    setBgError(null);
+    removeOptimistic(skill.id);
+    startTransition(async () => {
+      const res = await deleteSkill(skill.id);
+      if (res?.error) {
+        restoreOptimistic(skill, index);
+        setBgError(`Couldn't delete "${skill.name}": ${res.error}`);
+      }
     });
   };
 
   return (
     <div>
+      <BgErrorBanner error={bgError} />
       <div className={`${cardCls} p-4 mb-4`} style={cardStyle}>
         <div className="flex items-center gap-2">
           <input className={`${inputCls} flex-1`} style={inputStyle} placeholder="Skill name, e.g. HACCP Certified" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
-          <button onClick={add} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-            {pending ? "Adding…" : "+ Add skill"}
+          <button onClick={add} disabled={!name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+            + Add skill
           </button>
         </div>
         <ErrorLine error={error} />
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {skills.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No skills yet.</div>}
-        {skills.map((s) => (
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No skills yet.</div>}
+        {items.map((s, i) => (
           <div key={s.id} className="flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm" style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}>
             {s.name}
-            <button onClick={() => deleteSkill(s.id).then(onChanged)} className="text-xs" style={{ color: "var(--ch-fail)" }} title="Delete">✕</button>
+            {isTempId(s.id) ? (
+              <span className="text-xs italic" style={{ color: "var(--ch-sub)" }}>…</span>
+            ) : (
+              <button onClick={() => submitDelete(s, i)} className="text-xs" style={{ color: "var(--ch-fail)" }} title="Delete">✕</button>
+            )}
           </div>
         ))}
       </div>
@@ -311,27 +412,72 @@ function SkillsPanel({ skills, onChanged }: { skills: Skill[]; onChanged: () => 
   );
 }
 
-/* ================= Clients ================= */
-
 /* ================= Rotation Templates ================= */
 
-function RotationTemplatesPanel({ templates, onChanged }: { templates: RotationTemplate[]; onChanged: () => void }) {
+function RotationTemplatesPanel({ templates }: { templates: RotationTemplate[] }) {
+  const router = useRouter();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(templates);
+  const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
+
+  const submitCreate = (fd: FormData, optimisticItem: RotationTemplate) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createRotationTemplate(fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't save "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (template: RotationTemplate, fd: FormData, patch: Partial<RotationTemplate>) => {
+    setBgError(null);
+    updateOptimistic(template.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateRotationTemplate(template.id, fd);
+      if (res?.error) {
+        updateOptimistic(template.id, template);
+        setBgError(`Couldn't update "${template.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (template: RotationTemplate, index: number) => {
+    setBgError(null);
+    removeOptimistic(template.id);
+    startTransition(async () => {
+      const res = await deleteRotationTemplate(template.id);
+      if (res?.error) {
+        restoreOptimistic(template, index);
+        setBgError(`Couldn't delete "${template.name}": ${res.error}`);
+      }
+    });
+  };
 
   return (
     <div>
+      <BgErrorBanner error={bgError} />
       {adding ? (
-        <RotationTemplateForm onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+        <RotationTemplateForm onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })} onCancel={() => setAdding(false)} />
       ) : (
         <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add rotation pattern</button>
       )}
 
       <div className="space-y-2 mt-4">
-        {templates.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No rotation patterns yet.</div>}
-        {templates.map((t) =>
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No rotation patterns yet.</div>}
+        {items.map((t, i) =>
           editingId === t.id ? (
-            <RotationTemplateForm key={t.id} template={t} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
+            <RotationTemplateForm key={t.id} template={t} onSubmit={(fd, values) => submitUpdate(t, fd, values)} onCancel={() => setEditingId(null)} />
           ) : (
             <div key={t.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
               <div className="flex-1 min-w-[160px]">
@@ -340,9 +486,10 @@ function RotationTemplatesPanel({ templates, onChanged }: { templates: RotationT
                   {t.days_on != null && t.days_off != null ? `${t.days_on}/${t.days_off}` : t.pattern_type.replace("_", " ")}
                 </span>
                 {!t.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                <SavingTag id={t.id} />
               </div>
-              <button onClick={() => setEditingId(t.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteRotationTemplate(t.id).then(onChanged)} label="rotation pattern" />
+              <button onClick={() => setEditingId(t.id)} disabled={isTempId(t.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onConfirm={() => submitDelete(t, i)} disabled={isTempId(t.id)} label="rotation pattern" />
             </div>
           )
         )}
@@ -351,21 +498,27 @@ function RotationTemplatesPanel({ templates, onChanged }: { templates: RotationT
   );
 }
 
-function RotationTemplateForm({ template, onDone, onCancel }: { template?: RotationTemplate; onDone: () => void; onCancel: () => void }) {
+function RotationTemplateForm({
+  template,
+  onSubmit,
+  onCancel,
+}: {
+  template?: RotationTemplate;
+  onSubmit: (fd: FormData, values: Omit<RotationTemplate, "id">) => void;
+  onCancel: () => void;
+}) {
   const [name, setName] = useState(template?.name ?? "");
   const [patternType, setPatternType] = useState(template?.pattern_type ?? "fixed_equal");
   const [daysOn, setDaysOn] = useState(template?.days_on != null ? String(template.days_on) : "");
   const [daysOff, setDaysOff] = useState(template?.days_off != null ? String(template.days_off) : "");
   const [notes, setNotes] = useState(template?.notes ?? "");
   const [isActive, setIsActive] = useState(template?.is_active ?? true);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const showDays = patternType !== "custom";
 
   const save = () => {
-    if (!name.trim()) return;
-    setError(null);
+    if (!name.trim() || submitted) return;
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("patternType", patternType);
@@ -373,10 +526,14 @@ function RotationTemplateForm({ template, onDone, onCancel }: { template?: Rotat
     fd.set("daysOff", showDays ? daysOff : "");
     fd.set("notes", notes.trim());
     if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = template ? await updateRotationTemplate(template.id, fd) : await createRotationTemplate(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
+    setSubmitted(true);
+    onSubmit(fd, {
+      name: name.trim(),
+      pattern_type: patternType,
+      days_on: showDays && daysOn ? Number(daysOn) : null,
+      days_off: showDays && daysOff ? Number(daysOff) : null,
+      notes: notes.trim() || null,
+      is_active: isActive,
     });
   };
 
@@ -401,12 +558,11 @@ function RotationTemplateForm({ template, onDone, onCancel }: { template?: Rotat
         <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
         </label>
-        <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
-      <ErrorLine error={error} />
     </div>
   );
 }
@@ -422,7 +578,6 @@ function OffshoreSitesPanel({
   rotationTemplates,
   jobRoles,
   manningRequirements,
-  onChanged,
 }: {
   sites: OffshoreSite[];
   contractors: Contractor[];
@@ -430,11 +585,14 @@ function OffshoreSitesPanel({
   rotationTemplates: RotationTemplate[];
   jobRoles: JobRole[];
   manningRequirements: ManningReq[];
-  onChanged: () => void;
 }) {
+  const router = useRouter();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(sites);
+  const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const contractorLabel = (id: string | null) => {
     const contractor = contractors.find((c) => c.id === id);
@@ -443,24 +601,72 @@ function OffshoreSitesPanel({
     return client ? `${contractor.name} (${client.name})` : contractor.name;
   };
 
+  const submitCreate = (fd: FormData, optimisticItem: OffshoreSite) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createOffshoreSite(fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't save "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (site: OffshoreSite, fd: FormData, patch: Partial<OffshoreSite>) => {
+    setBgError(null);
+    updateOptimistic(site.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateOffshoreSite(site.id, fd);
+      if (res?.error) {
+        updateOptimistic(site.id, site);
+        setBgError(`Couldn't update "${site.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (site: OffshoreSite, index: number) => {
+    setBgError(null);
+    removeOptimistic(site.id);
+    startTransition(async () => {
+      const res = await deleteOffshoreSite(site.id);
+      if (res?.error) {
+        restoreOptimistic(site, index);
+        setBgError(`Couldn't delete "${site.name}": ${res.error}`);
+      }
+    });
+  };
+
   return (
     <div>
+      <BgErrorBanner error={bgError} />
       {adding ? (
-        <OffshoreSiteForm contractors={contractors} rotationTemplates={rotationTemplates} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+        <OffshoreSiteForm
+          contractors={contractors}
+          rotationTemplates={rotationTemplates}
+          onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })}
+          onCancel={() => setAdding(false)}
+        />
       ) : (
         <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add offshore site</button>
       )}
 
       <div className="space-y-2 mt-4">
-        {sites.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No offshore sites yet.</div>}
-        {sites.map((s) =>
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No offshore sites yet.</div>}
+        {items.map((s, i) =>
           editingId === s.id ? (
             <OffshoreSiteForm
               key={s.id}
               site={s}
               contractors={contractors}
               rotationTemplates={rotationTemplates}
-              onDone={() => { setEditingId(null); onChanged(); }}
+              onSubmit={(fd, values) => submitUpdate(s, fd, values)}
               onCancel={() => setEditingId(null)}
             />
           ) : (
@@ -472,12 +678,18 @@ function OffshoreSitesPanel({
                   <span className="text-xs ml-2 uppercase font-semibold" style={{ color: "var(--ch-navy)" }}>{s.site_type}</span>
                   <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{contractorLabel(s.contractor_id)}</span>
                   {s.status !== "active" && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                  <SavingTag id={s.id} />
                 </div>
-                <button onClick={() => setExpandedId(expandedId === s.id ? null : s.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>
+                <button
+                  onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                  disabled={isTempId(s.id)}
+                  className="text-xs font-semibold disabled:opacity-40"
+                  style={{ color: "var(--ch-navy)" }}
+                >
                   {expandedId === s.id ? "Hide manning" : "Manning requirements"}
                 </button>
-                <button onClick={() => setEditingId(s.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-                <DeleteButton onDelete={() => deleteOffshoreSite(s.id).then(onChanged)} label="site" />
+                <button onClick={() => setEditingId(s.id)} disabled={isTempId(s.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>Edit</button>
+                <DeleteButton onConfirm={() => submitDelete(s, i)} disabled={isTempId(s.id)} label="site" />
               </div>
               {expandedId === s.id && (
                 <div className="border-t px-3 py-3" style={{ borderColor: "var(--ch-line)" }}>
@@ -485,7 +697,6 @@ function OffshoreSitesPanel({
                     siteId={s.id}
                     jobRoles={jobRoles}
                     requirements={manningRequirements.filter((m) => m.offshore_site_id === s.id)}
-                    onChanged={onChanged}
                   />
                 </div>
               )}
@@ -501,13 +712,13 @@ function OffshoreSiteForm({
   site,
   contractors,
   rotationTemplates,
-  onDone,
+  onSubmit,
   onCancel,
 }: {
   site?: OffshoreSite;
   contractors: Contractor[];
   rotationTemplates: RotationTemplate[];
-  onDone: () => void;
+  onSubmit: (fd: FormData, values: Omit<OffshoreSite, "id">) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(site?.name ?? "");
@@ -521,12 +732,10 @@ function OffshoreSiteForm({
   const [rotationTemplateId, setRotationTemplateId] = useState(site?.standard_rotation_template_id ?? "");
   const [status, setStatus] = useState(site?.status ?? "active");
   const [notes, setNotes] = useState(site?.notes ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const save = () => {
-    if (!name.trim()) return;
-    setError(null);
+    if (!name.trim() || submitted) return;
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("code", code.trim());
@@ -539,10 +748,19 @@ function OffshoreSiteForm({
     fd.set("standardRotationTemplateId", rotationTemplateId);
     fd.set("status", status);
     fd.set("notes", notes.trim());
-    startTransition(async () => {
-      const res = site ? await updateOffshoreSite(site.id, fd) : await createOffshoreSite(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
+    setSubmitted(true);
+    onSubmit(fd, {
+      name: name.trim(),
+      code: code.trim() || null,
+      site_type: siteType,
+      contractor_id: contractorId || null,
+      country: country.trim() || null,
+      operating_region: operatingRegion.trim() || null,
+      port_or_heliport: portOrHeliport.trim() || null,
+      crew_change_location: crewChangeLocation.trim() || null,
+      standard_rotation_template_id: rotationTemplateId || null,
+      status,
+      notes: notes.trim() || null,
     });
   };
 
@@ -583,12 +801,11 @@ function OffshoreSiteForm({
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>
-        <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
-      <ErrorLine error={error} />
     </div>
   );
 }
@@ -597,30 +814,55 @@ function ManningRequirementsEditor({
   siteId,
   jobRoles,
   requirements,
-  onChanged,
 }: {
   siteId: string;
   jobRoles: JobRole[];
   requirements: ManningReq[];
-  onChanged: () => void;
 }) {
+  const router = useRouter();
+  const { items, addOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(requirements);
+  const [, startTransition] = useTransition();
   const [jobRoleId, setJobRoleId] = useState("");
   const [headcount, setHeadcount] = useState("1");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const add = () => {
     if (!jobRoleId) return;
     setError(null);
+    setBgError(null);
     const fd = new FormData();
     fd.set("jobRoleId", jobRoleId);
     fd.set("minimumHeadcount", headcount);
+    const optimisticItem: ManningReq = {
+      id: tempId(),
+      offshore_site_id: siteId,
+      job_role_id: jobRoleId,
+      minimum_headcount: Number(headcount) || 1,
+    };
+    addOptimistic(optimisticItem);
+    setJobRoleId("");
+    setHeadcount("1");
     startTransition(async () => {
       const res = await setManningRequirement(siteId, fd);
-      if (res?.error) { setError(res.error); return; }
-      setJobRoleId("");
-      setHeadcount("1");
-      onChanged();
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const remove = (req: ManningReq, index: number) => {
+    setBgError(null);
+    removeOptimistic(req.id);
+    startTransition(async () => {
+      const res = await deleteManningRequirement(req.id);
+      if (res?.error) {
+        restoreOptimistic(req, index);
+        setBgError(res.error);
+      }
     });
   };
 
@@ -634,18 +876,20 @@ function ManningRequirementsEditor({
           ))}
         </select>
         <input type="number" min={1} className={`${inputCls} w-24`} style={inputStyle} value={headcount} onChange={(e) => setHeadcount(e.target.value)} />
-        <button onClick={add} disabled={pending || !jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+        <button onClick={add} disabled={!jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
           Set requirement
         </button>
       </div>
       <ErrorLine error={error} />
+      <BgErrorBanner error={bgError} />
       <div className="space-y-1.5">
-        {requirements.length === 0 && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No manning requirements set for this site yet.</div>}
-        {requirements.map((r) => (
+        {items.length === 0 && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No manning requirements set for this site yet.</div>}
+        {items.map((r, i) => (
           <div key={r.id} className="flex items-center gap-2 text-sm">
             <span style={{ color: "var(--ch-ink)" }}>{jobRoles.find((j) => j.id === r.job_role_id)?.name ?? "Unknown role"}</span>
             <span style={{ color: "var(--ch-sub)" }}>min {r.minimum_headcount}</span>
-            <button onClick={() => deleteManningRequirement(r.id).then(onChanged)} className="text-xs" style={{ color: "var(--ch-fail)" }}>Remove</button>
+            <SavingTag id={r.id} />
+            <button onClick={() => remove(r, i)} disabled={isTempId(r.id)} className="text-xs disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>Remove</button>
           </div>
         ))}
       </div>
@@ -662,23 +906,70 @@ const DOCUMENT_CATEGORIES = [
   { value: "vaccination", label: "Vaccination" },
 ];
 
-function DocumentTypesPanel({ documentTypes, onChanged }: { documentTypes: DocumentType[]; onChanged: () => void }) {
+function DocumentTypesPanel({ documentTypes }: { documentTypes: DocumentType[] }) {
+  const router = useRouter();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(documentTypes);
+  const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
+
+  const submitCreate = (fd: FormData, optimisticItem: DocumentType) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createDocumentType(fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't save "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (documentType: DocumentType, fd: FormData, patch: Partial<DocumentType>) => {
+    setBgError(null);
+    updateOptimistic(documentType.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateDocumentType(documentType.id, fd);
+      if (res?.error) {
+        updateOptimistic(documentType.id, documentType);
+        setBgError(`Couldn't update "${documentType.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (documentType: DocumentType, index: number) => {
+    setBgError(null);
+    removeOptimistic(documentType.id);
+    startTransition(async () => {
+      const res = await deleteDocumentType(documentType.id);
+      if (res?.error) {
+        restoreOptimistic(documentType, index);
+        setBgError(`Couldn't delete "${documentType.name}": ${res.error}`);
+      }
+    });
+  };
 
   return (
     <div>
+      <BgErrorBanner error={bgError} />
       {adding ? (
-        <DocumentTypeForm onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+        <DocumentTypeForm onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })} onCancel={() => setAdding(false)} />
       ) : (
         <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add document type</button>
       )}
 
       <div className="space-y-2 mt-4">
-        {documentTypes.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types yet.</div>}
-        {documentTypes.map((d) =>
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types yet.</div>}
+        {items.map((d, i) =>
           editingId === d.id ? (
-            <DocumentTypeForm key={d.id} documentType={d} onDone={() => { setEditingId(null); onChanged(); }} onCancel={() => setEditingId(null)} />
+            <DocumentTypeForm key={d.id} documentType={d} onSubmit={(fd, values) => submitUpdate(d, fd, values)} onCancel={() => setEditingId(null)} />
           ) : (
             <div key={d.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
               <div className="flex-1 min-w-[200px]">
@@ -693,9 +984,10 @@ function DocumentTypesPanel({ documentTypes, onChanged }: { documentTypes: Docum
                 )}
                 {!d.tracks_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>No document number</span>}
                 {!d.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                <SavingTag id={d.id} />
               </div>
-              <button onClick={() => setEditingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteDocumentType(d.id).then(onChanged)} label="document type" />
+              <button onClick={() => setEditingId(d.id)} disabled={isTempId(d.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onConfirm={() => submitDelete(d, i)} disabled={isTempId(d.id)} label="document type" />
             </div>
           )
         )}
@@ -706,11 +998,11 @@ function DocumentTypesPanel({ documentTypes, onChanged }: { documentTypes: Docum
 
 function DocumentTypeForm({
   documentType,
-  onDone,
+  onSubmit,
   onCancel,
 }: {
   documentType?: DocumentType;
-  onDone: () => void;
+  onSubmit: (fd: FormData, values: Omit<DocumentType, "id">) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(documentType?.name ?? "");
@@ -723,12 +1015,10 @@ function DocumentTypeForm({
   );
   const [tracksNumber, setTracksNumber] = useState(documentType?.tracks_number ?? true);
   const [isActive, setIsActive] = useState(documentType?.is_active ?? true);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const save = () => {
-    if (!name.trim()) return;
-    setError(null);
+    if (!name.trim() || submitted) return;
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("category", category);
@@ -736,10 +1026,14 @@ function DocumentTypeForm({
     fd.set("warningThresholdDays", warningThresholdDays);
     if (tracksNumber) fd.set("tracksNumber", "on");
     if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = documentType ? await updateDocumentType(documentType.id, fd) : await createDocumentType(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
+    setSubmitted(true);
+    onSubmit(fd, {
+      name: name.trim(),
+      category,
+      default_validity_months: defaultValidityMonths ? Number(defaultValidityMonths) : null,
+      warning_threshold_days: warningThresholdDays ? Number(warningThresholdDays) : null,
+      tracks_number: tracksNumber,
+      is_active: isActive,
     });
   };
 
@@ -772,12 +1066,11 @@ function DocumentTypeForm({
         </label>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={pending || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
-      <ErrorLine error={error} />
     </div>
   );
 }
@@ -793,16 +1086,60 @@ const FIELD_TYPES = [
 function CustomFieldDefinitionsPanel({
   customFieldDefinitions,
   documentTypes,
-  onChanged,
 }: {
   customFieldDefinitions: CustomFieldDefinition[];
   documentTypes: DocumentType[];
-  onChanged: () => void;
 }) {
+  const router = useRouter();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(customFieldDefinitions);
+  const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [bgError, setBgError] = useState<string | null>(null);
 
   const appliesToLabel = (id: string | null) => (id ? documentTypes.find((t) => t.id === id)?.name ?? "—" : "All document types");
+
+  const submitCreate = (fd: FormData, optimisticItem: CustomFieldDefinition) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createCustomFieldDefinition(fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't save "${optimisticItem.label}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (definition: CustomFieldDefinition, fd: FormData, patch: Partial<CustomFieldDefinition>) => {
+    setBgError(null);
+    updateOptimistic(definition.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateCustomFieldDefinition(definition.id, fd);
+      if (res?.error) {
+        updateOptimistic(definition.id, definition);
+        setBgError(`Couldn't update "${definition.label}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (definition: CustomFieldDefinition, index: number) => {
+    setBgError(null);
+    removeOptimistic(definition.id);
+    startTransition(async () => {
+      const res = await deleteCustomFieldDefinition(definition.id);
+      if (res?.error) {
+        restoreOptimistic(definition, index);
+        setBgError(`Couldn't delete "${definition.label}": ${res.error}`);
+      }
+    });
+  };
 
   return (
     <div>
@@ -811,21 +1148,26 @@ function CustomFieldDefinitionsPanel({
         number, issue/expiry dates and sponsor. A field defined here shows up automatically in
         every relevant document's edit form, no code change needed.
       </p>
+      <BgErrorBanner error={bgError} />
       {adding ? (
-        <CustomFieldDefinitionForm documentTypes={documentTypes} onDone={() => { setAdding(false); onChanged(); }} onCancel={() => setAdding(false)} />
+        <CustomFieldDefinitionForm
+          documentTypes={documentTypes}
+          onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), field_key: "", sort_order: 0, ...values })}
+          onCancel={() => setAdding(false)}
+        />
       ) : (
         <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add custom field</button>
       )}
 
       <div className="space-y-2 mt-4">
-        {customFieldDefinitions.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No custom fields defined yet.</div>}
-        {customFieldDefinitions.map((f) =>
+        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No custom fields defined yet.</div>}
+        {items.map((f, i) =>
           editingId === f.id ? (
             <CustomFieldDefinitionForm
               key={f.id}
               definition={f}
               documentTypes={documentTypes}
-              onDone={() => { setEditingId(null); onChanged(); }}
+              onSubmit={(fd, values) => submitUpdate(f, fd, values)}
               onCancel={() => setEditingId(null)}
             />
           ) : (
@@ -837,9 +1179,10 @@ function CustomFieldDefinitionsPanel({
                 </span>
                 <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{appliesToLabel(f.applies_to_document_type_id)}</span>
                 {!f.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                <SavingTag id={f.id} />
               </div>
-              <button onClick={() => setEditingId(f.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-              <DeleteButton onDelete={() => deleteCustomFieldDefinition(f.id).then(onChanged)} label="custom field" />
+              <button onClick={() => setEditingId(f.id)} disabled={isTempId(f.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>Edit</button>
+              <DeleteButton onConfirm={() => submitDelete(f, i)} disabled={isTempId(f.id)} label="custom field" />
             </div>
           )
         )}
@@ -851,33 +1194,33 @@ function CustomFieldDefinitionsPanel({
 function CustomFieldDefinitionForm({
   definition,
   documentTypes,
-  onDone,
+  onSubmit,
   onCancel,
 }: {
   definition?: CustomFieldDefinition;
   documentTypes: DocumentType[];
-  onDone: () => void;
+  onSubmit: (fd: FormData, values: Omit<CustomFieldDefinition, "id" | "field_key" | "sort_order">) => void;
   onCancel: () => void;
 }) {
   const [label, setLabel] = useState(definition?.label ?? "");
   const [fieldType, setFieldType] = useState(definition?.field_type ?? "text");
   const [appliesTo, setAppliesTo] = useState(definition?.applies_to_document_type_id ?? "");
   const [isActive, setIsActive] = useState(definition?.is_active ?? true);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [submitted, setSubmitted] = useState(false);
 
   const save = () => {
-    if (!label.trim()) return;
-    setError(null);
+    if (!label.trim() || submitted) return;
     const fd = new FormData();
     fd.set("label", label.trim());
     fd.set("fieldType", fieldType);
     fd.set("appliesToDocumentTypeId", appliesTo);
     if (isActive) fd.set("isActive", "on");
-    startTransition(async () => {
-      const res = definition ? await updateCustomFieldDefinition(definition.id, fd) : await createCustomFieldDefinition(fd);
-      if (res?.error) { setError(res.error); return; }
-      onDone();
+    setSubmitted(true);
+    onSubmit(fd, {
+      label: label.trim(),
+      field_type: fieldType,
+      applies_to_document_type_id: appliesTo || null,
+      is_active: isActive,
     });
   };
 
@@ -903,33 +1246,11 @@ function CustomFieldDefinitionForm({
         </label>
       )}
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={pending || !label.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          {pending ? "Saving…" : "Save"}
+        <button onClick={save} disabled={submitted || !label.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
-      <ErrorLine error={error} />
     </div>
-  );
-}
-
-/* ================= Shared ================= */
-
-function DeleteButton({ onDelete, label }: { onDelete: () => Promise<any>; label: string }) {
-  const [pending, startTransition] = useTransition();
-  return (
-    <button
-      onClick={() => {
-        if (!window.confirm(`Delete this ${label}?`)) return;
-        startTransition(async () => {
-          await onDelete();
-        });
-      }}
-      disabled={pending}
-      className="text-xs font-semibold disabled:opacity-50"
-      style={{ color: "var(--ch-fail)" }}
-    >
-      Delete
-    </button>
   );
 }
