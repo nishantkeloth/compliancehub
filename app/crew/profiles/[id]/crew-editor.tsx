@@ -118,6 +118,75 @@ function BgErrorBanner({ error }: { error: string | null }) {
   );
 }
 
+const EMPLOYMENT_STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
+  active: { bg: "#dcfce7", fg: "#15803d" },
+  candidate: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  inactive: { bg: "#eef1f6", fg: "#6b7280" },
+  suspended: { bg: "#fff6e0", fg: "#9a6b00" },
+  terminated: { bg: "#fee2e2", fg: "#b91c1c" },
+};
+
+// Always-visible identity card: photo/initials, name, status, and a few
+// key facts (role, current vessel, nationality) that are useful no matter
+// which tab is open. Below the xl breakpoint it's a horizontal card that
+// sits above the tabs; at xl and up (see CrewEditor) it becomes a sticky
+// left-hand sidebar instead, so the extra width a laptop/wide monitor has
+// gets used for something instead of sitting empty next to a narrow form.
+function SummaryPanel({ crew, jobRoles, assignments }: { crew: Crew; jobRoles: Ref[]; assignments: Assignment[] }) {
+  const primaryRole = jobRoles.find((r) => r.id === crew.primary_job_role_id)?.name ?? null;
+  const currentAssignment = assignments.find((a) => a.end_date === null) ?? null;
+  const currentVessel = currentAssignment ? unwrap(currentAssignment.offshore_sites)?.name ?? null : null;
+  const initials = (crew.full_name || "?").trim()[0]?.toUpperCase() || "?";
+  const statusColor = EMPLOYMENT_STATUS_COLORS[crew.employment_status] ?? EMPLOYMENT_STATUS_COLORS.inactive;
+
+  return (
+    <div
+      className="bg-white border rounded-xl p-5 flex items-center gap-4 xl:flex-col xl:items-center xl:text-center xl:gap-3 xl:w-72 xl:shrink-0 xl:sticky xl:top-6"
+      style={{ borderColor: "var(--ch-line)" }}
+    >
+      <div
+        className="w-16 h-16 xl:w-20 xl:h-20 rounded-full flex items-center justify-center font-extrabold text-xl shrink-0"
+        style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
+      >
+        {initials}
+      </div>
+      <div className="min-w-0 xl:w-full">
+        <div className="font-bold text-base truncate" style={{ color: "var(--ch-ink)" }}>{crew.full_name}</div>
+        {crew.employee_code && (
+          <div className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>{crew.employee_code}</div>
+        )}
+        <span
+          className="inline-block text-xs font-bold uppercase rounded-full px-2.5 py-1"
+          style={{ background: statusColor.bg, color: statusColor.fg }}
+        >
+          {crew.employment_status}
+        </span>
+        <div
+          className="mt-3 xl:mt-4 xl:w-full xl:pt-3 xl:border-t text-left text-xs space-y-1.5"
+          style={{ borderColor: "var(--ch-line)" }}
+        >
+          {primaryRole && (
+            <div>
+              <span style={{ color: "var(--ch-sub)" }}>Role: </span>
+              <span style={{ color: "var(--ch-ink)" }}>{primaryRole}</span>
+            </div>
+          )}
+          <div>
+            <span style={{ color: "var(--ch-sub)" }}>Vessel: </span>
+            <span style={{ color: "var(--ch-ink)" }}>{currentVessel ?? "Unassigned"}</span>
+          </div>
+          {crew.nationality && (
+            <div>
+              <span style={{ color: "var(--ch-sub)" }}>Nationality: </span>
+              <span style={{ color: "var(--ch-ink)" }}>{crew.nationality}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CrewEditor({
   crew,
   canManage,
@@ -177,19 +246,27 @@ export default function CrewEditor({
   const [activeTab, setActiveTab] = useState(tabs[0].key);
 
   return (
-    <div className="mt-4 max-w-3xl">
-      <div className="flex items-center gap-1 rounded-lg border p-1 mb-4 flex-wrap w-fit" style={{ borderColor: "var(--ch-line)" }}>
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setActiveTab(t.key)}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap"
-            style={activeTab === t.key ? { background: "var(--ch-navy)", color: "#fff" } : { color: "var(--ch-sub)" }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+    // Below xl: SummaryPanel stacks above the tabs as a plain block (that's
+    // the natural document order, no flex involved yet). At xl and up this
+    // becomes a row, so SummaryPanel sits as a sticky left sidebar and the
+    // tabs/content take the rest of the width — see SummaryPanel above for
+    // how the card itself adapts between those two shapes.
+    <div className="mt-4 mx-auto max-w-6xl xl:flex xl:items-start xl:gap-6">
+      <SummaryPanel crew={crew} jobRoles={jobRoles} assignments={assignments} />
+
+      <div className="mt-4 xl:mt-0 xl:flex-1 xl:min-w-0">
+        <div className="flex items-center gap-1 rounded-lg border p-1 mb-4 flex-wrap w-fit" style={{ borderColor: "var(--ch-line)" }}>
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap"
+              style={activeTab === t.key ? { background: "var(--ch-navy)", color: "#fff" } : { color: "var(--ch-sub)" }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
       {activeTab === "general" && (
         <GeneralForm crew={crew} canManage={canManage} jobRoles={jobRoles} rotationTemplates={rotationTemplates} onSaved={refresh} />
@@ -231,6 +308,7 @@ export default function CrewEditor({
           <DangerZone crewId={crew.id} />
         </>
       )}
+      </div>
     </div>
   );
 }
