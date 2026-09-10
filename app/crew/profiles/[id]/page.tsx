@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import CrewEditor from "./crew-editor";
 
@@ -94,10 +93,17 @@ export default async function CrewProfileDetailPage({
   ]);
 
   return (
-    <AppShell active="crew-profiles" title={(crew as any).full_name}>
+    <>
       <Link href="/crew/profiles" className="text-sm hover:underline" style={{ color: "var(--ch-navy)" }}>
         ‹ All crew profiles
       </Link>
+
+      {/* The shared header above now shows the static "Crew Profiles"
+          section title (derived from the URL), so the specific crew
+          member's name is shown here instead. */}
+      <h2 className="text-lg font-bold mt-2 mb-4" style={{ color: "var(--ch-ink)" }}>
+        {(crew as any).full_name}
+      </h2>
 
       <CrewEditor
         crew={crew as any}
@@ -119,6 +125,6 @@ export default async function CrewProfileDetailPage({
         crewList={(crewListRes.data ?? []).map((c: any) => ({ id: c.id, name: c.full_name }))}
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
       />
-    </AppShell>
+    </>
   );
 }

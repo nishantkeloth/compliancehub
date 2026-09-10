@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import DocumentsMatrix from "./documents-matrix";
 
@@ -74,7 +73,7 @@ export default async function CrewDocumentsPage() {
   });
 
   return (
-    <AppShell active="crew-documents" title="Crew Documents">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Visas, passports, seaman books, certificates and vaccinations across the whole crew — a
         digital replacement for the per-vessel Excel trackers. Click any cell to view or update
@@ -88,6 +87,6 @@ export default async function CrewDocumentsPage() {
         offshoreSites={offshoreSitesRes.data ?? []}
         canManage={canManage}
       />
-    </AppShell>
+    </>
   );
 }

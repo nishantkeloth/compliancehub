@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import AppShell from "@/app/app-shell";
 import NewTemplateForm from "./new-template-form";
 
 export default async function TemplatesPage() {
@@ -33,7 +32,7 @@ export default async function TemplatesPage() {
   });
 
   return (
-    <AppShell active="templates" title="Checklist Templates">
+    <>
       <div className="max-w-3xl">
         <NewTemplateForm />
 
@@ -78,6 +77,6 @@ export default async function TemplatesPage() {
           ))}
         </div>
       </div>
-    </AppShell>
+    </>
   );
 }

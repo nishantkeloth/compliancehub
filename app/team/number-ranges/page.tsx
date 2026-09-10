@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { can, getEffectiveAccess } from "@/lib/rbac";
-import AppShell from "../../app-shell";
 import NumberRangesManager from "./number-ranges-manager";
 
 export default async function NumberRangesPage() {
@@ -23,12 +22,12 @@ export default async function NumberRangesPage() {
     .order("entity_type");
 
   return (
-    <AppShell active="number-ranges" title="Number Ranges">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Configure how Client and Contractor codes are auto-generated when new records are created —
         a prefix, how many digits to pad to, and the last number issued.
       </p>
       <NumberRangesManager ranges={ranges ?? []} />
-    </AppShell>
+    </>
   );
 }

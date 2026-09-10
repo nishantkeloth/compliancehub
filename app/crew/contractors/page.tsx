@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import ContractorsManager from "./contractors-manager";
 
@@ -24,12 +23,12 @@ export default async function ContractorsPage() {
   ]);
 
   return (
-    <AppShell active="crew-contractors" title="Contractors">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         EPC Contractors executing a project for a Client — each may operate multiple offshore
         vessels/sites, configured in Crew Setup.
       </p>
       <ContractorsManager contractors={contractorsRes.data ?? []} clients={clientsRes.data ?? []} />
-    </AppShell>
+    </>
   );
 }

@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { can, getEffectiveAccess } from "@/lib/rbac";
-import AppShell from "../../app-shell";
 import ScheduleForm from "./schedule-form";
 import ScheduleRow from "./schedule-row";
 
@@ -40,7 +39,7 @@ export default async function SchedulesPage() {
   const today = new Date().toISOString().slice(0, 10);
 
   return (
-    <AppShell active="schedules" title="Inspection Schedules">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Set up a recurring inspection and who it's assigned to. Reminder emails go out as it comes due
         and if it's missed.
@@ -100,6 +99,6 @@ export default async function SchedulesPage() {
           </div>
         )}
       </div>
-    </AppShell>
+    </>
   );
 }

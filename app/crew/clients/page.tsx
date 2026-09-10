@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import ClientsManager from "./clients-manager";
 
@@ -21,12 +20,12 @@ export default async function ClientsPage() {
     .order("name");
 
   return (
-    <AppShell active="crew-clients" title="Clients">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Asset owners / end customers at the top of the hierarchy — each may have multiple EPC
         Contractors under them.
       </p>
       <ClientsManager clients={clients ?? []} />
-    </AppShell>
+    </>
   );
 }

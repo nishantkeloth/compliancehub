@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import AppShell from "@/app/app-shell";
 import TemplateEditor from "./template-editor";
 
 export default async function TemplateDetailPage({
@@ -56,7 +55,7 @@ export default async function TemplateDetailPage({
     }));
 
   return (
-    <AppShell active="templates" title={`${template.code} — ${template.name}`}>
+    <>
       <div className="max-w-3xl">
         <Link
           href="/team/templates"
@@ -65,6 +64,13 @@ export default async function TemplateDetailPage({
         >
           ‹ All templates
         </Link>
+
+        {/* The shared header above now shows the static "Checklist
+            Templates" section title (derived from the URL), so this
+            template's code + name is shown here instead. */}
+        <h2 className="text-lg font-bold mt-2 mb-4" style={{ color: "var(--ch-ink)" }}>
+          {template.code} — {template.name}
+        </h2>
 
         <TemplateEditor
           templateId={template.id}
@@ -78,6 +84,6 @@ export default async function TemplateDetailPage({
           initialSections={orderedSections}
         />
       </div>
-    </AppShell>
+    </>
   );
 }

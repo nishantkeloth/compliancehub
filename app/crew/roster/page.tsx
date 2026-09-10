@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { computeDocumentStatus, type DocumentStatus } from "@/lib/document-status";
 import RosterBoard from "./roster-board";
@@ -132,13 +131,13 @@ export default async function VesselRosterPage() {
   }));
 
   return (
-    <AppShell active="crew-roster" title="Vessel Roster">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Plan and reassign crew by vessel. This sits alongside the per-person Vessel Assignment
         card on each crew profile — use whichever is quicker for the change you're making.
       </p>
 
       <RosterBoard crew={crew} sites={sites} history={history} canManage={canManage} />
-    </AppShell>
+    </>
   );
 }

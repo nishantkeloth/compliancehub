@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import SetupTabs from "./setup-tabs";
 
@@ -44,7 +43,7 @@ export default async function CrewSetupPage() {
   ]);
 
   return (
-    <AppShell active="crew-setup" title="Crew Setup">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Master data for the Crew Matrix & Offshore Deployment module — job roles, skills, clients,
         rotation templates, and offshore sites. The crew matrix and assignment screens build on
@@ -62,6 +61,6 @@ export default async function CrewSetupPage() {
         documentTypes={documentTypesRes.data ?? []}
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
       />
-    </AppShell>
+    </>
   );
 }

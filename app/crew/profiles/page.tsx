@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import AppShell from "@/app/app-shell";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import NewCrewForm from "./new-crew-form";
 
@@ -49,7 +48,7 @@ export default async function CrewProfilesPage({
   ]);
 
   return (
-    <AppShell active="crew-profiles" title="Crew Profiles">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Employee/crew master records. Documents, certifications, and deployment assignments build
         on this and come next.
@@ -125,6 +124,6 @@ export default async function CrewProfilesPage({
           );
         })}
       </div>
-    </AppShell>
+    </>
   );
 }

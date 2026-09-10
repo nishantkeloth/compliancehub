@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { can, getEffectiveAccess } from "@/lib/rbac";
-import AppShell from "../../app-shell";
 import RolesManager from "./roles-manager";
 
 export default async function RolesPage() {
@@ -39,7 +38,7 @@ export default async function RolesPage() {
   }
 
   return (
-    <AppShell active="roles" title="Roles & Permissions">
+    <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Create roles and choose exactly what each one can do. Assign roles to people from Manage Users.
       </p>
@@ -48,6 +47,6 @@ export default async function RolesPage() {
         permissions={permissions ?? []}
         grants={grants}
       />
-    </AppShell>
+    </>
   );
 }

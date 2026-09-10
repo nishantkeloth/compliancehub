@@ -1,7 +1,15 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { cache } from "react";
 
-export async function createClient() {
+// Wrapped in React's cache() so every call within the same request/render
+// returns the exact same client instance instead of a fresh one each time.
+// This is what lets getEffectiveAccess() (lib/rbac.ts) actually dedupe --
+// it's memoized on (supabase, userId), so it only produces a cache hit if
+// every caller is handed back the same `supabase` object. Safe because a
+// request's cookies never change mid-request, and cache() is scoped to a
+// single request in Server Components (reset on the next navigation).
+export const createClient = cache(async function createClient() {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -25,4 +33,4 @@ export async function createClient() {
       },
     }
   );
-}
+});

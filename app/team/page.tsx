@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { can, getEffectiveAccess } from "@/lib/rbac";
-import AppShell from "../app-shell";
 import NewMemberForm from "./new-member-form";
 import MemberRow from "./member-row";
 
@@ -33,7 +32,7 @@ export default async function TeamPage() {
   const canManageStatus = can(access, "team.manage_status");
 
   return (
-    <AppShell active="team" title="Manage Users">
+    <>
       {canInvite && (
         <>
           <h2
@@ -62,6 +61,6 @@ export default async function TeamPage() {
           />
         ))}
       </div>
-    </AppShell>
+    </>
   );
 }
