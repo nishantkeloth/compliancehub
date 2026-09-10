@@ -5,7 +5,7 @@ import { updateNumberRange } from "./actions";
 
 type Range = {
   id: string;
-  entity_type: "client" | "contractor";
+  entity_type: "client" | "contractor" | "contract" | "project";
   prefix: string;
   padding_length: number;
   current_number: number;
@@ -23,6 +23,16 @@ const ENTITY_LABELS: Record<Range["entity_type"], { title: string; help: string;
     help: "Assigned automatically when a new EPC Contractor is created in Crew Setup.",
     defaultPrefix: "CON",
   },
+  contract: {
+    title: "Contract Codes",
+    help: "Assigned automatically when a new Contract is created.",
+    defaultPrefix: "CTR",
+  },
+  project: {
+    title: "Project Codes",
+    help: "Assigned automatically when a new Project/Campaign is created.",
+    defaultPrefix: "PRJ",
+  },
 };
 
 function nextCodePreview(prefix: string, paddingLength: number, currentNumber: number) {
@@ -35,11 +45,13 @@ export default function NumberRangesManager({ ranges }: { ranges: Range[] }) {
   const byType: Record<Range["entity_type"], Range | undefined> = {
     client: ranges.find((r) => r.entity_type === "client"),
     contractor: ranges.find((r) => r.entity_type === "contractor"),
+    contract: ranges.find((r) => r.entity_type === "contract"),
+    project: ranges.find((r) => r.entity_type === "project"),
   };
 
   return (
     <div className="space-y-4">
-      {(["client", "contractor"] as const).map((entityType) => (
+      {(["client", "contractor", "contract", "project"] as const).map((entityType) => (
         <RangeCard key={entityType} entityType={entityType} range={byType[entityType]} />
       ))}
     </div>

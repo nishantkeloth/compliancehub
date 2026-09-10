@@ -13,7 +13,7 @@ export default async function CrewSetupPage() {
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "crew.manage")) redirect("/");
 
-  const [jobRolesRes, skillsRes, clientsRes, contractorsRes, rotationTemplatesRes, offshoreSitesRes, manningRes, documentTypesRes, customFieldDefinitionsRes] = await Promise.all([
+  const [jobRolesRes, skillsRes, clientsRes, contractorsRes, rotationTemplatesRes, offshoreSitesRes, manningRes, documentTypesRes, customFieldDefinitionsRes, projectsRes] = await Promise.all([
     supabase.from("job_roles").select("id, name, category, is_active").eq("org_id", access.orgId).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
     supabase.from("clients").select("id, name, code, contract_number, contract_start_date, contract_end_date, billing_model, notes, is_active").eq("org_id", access.orgId).order("name"),
@@ -22,7 +22,7 @@ export default async function CrewSetupPage() {
     supabase
       .from("offshore_sites")
       .select(
-        "id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status, notes, contractor_id, standard_rotation_template_id"
+        "id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status, notes, contractor_id, standard_rotation_template_id, project_id"
       )
       .eq("org_id", access.orgId)
       .order("name"),
@@ -40,6 +40,7 @@ export default async function CrewSetupPage() {
       .select("id, label, field_key, field_type, applies_to_document_type_id, sort_order, is_active")
       .eq("org_id", access.orgId)
       .order("label"),
+    supabase.from("projects").select("id, project_name, contractor_id").eq("org_id", access.orgId).order("project_name"),
   ]);
 
   return (
@@ -60,6 +61,7 @@ export default async function CrewSetupPage() {
         manningRequirements={manningRes.data ?? []}
         documentTypes={documentTypesRes.data ?? []}
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
+        projects={projectsRes.data ?? []}
       />
     </>
   );

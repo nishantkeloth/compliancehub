@@ -68,7 +68,9 @@ type OffshoreSite = {
   notes: string | null;
   contractor_id: string | null;
   standard_rotation_template_id: string | null;
+  project_id: string | null;
 };
+type Project = { id: string; project_name: string; contractor_id: string };
 type ManningReq = { id: string; offshore_site_id: string; job_role_id: string; minimum_headcount: number };
 type DocumentType = {
   id: string;
@@ -150,6 +152,7 @@ export default function SetupTabs({
   manningRequirements,
   documentTypes,
   customFieldDefinitions,
+  projects,
 }: {
   jobRoles: JobRole[];
   skills: Skill[];
@@ -160,6 +163,7 @@ export default function SetupTabs({
   manningRequirements: ManningReq[];
   documentTypes: DocumentType[];
   customFieldDefinitions: CustomFieldDefinition[];
+  projects: Project[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
 
@@ -193,6 +197,7 @@ export default function SetupTabs({
           rotationTemplates={rotationTemplates}
           jobRoles={jobRoles}
           manningRequirements={manningRequirements}
+          projects={projects}
         />
       )}
       {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} />}
@@ -578,6 +583,7 @@ function OffshoreSitesPanel({
   rotationTemplates,
   jobRoles,
   manningRequirements,
+  projects,
 }: {
   sites: OffshoreSite[];
   contractors: Contractor[];
@@ -585,6 +591,7 @@ function OffshoreSitesPanel({
   rotationTemplates: RotationTemplate[];
   jobRoles: JobRole[];
   manningRequirements: ManningReq[];
+  projects: Project[];
 }) {
   const router = useRouter();
   const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(sites);
@@ -650,6 +657,7 @@ function OffshoreSitesPanel({
         <OffshoreSiteForm
           contractors={contractors}
           rotationTemplates={rotationTemplates}
+          projects={projects}
           onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })}
           onCancel={() => setAdding(false)}
         />
@@ -666,6 +674,7 @@ function OffshoreSitesPanel({
               site={s}
               contractors={contractors}
               rotationTemplates={rotationTemplates}
+              projects={projects}
               onSubmit={(fd, values) => submitUpdate(s, fd, values)}
               onCancel={() => setEditingId(null)}
             />
@@ -677,6 +686,9 @@ function OffshoreSitesPanel({
                   {s.code && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{s.code}</span>}
                   <span className="text-xs ml-2 uppercase font-semibold" style={{ color: "var(--ch-navy)" }}>{s.site_type}</span>
                   <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{contractorLabel(s.contractor_id)}</span>
+                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
+                    {projects.find((p) => p.id === s.project_id)?.project_name ?? "No project"}
+                  </span>
                   {s.status !== "active" && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
                   <SavingTag id={s.id} />
                 </div>
@@ -712,12 +724,14 @@ function OffshoreSiteForm({
   site,
   contractors,
   rotationTemplates,
+  projects,
   onSubmit,
   onCancel,
 }: {
   site?: OffshoreSite;
   contractors: Contractor[];
   rotationTemplates: RotationTemplate[];
+  projects: Project[];
   onSubmit: (fd: FormData, values: Omit<OffshoreSite, "id">) => void;
   onCancel: () => void;
 }) {
@@ -725,6 +739,7 @@ function OffshoreSiteForm({
   const [code, setCode] = useState(site?.code ?? "");
   const [siteType, setSiteType] = useState(site?.site_type ?? "other");
   const [contractorId, setContractorId] = useState(site?.contractor_id ?? "");
+  const [projectId, setProjectId] = useState(site?.project_id ?? "");
   const [country, setCountry] = useState(site?.country ?? "");
   const [operatingRegion, setOperatingRegion] = useState(site?.operating_region ?? "");
   const [portOrHeliport, setPortOrHeliport] = useState(site?.port_or_heliport ?? "");
@@ -734,6 +749,10 @@ function OffshoreSiteForm({
   const [notes, setNotes] = useState(site?.notes ?? "");
   const [submitted, setSubmitted] = useState(false);
 
+  // Only offer projects that belong to the selected EPC contractor — a
+  // site's project must run under the same contractor it's assigned to.
+  const eligibleProjects = projects.filter((p) => p.contractor_id === contractorId);
+
   const save = () => {
     if (!name.trim() || submitted) return;
     const fd = new FormData();
@@ -741,6 +760,7 @@ function OffshoreSiteForm({
     fd.set("code", code.trim());
     fd.set("siteType", siteType);
     fd.set("contractorId", contractorId);
+    fd.set("projectId", projectId);
     fd.set("country", country.trim());
     fd.set("operatingRegion", operatingRegion.trim());
     fd.set("portOrHeliport", portOrHeliport.trim());
@@ -754,6 +774,7 @@ function OffshoreSiteForm({
       code: code.trim() || null,
       site_type: siteType,
       contractor_id: contractorId || null,
+      project_id: projectId || null,
       country: country.trim() || null,
       operating_region: operatingRegion.trim() || null,
       port_or_heliport: portOrHeliport.trim() || null,
@@ -776,16 +797,30 @@ function OffshoreSiteForm({
         </select>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select className={inputCls} style={inputStyle} value={contractorId} onChange={(e) => setContractorId(e.target.value)}>
+        <select
+          className={inputCls}
+          style={inputStyle}
+          value={contractorId}
+          onChange={(e) => {
+            setContractorId(e.target.value);
+            setProjectId("");
+          }}
+        >
           <option value="">No EPC contractor</option>
           {contractors.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        <select className={inputCls} style={inputStyle} value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={!contractorId}>
+          <option value="">{contractorId ? "No project" : "Pick a contractor first"}</option>
+          {eligibleProjects.map((p) => (
+            <option key={p.id} value={p.id}>{p.project_name}</option>
+          ))}
+        </select>
         <input className={inputCls} style={inputStyle} placeholder="Country" value={country} onChange={(e) => setCountry(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Operating region" value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)} />
       </div>
-      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+      <div className="grid gap-3 sm:grid-cols-4 mb-3">
+        <input className={inputCls} style={inputStyle} placeholder="Operating region" value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)} />
         <input className={inputCls} style={inputStyle} placeholder="Port / heliport" value={portOrHeliport} onChange={(e) => setPortOrHeliport(e.target.value)} />
         <input className={inputCls} style={inputStyle} placeholder="Crew-change location" value={crewChangeLocation} onChange={(e) => setCrewChangeLocation(e.target.value)} />
         <select className={inputCls} style={inputStyle} value={rotationTemplateId} onChange={(e) => setRotationTemplateId(e.target.value)}>

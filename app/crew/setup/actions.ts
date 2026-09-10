@@ -154,6 +154,7 @@ export async function createOffshoreSite(formData: FormData) {
   const { error } = await supabase.from("offshore_sites").insert({
     org_id: access.orgId,
     contractor_id: optStr(formData, "contractorId"),
+    project_id: optStr(formData, "projectId"),
     name,
     code: optStr(formData, "code"),
     site_type: str(formData, "siteType") || "other",
@@ -180,6 +181,7 @@ export async function updateOffshoreSite(id: string, formData: FormData) {
     .from("offshore_sites")
     .update({
       contractor_id: optStr(formData, "contractorId"),
+      project_id: optStr(formData, "projectId"),
       name,
       code: optStr(formData, "code"),
       site_type: str(formData, "siteType") || "other",

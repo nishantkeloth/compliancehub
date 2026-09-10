@@ -52,6 +52,14 @@ export default async function AppShell({
     complianceItems.push({ href: "/team/templates", key: "templates", label: "Checklist Templates" });
   }
 
+  const contractItems: NavItem[] = [];
+  if (can(access, "contracts.view")) {
+    contractItems.push({ href: "/contracts", key: "contracts", label: "Contracts" });
+  }
+  if (can(access, "projects.view")) {
+    contractItems.push({ href: "/projects", key: "projects", label: "Projects" });
+  }
+
   const crewItems: NavItem[] = [];
   if (can(access, "crew.view")) {
     crewItems.push({ href: "/crew/profiles", key: "crew-profiles", label: "Crew Profiles" });
@@ -80,6 +88,7 @@ export default async function AppShell({
   const navSections: NavSection[] = [
     { title: "Overview", items: overviewItems },
     { title: "Compliance & Inspections", items: complianceItems },
+    { title: "Contracts & Projects", items: contractItems },
     { title: "Crew Matrix", items: crewItems },
     { title: "Administration", items: adminItems },
   ].filter((section) => section.items.length > 0);

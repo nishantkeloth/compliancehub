@@ -24,8 +24,8 @@ export default async function NumberRangesPage() {
   return (
     <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
-        Configure how Client and Contractor codes are auto-generated when new records are created —
-        a prefix, how many digits to pad to, and the last number issued.
+        Configure how Client, Contractor, Contract, and Project codes are auto-generated when new
+        records are created — a prefix, how many digits to pad to, and the last number issued.
       </p>
       <NumberRangesManager ranges={ranges ?? []} />
     </>
