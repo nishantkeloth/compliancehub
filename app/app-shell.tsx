@@ -77,6 +77,11 @@ export default async function AppShell({
     crewItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
   }
 
+  const mobilizationItems: NavItem[] = [];
+  if (can(access, "mobilization.view")) {
+    mobilizationItems.push({ href: "/mobilizations", key: "mobilizations", label: "Mobilizations" });
+  }
+
   const adminItems: NavItem[] = [];
   if (can(access, "team.view")) {
     adminItems.push({ href: "/team", key: "team", label: "Manage Users" });
@@ -93,6 +98,7 @@ export default async function AppShell({
     { title: "Compliance & Inspections", items: complianceItems },
     { title: "Contracts & Projects", items: contractItems },
     { title: "Crew Matrix", items: crewItems },
+    { title: "Mobilization", items: mobilizationItems },
     { title: "Administration", items: adminItems },
   ].filter((section) => section.items.length > 0);
 

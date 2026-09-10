@@ -38,6 +38,15 @@ export const STATUS_PILLS: Record<string, { bg: string; fg: string }> = {
   approved: { bg: "var(--ch-pass-bg)", fg: "var(--ch-pass)" },
   superseded: { bg: "var(--ch-paper)", fg: "var(--ch-sub)" },
   rejected: { bg: "var(--ch-fail-bg)", fg: "var(--ch-fail)" },
+  // Mobilization workflow statuses (app/mobilizations)
+  planning: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  compliance_review: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  internal_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  client_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  travel_arrangement: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  ready_to_mobilize: { bg: "var(--ch-pass-bg)", fg: "var(--ch-pass)" },
+  in_transit: { bg: "var(--ch-pass-bg)", fg: "var(--ch-pass)" },
+  partially_completed: { bg: "var(--ch-fail-bg)", fg: "var(--ch-fail)" },
 };
 
 export function StatusPill({ status }: { status: string }) {

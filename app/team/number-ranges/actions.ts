@@ -18,7 +18,7 @@ async function requireNumberRangesManage() {
   return { supabase, access, userId: user.id };
 }
 
-export async function updateNumberRange(entityType: "client" | "contractor" | "contract" | "project" | "crew_matrix", formData: FormData) {
+export async function updateNumberRange(entityType: "client" | "contractor" | "contract" | "project" | "crew_matrix" | "mobilization", formData: FormData) {
   const { supabase, access, userId } = await requireNumberRangesManage();
 
   const prefix = ((formData.get("prefix") as string | null) ?? "").trim();
