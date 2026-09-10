@@ -52,6 +52,10 @@ function optNum(formData: FormData, key: string) {
 
 const revalidateList = () => revalidatePath("/crew/profiles");
 const revalidateDetail = (id: string) => revalidatePath(`/crew/profiles/${id}`);
+// The documents matrix (/crew/documents) shows the same crew_documents rows
+// as the per-crew detail page, so any write from either screen needs to
+// invalidate both.
+const revalidateMatrix = () => revalidatePath("/crew/documents");
 
 /* ---------------- Crew profile ---------------- */
 
@@ -311,6 +315,7 @@ export async function createCrewDocument(crewId: string, formData: FormData) {
   });
   if (error) return { error: error.message };
   revalidateDetail(crewId);
+  revalidateMatrix();
   return {};
 }
 
@@ -338,6 +343,7 @@ export async function updateCrewDocument(id: string, crewId: string, formData: F
     .eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(crewId);
+  revalidateMatrix();
   return {};
 }
 
@@ -346,5 +352,6 @@ export async function deleteCrewDocument(id: string, crewId: string) {
   const { error } = await supabase.from("crew_documents").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(crewId);
+  revalidateMatrix();
   return {};
 }
