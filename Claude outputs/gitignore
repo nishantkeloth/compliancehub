@@ -1,5 +1,0 @@
-node_modules/
-.env
-storageState.json
-test-results/
-playwright-report/
