@@ -96,7 +96,7 @@ export type ReadinessCheck = {
 export type OverallOutcome = "ready" | "ready_with_warning" | "not_ready" | "overridden";
 
 export type ReadinessEvaluation = {
-  positionId: string;
+  positionId: string | null;
   crewId: string;
   checks: ReadinessCheck[];
   overallOutcome: OverallOutcome;
@@ -128,8 +128,11 @@ type LineDocReq = {
 };
 
 export type PositionContext = {
-  positionId: string;
-  mobilizationRequestId: string;
+  // null for an ad-hoc evaluation (e.g. a proposed reliever on a crew
+  // change request that hasn't produced a mobilization position yet) —
+  // the reservation-conflict and waiver lookups skip the position filter.
+  positionId: string | null;
+  mobilizationRequestId: string | null;
   orgId: string;
   jobRoleId: string;
   clientApprovalStatus: string;
@@ -143,23 +146,11 @@ export type PositionContext = {
   jobRoleName: string | null;
 };
 
-export async function loadPositionContext(supabase: Supa, orgId: string, positionId: string): Promise<PositionContext | { error: string }> {
-  const { data: position, error: positionError } = await supabase
-    .from("mobilization_positions")
-    .select("id, mobilization_request_id, job_role_id, required_onboard_date, crew_matrix_line_id, client_approval_status")
-    .eq("id", positionId)
-    .single();
-  if (positionError || !position) return { error: "Could not find that position." };
-
-  const { data: request, error: requestError } = await supabase
-    .from("mobilization_requests")
-    .select("required_onboard_date")
-    .eq("id", position.mobilization_request_id)
-    .single();
-  if (requestError || !request) return { error: "Could not find the parent mobilization request." };
-
-  const effectiveOnboardDate: string = position.required_onboard_date ?? request.required_onboard_date;
-
+async function buildContext(
+  supabase: Supa,
+  orgId: string,
+  base: { positionId: string | null; mobilizationRequestId: string | null; jobRoleId: string; clientApprovalStatus: string; effectiveOnboardDate: string; crewMatrixLineId: string | null }
+): Promise<PositionContext> {
   let requiredSkills: LineSkillReq[] = [];
   let requiredDocs: LineDocReq[] = [];
   let nationalityPreference: string | null = null;
@@ -167,18 +158,18 @@ export async function loadPositionContext(supabase: Supa, orgId: string, positio
   let minimumExperienceYears: number | null = null;
   let lineRotationDaysOn: number | null = null;
 
-  if (position.crew_matrix_line_id) {
+  if (base.crewMatrixLineId) {
     const [lineRes, skillsRes, docsRes] = await Promise.all([
       supabase
         .from("crew_matrix_lines")
         .select("nationality_preference, language_requirement, minimum_experience_years, rotation_template_id")
-        .eq("id", position.crew_matrix_line_id)
+        .eq("id", base.crewMatrixLineId)
         .single(),
-      supabase.from("crew_matrix_line_skills").select("skill_id, skills(name)").eq("line_id", position.crew_matrix_line_id),
+      supabase.from("crew_matrix_line_skills").select("skill_id, skills(name)").eq("line_id", base.crewMatrixLineId),
       supabase
         .from("crew_matrix_line_documents")
         .select("document_type_id, minimum_remaining_validity_days, is_mandatory, waiver_permitted, document_types(name, category)")
-        .eq("line_id", position.crew_matrix_line_id),
+        .eq("line_id", base.crewMatrixLineId),
     ]);
     const line = lineRes.data;
     if (line) {
@@ -204,15 +195,15 @@ export async function loadPositionContext(supabase: Supa, orgId: string, positio
     });
   }
 
-  const { data: jobRole } = await supabase.from("job_roles").select("name").eq("id", position.job_role_id).single();
+  const { data: jobRole } = await supabase.from("job_roles").select("name").eq("id", base.jobRoleId).single();
 
   return {
-    positionId: position.id,
-    mobilizationRequestId: position.mobilization_request_id,
+    positionId: base.positionId,
+    mobilizationRequestId: base.mobilizationRequestId,
     orgId,
-    jobRoleId: position.job_role_id,
-    clientApprovalStatus: position.client_approval_status,
-    effectiveOnboardDate,
+    jobRoleId: base.jobRoleId,
+    clientApprovalStatus: base.clientApprovalStatus,
+    effectiveOnboardDate: base.effectiveOnboardDate,
     requiredSkills,
     requiredDocs,
     nationalityPreference,
@@ -221,6 +212,50 @@ export async function loadPositionContext(supabase: Supa, orgId: string, positio
     lineRotationDaysOn,
     jobRoleName: jobRole?.name ?? null,
   };
+}
+
+export async function loadPositionContext(supabase: Supa, orgId: string, positionId: string): Promise<PositionContext | { error: string }> {
+  const { data: position, error: positionError } = await supabase
+    .from("mobilization_positions")
+    .select("id, mobilization_request_id, job_role_id, required_onboard_date, crew_matrix_line_id, client_approval_status")
+    .eq("id", positionId)
+    .single();
+  if (positionError || !position) return { error: "Could not find that position." };
+
+  const { data: request, error: requestError } = await supabase
+    .from("mobilization_requests")
+    .select("required_onboard_date")
+    .eq("id", position.mobilization_request_id)
+    .single();
+  if (requestError || !request) return { error: "Could not find the parent mobilization request." };
+
+  return buildContext(supabase, orgId, {
+    positionId: position.id,
+    mobilizationRequestId: position.mobilization_request_id,
+    jobRoleId: position.job_role_id,
+    clientApprovalStatus: position.client_approval_status,
+    effectiveOnboardDate: position.required_onboard_date ?? request.required_onboard_date,
+    crewMatrixLineId: position.crew_matrix_line_id,
+  });
+}
+
+// Ad-hoc context for evaluating someone against a role + date without a
+// mobilization position — used for a proposed reliever on a crew change
+// request (Phase 6). Requirements come from the crew matrix line that
+// produced the assignment being relieved, when there is one.
+export async function loadAdhocContext(
+  supabase: Supa,
+  orgId: string,
+  args: { jobRoleId: string; effectiveOnboardDate: string; crewMatrixLineId: string | null }
+): Promise<PositionContext> {
+  return buildContext(supabase, orgId, {
+    positionId: null,
+    mobilizationRequestId: null,
+    jobRoleId: args.jobRoleId,
+    clientApprovalStatus: "not_required",
+    effectiveOnboardDate: args.effectiveOnboardDate,
+    crewMatrixLineId: args.crewMatrixLineId,
+  });
 }
 
 type CrewData = {
@@ -510,18 +545,13 @@ async function loadCrewData(supabase: Supa, ctx: PositionContext, crewId: string
     supabase.from("crew_documents").select("document_type_id, expiry_date").eq("crew_id", crewId),
     supabase.from("crew_assignments").select("offshore_sites(name)").eq("crew_id", crewId).is("end_date", null).limit(1),
     supabase.from("crew_assignments").select("end_date").eq("crew_id", crewId).not("end_date", "is", null).order("end_date", { ascending: false }).limit(1),
-    supabase
-      .from("mobilization_positions")
-      .select("id, mobilization_requests(mobilization_number)")
-      .eq("selected_crew_id", crewId)
-      .eq("final_status", "pending")
-      .neq("id", ctx.positionId),
-    supabase
-      .from("compliance_waivers")
-      .select("check_code, status, expires_at")
-      .eq("mobilization_position_id", ctx.positionId)
-      .eq("crew_id", crewId)
-      .eq("status", "approved"),
+    (() => {
+      const q = supabase.from("mobilization_positions").select("id, mobilization_requests(mobilization_number)").eq("selected_crew_id", crewId).eq("final_status", "pending");
+      return ctx.positionId ? q.neq("id", ctx.positionId) : q;
+    })(),
+    ctx.positionId
+      ? supabase.from("compliance_waivers").select("check_code, status, expires_at").eq("mobilization_position_id", ctx.positionId).eq("crew_id", crewId).eq("status", "approved")
+      : Promise.resolve({ data: [] as { check_code: string; status: string; expires_at: string | null }[] }),
   ]);
 
   const crew = crewRes.data;
@@ -590,8 +620,13 @@ export async function evaluateCandidatesReadiness(supabase: Supa, ctx: PositionC
     supabase.from("crew_documents").select("crew_id, document_type_id, expiry_date").in("crew_id", crewIds),
     supabase.from("crew_assignments").select("crew_id, offshore_sites(name)").in("crew_id", crewIds).is("end_date", null),
     supabase.from("crew_assignments").select("crew_id, end_date").in("crew_id", crewIds).not("end_date", "is", null).order("end_date", { ascending: false }),
-    supabase.from("mobilization_positions").select("selected_crew_id, mobilization_requests(mobilization_number)").in("selected_crew_id", crewIds).eq("final_status", "pending").neq("id", ctx.positionId),
-    supabase.from("compliance_waivers").select("crew_id, check_code, expires_at").eq("mobilization_position_id", ctx.positionId).in("crew_id", crewIds).eq("status", "approved"),
+    (() => {
+      const q = supabase.from("mobilization_positions").select("selected_crew_id, mobilization_requests(mobilization_number)").in("selected_crew_id", crewIds).eq("final_status", "pending");
+      return ctx.positionId ? q.neq("id", ctx.positionId) : q;
+    })(),
+    ctx.positionId
+      ? supabase.from("compliance_waivers").select("crew_id, check_code, expires_at").eq("mobilization_position_id", ctx.positionId).in("crew_id", crewIds).eq("status", "approved")
+      : Promise.resolve({ data: [] as { crew_id: string; check_code: string; expires_at: string | null }[] }),
   ]);
 
   const rotationIds = Array.from(new Set((crewRes.data ?? []).map((c: any) => c.default_rotation_template_id).filter(Boolean)));
@@ -645,7 +680,8 @@ export async function evaluateCandidatesReadiness(supabase: Supa, ctx: PositionC
 
 export type TriggerPoint = "internal_approval_sent" | "client_approval_sent" | "ready_to_mobilize" | "boarding_confirmed";
 
-export async function writeReadinessSnapshot(supabase: Supa, ctx: PositionContext, triggerPoint: TriggerPoint, evaluation: ReadinessEvaluation, userId: string) {
+export async function writeReadinessSnapshot(supabase: Supa, ctx: PositionContext, triggerPoint: TriggerPoint, evaluation: ReadinessEvaluation, userId: string): Promise<{ error: { message: string } | null }> {
+  if (!ctx.positionId || !ctx.mobilizationRequestId) return { error: { message: "Snapshots need a real mobilization position." } };
   return supabase.from("readiness_snapshots").insert({
     org_id: ctx.orgId,
     mobilization_position_id: evaluation.positionId,

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -13,7 +15,6 @@ import {
   addCrewSecondaryRole,
   removeCrewSecondaryRole,
   assignCrewToSite,
-  endCrewAssignment,
   deleteCrewAssignment,
   createCrewDocument,
   updateCrewDocument,
@@ -753,24 +754,6 @@ function AssignmentSection({
     });
   };
 
-  const endAssignment = (assignment: Assignment) => {
-    setError(null);
-    setBgError(null);
-    const today = new Date().toISOString().slice(0, 10);
-    const fd = new FormData();
-    fd.set("endDate", today);
-    updateOptimistic(assignment.id, { end_date: today });
-    startTransition(async () => {
-      const res = await endCrewAssignment(assignment.id, crewId, fd);
-      if (res?.error) {
-        updateOptimistic(assignment.id, { end_date: null });
-        setBgError(res.error);
-        return;
-      }
-      onChanged();
-    });
-  };
-
   const removeHistory = (assignment: Assignment, index: number) => {
     setBgError(null);
     removeOptimistic(assignment.id);
@@ -798,9 +781,9 @@ function AssignmentSection({
             {isTempId(current.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
           </div>
           {canManage && (
-            <button onClick={() => endAssignment(current)} disabled={isTempId(current.id)} className="text-xs font-semibold ml-auto disabled:opacity-50" style={{ color: "var(--ch-fail)" }}>
-              End assignment
-            </button>
+            <Link href={`/rotations?assignment=${current.id}`} className="text-xs font-semibold ml-auto" style={{ color: "var(--ch-navy)" }}>
+              Sign off (Rotations) ›
+            </Link>
           )}
         </div>
       ) : (

@@ -271,7 +271,7 @@ function PositionRow({
   isTerminal: boolean;
   run: (fn: () => Promise<{ error?: string } | undefined>) => void;
 }) {
-  const [panel, setPanel] = useState<"none" | "select" | "replace" | "vacant" | "compliance" | "approval" | "readiness">("none");
+  const [panel, setPanel] = useState<"none" | "select" | "replace" | "vacant" | "compliance" | "approval" | "readiness" | "boarding">("none");
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [reasonText, setReasonText] = useState("");
@@ -383,7 +383,7 @@ function PositionRow({
             </>
           )}
           {["ready_to_mobilize", "in_transit"].includes(requestStatus) && canManage && position.selected_crew_id && position.final_status === "pending" && (
-            <button onClick={() => run(() => confirmBoarding(position.id, requestId))} className="text-xs font-semibold" style={{ color: "var(--ch-pass)" }}>Confirm boarding</button>
+            <button onClick={() => setPanel(panel === "boarding" ? "none" : "boarding")} className="text-xs font-semibold" style={{ color: "var(--ch-pass)" }}>Confirm boarding</button>
           )}
           {canManage && !isTerminal && position.final_status === "pending" && (
             <button onClick={() => setPanel(panel === "vacant" ? "none" : "vacant")} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Mark vacant</button>
@@ -404,6 +404,19 @@ function PositionRow({
           <VacantForm
             onConfirm={(reason) => {
               run(() => markPositionVacant(position.id, requestId, reason));
+              setPanel("none");
+            }}
+            onCancel={() => setPanel("none")}
+          />
+        </div>
+      )}
+
+      {panel === "boarding" && (
+        <div className="border-t p-3" style={{ borderColor: "var(--ch-line)" }}>
+          <BoardingForm
+            crewName={position.selected_crew_name ?? "crew member"}
+            onSubmit={(fd) => {
+              run(() => confirmBoarding(position.id, requestId, fd));
               setPanel("none");
             }}
             onCancel={() => setPanel("none")}
@@ -770,6 +783,84 @@ function RejectWaiverButton({ onReject }: { onReject: (note: string) => void }) 
         Confirm reject
       </button>
     </span>
+  );
+}
+
+// Phase 6: boarding is a captured event — actual travel/onboard times,
+// vessel acknowledgement, reference, supporting document. This is the
+// only thing that creates the active crew_assignment.
+function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSubmit: (fd: FormData) => void; onCancel: () => void }) {
+  const [actualDepartureAt, setActualDepartureAt] = useState("");
+  const [actualArrivalAt, setActualArrivalAt] = useState("");
+  const [actualOnboardAt, setActualOnboardAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+  const [vesselAcknowledged, setVesselAcknowledged] = useState(false);
+  const [vesselAcknowledgedBy, setVesselAcknowledgedBy] = useState("");
+  const [boardingReference, setBoardingReference] = useState("");
+  const [shift, setShift] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [supportingDocumentUrl, setSupportingDocumentUrl] = useState("");
+
+  const submit = () => {
+    if (!actualOnboardAt) return;
+    const fd = new FormData();
+    fd.set("actualDepartureAt", actualDepartureAt);
+    fd.set("actualArrivalAt", actualArrivalAt);
+    fd.set("actualOnboardAt", actualOnboardAt);
+    if (vesselAcknowledged) fd.set("vesselAcknowledged", "on");
+    fd.set("vesselAcknowledgedBy", vesselAcknowledgedBy);
+    fd.set("boardingReference", boardingReference);
+    fd.set("shift", shift);
+    fd.set("remarks", remarks);
+    fd.set("supportingDocumentUrl", supportingDocumentUrl);
+    onSubmit(fd);
+  };
+
+  return (
+    <div>
+      <div className="text-sm font-semibold mb-2" style={{ color: "var(--ch-ink)" }}>Confirm boarding — {crewName}</div>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Actual departure
+          <input type="datetime-local" className={`${inputCls} w-full mt-1`} style={inputStyle} value={actualDepartureAt} onChange={(e) => setActualDepartureAt(e.target.value)} />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Actual arrival
+          <input type="datetime-local" className={`${inputCls} w-full mt-1`} style={inputStyle} value={actualArrivalAt} onChange={(e) => setActualArrivalAt(e.target.value)} />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Actual onboard (required)
+          <input type="datetime-local" className={`${inputCls} w-full mt-1`} style={inputStyle} value={actualOnboardAt} onChange={(e) => setActualOnboardAt(e.target.value)} />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Boarding reference
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={boardingReference} onChange={(e) => setBoardingReference(e.target.value)} placeholder="Vessel / agent reference" />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Shift
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={shift} onChange={(e) => setShift(e.target.value)}>
+            <option value="">—</option>
+            <option value="day">Day</option>
+            <option value="night">Night</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Supporting document URL
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={supportingDocumentUrl} onChange={(e) => setSupportingDocumentUrl(e.target.value)} placeholder="Optional" />
+        </label>
+      </div>
+      <div className="flex items-center gap-3 flex-wrap mb-3">
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={vesselAcknowledged} onChange={(e) => setVesselAcknowledged(e.target.checked)} /> Vessel acknowledged
+        </label>
+        <input className={`${inputCls} w-64`} style={inputStyle} value={vesselAcknowledgedBy} onChange={(e) => setVesselAcknowledgedBy(e.target.value)} placeholder="Acknowledged by (name / role)" />
+      </div>
+      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} rows={2} placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      <div className="flex items-center gap-2">
+        <button onClick={submit} disabled={!actualOnboardAt} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Confirm boarding</button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+    </div>
   );
 }
 

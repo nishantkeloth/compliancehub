@@ -45,7 +45,7 @@ const revalidateMobilization = (id?: string) => {
 async function getRequest(supabase: Supa, id: string) {
   const { data, error } = await supabase
     .from("mobilization_requests")
-    .select("id, org_id, status, crew_matrix_id, offshore_site_id, required_onboard_date, mobilization_number, client_approval_required")
+    .select("id, org_id, status, crew_matrix_id, offshore_site_id, project_id, required_onboard_date, mobilization_number, client_approval_required")
     .eq("id", id)
     .single();
   if (error || !data) throw new Error("Could not find that mobilization request.");
@@ -93,6 +93,18 @@ async function checkBlockingReadiness(supabase: Supa, orgId: string, requestId: 
   }
   if (problems.length === 0) return null;
   return `Not every position is ready: ${problems.join(" | ")}. Resolve these or request a compliance waiver before proceeding.`;
+}
+
+// Phase 6: a crew member flagged in_transit whose trip is cancelled or
+// whose position is vacated goes back to onshore (unless they're onboard
+// somewhere already).
+async function resetTransitStatus(supabase: Supa, crewIds: (string | null)[]) {
+  const ids = crewIds.filter((id): id is string => !!id);
+  if (!ids.length) return;
+  const { data: active } = await supabase.from("crew_assignments").select("crew_id").in("crew_id", ids).is("end_date", null);
+  const onboard = new Set((active ?? []).map((a) => a.crew_id));
+  const toReset = ids.filter((id) => !onboard.has(id));
+  if (toReset.length) await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).in("id", toReset).eq("deployment_status", "in_transit");
 }
 
 async function postSystemComment(supabase: Supa, orgId: string | null, requestId: string, body: string) {
@@ -598,17 +610,25 @@ export async function approvePosition(positionId: string, requestId: string, app
 export async function markPositionVacant(positionId: string, requestId: string, reason: string) {
   const { supabase, access, userId } = await requireManage();
   if (!reason.trim()) return { error: "A reason is required to mark a position vacant." };
+  const { data: before } = await supabase.from("mobilization_positions").select("selected_crew_id").eq("id", positionId).single();
   const { error } = await supabase
     .from("mobilization_positions")
     .update({ final_status: "vacant", updated_by: userId })
     .eq("id", positionId);
   if (error) return { error: error.message };
+  await resetTransitStatus(supabase, [before?.selected_crew_id ?? null]);
   await postSystemComment(supabase, access.orgId, requestId, `Position marked vacant — ${reason.trim()}`);
   revalidateMobilization(requestId);
   return {};
 }
 
-export async function confirmBoarding(positionId: string, requestId: string) {
+// Phase 6: boarding confirmation is a captured event (boarding_confirmations)
+// and the ONLY thing that creates an active crew_assignment from a
+// mobilization. It no longer auto-closes a crew member's previous
+// assignment — per the Phase 6 controls an assignment ends only on an
+// actual sign-off confirmation, so boarding refuses if they're still
+// active elsewhere.
+export async function confirmBoarding(positionId: string, requestId: string, formData: FormData) {
   const { supabase, access, userId } = await requireManage();
   const req = await getRequest(supabase, requestId);
   if (!["ready_to_mobilize", "in_transit"].includes(req.status)) {
@@ -616,12 +636,29 @@ export async function confirmBoarding(positionId: string, requestId: string) {
   }
   const { data: position, error: fetchError } = await supabase
     .from("mobilization_positions")
-    .select("selected_crew_id, required_onboard_date, final_status")
+    .select("selected_crew_id, required_onboard_date, final_status, crew_matrix_line_id, reliever_for_crew_id")
     .eq("id", positionId)
     .single();
   if (fetchError || !position) return { error: "Could not find that position." };
   if (!position.selected_crew_id) return { error: "Select a candidate before confirming boarding." };
   if (position.final_status === "filled") return { error: "This position is already marked as boarded." };
+
+  const actualOnboardAt = str(formData, "actualOnboardAt");
+  if (!actualOnboardAt) return { error: "Actual onboard date/time is required." };
+  const actualOnboardDate = actualOnboardAt.slice(0, 10);
+
+  // Control: no two simultaneous active vessel assignments — and no
+  // silent close-out either. The previous tour must be signed off first.
+  const { data: stillActive } = await supabase
+    .from("crew_assignments")
+    .select("id, offshore_sites(name)")
+    .eq("crew_id", position.selected_crew_id)
+    .is("end_date", null)
+    .limit(1);
+  if (stillActive && stillActive.length > 0) {
+    const site = (Array.isArray(stillActive[0].offshore_sites) ? stillActive[0].offshore_sites[0] : stillActive[0].offshore_sites) as { name?: string } | null;
+    return { error: `This crew member is still active on ${site?.name ?? "another vessel"} — record their sign-off under Rotations before confirming boarding here.` };
+  }
 
   // Last gate before an active crew_assignment is created — evaluate
   // this one position's readiness right now (not the stale value from
@@ -635,28 +672,98 @@ export async function confirmBoarding(positionId: string, requestId: string) {
     }
   }
 
-  const startDate = position.required_onboard_date ?? req.required_onboard_date;
+  // Rotation: the matrix line's template, else the crew member's own default.
+  let rotationTemplateId: string | null = null;
+  if (position.crew_matrix_line_id) {
+    const { data: line } = await supabase.from("crew_matrix_lines").select("rotation_template_id").eq("id", position.crew_matrix_line_id).single();
+    rotationTemplateId = line?.rotation_template_id ?? null;
+  }
+  if (!rotationTemplateId) {
+    const { data: crew } = await supabase.from("crew_profiles").select("default_rotation_template_id").eq("id", position.selected_crew_id).single();
+    rotationTemplateId = crew?.default_rotation_template_id ?? null;
+  }
+  let plannedEndDate: string | null = null;
+  if (rotationTemplateId) {
+    const { data: rot } = await supabase.from("rotation_templates").select("days_on").eq("id", rotationTemplateId).single();
+    if (rot?.days_on) {
+      const d = new Date(actualOnboardDate + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + rot.days_on);
+      plannedEndDate = d.toISOString().slice(0, 10);
+    }
+  }
 
-  // Same close-old/open-new sequencing the roster board already uses
-  // for crew_assignments — this is the one place in Phase 3 that
-  // touches that table, and only once boarding is actually confirmed.
-  const { error: closeError } = await supabase
+  const { data: boarding, error: boardingError } = await supabase
+    .from("boarding_confirmations")
+    .insert({
+      org_id: req.org_id,
+      mobilization_request_id: requestId,
+      mobilization_position_id: positionId,
+      crew_id: position.selected_crew_id,
+      offshore_site_id: req.offshore_site_id,
+      actual_departure_at: optStr(formData, "actualDepartureAt"),
+      actual_arrival_at: optStr(formData, "actualArrivalAt"),
+      actual_onboard_at: actualOnboardAt,
+      confirmed_by: userId,
+      vessel_acknowledged: formData.get("vesselAcknowledged") === "on",
+      vessel_acknowledged_by: optStr(formData, "vesselAcknowledgedBy"),
+      boarding_reference: optStr(formData, "boardingReference"),
+      remarks: optStr(formData, "remarks"),
+      supporting_document_url: optStr(formData, "supportingDocumentUrl"),
+    })
+    .select("id")
+    .single();
+  if (boardingError) return { error: boardingError.message };
+
+  const { count: priorTours } = await supabase
     .from("crew_assignments")
-    .update({ end_date: startDate, updated_by: userId })
+    .select("id", { count: "exact", head: true })
     .eq("crew_id", position.selected_crew_id)
-    .is("end_date", null);
-  if (closeError) return { error: closeError.message };
+    .eq("offshore_site_id", req.offshore_site_id);
+  const cycleRaw = str(formData, "rotationCycleNumber");
+  const rotationCycleNumber = cycleRaw ? Number(cycleRaw) : (priorTours ?? 0) + 1;
 
-  const { error: assignError } = await supabase.from("crew_assignments").insert({
-    org_id: req.org_id,
-    crew_id: position.selected_crew_id,
-    offshore_site_id: req.offshore_site_id,
-    start_date: startDate,
-    notes: `Boarded via mobilization ${req.mobilization_number ?? requestId}`,
-    created_by: userId,
-    updated_by: userId,
-  });
-  if (assignError) return { error: assignError.message };
+  const { data: assignment, error: assignError } = await supabase
+    .from("crew_assignments")
+    .insert({
+      org_id: req.org_id,
+      crew_id: position.selected_crew_id,
+      offshore_site_id: req.offshore_site_id,
+      project_id: req.project_id,
+      mobilization_request_id: requestId,
+      mobilization_position_id: positionId,
+      rotation_template_id: rotationTemplateId,
+      start_date: actualOnboardDate,
+      planned_start_date: position.required_onboard_date ?? req.required_onboard_date,
+      planned_end_date: plannedEndDate,
+      actual_start_date: actualOnboardDate,
+      assignment_status: "active",
+      shift: optStr(formData, "shift"),
+      rotation_cycle_number: Number.isFinite(rotationCycleNumber) ? rotationCycleNumber : null,
+      boarding_confirmation_id: boarding?.id,
+      notes: `Boarded via mobilization ${req.mobilization_number ?? requestId}`,
+      created_by: userId,
+      updated_by: userId,
+    })
+    .select("id")
+    .single();
+  if (assignError) {
+    if (assignError.message.includes("crew_assignments_one_active_idx")) {
+      return { error: "This crew member already has an active vessel assignment — record their sign-off first." };
+    }
+    return { error: assignError.message };
+  }
+
+  // Reliever traceability: if this position relieves someone, link the
+  // boarded crew member as reliever on the relieved person's active tour.
+  if (position.reliever_for_crew_id) {
+    await supabase
+      .from("crew_assignments")
+      .update({ reliever_crew_id: position.selected_crew_id, updated_by: userId })
+      .eq("crew_id", position.reliever_for_crew_id)
+      .is("end_date", null);
+  }
+
+  await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", position.selected_crew_id);
 
   const { error } = await supabase
     .from("mobilization_positions")
@@ -675,7 +782,9 @@ export async function confirmBoarding(positionId: string, requestId: string) {
   }
 
   revalidateMobilization(requestId);
-  return {};
+  revalidatePath("/rotations");
+  revalidatePath("/crew/roster");
+  return { assignmentId: assignment?.id };
 }
 
 /* ================= Comments ================= */
@@ -861,7 +970,21 @@ export async function markInTransit(id: string) {
   if (req.status !== "ready_to_mobilize") return { error: `This request is ${req.status.replace(/_/g, " ")}, not ready to mobilize.` };
   const { error } = await supabase.from("mobilization_requests").update({ status: "in_transit", updated_by: userId }).eq("id", id);
   if (error) return { error: error.message };
+
+  // Phase 6: everyone selected on a still-pending position is now travelling.
+  const { data: travelling } = await supabase
+    .from("mobilization_positions")
+    .select("selected_crew_id")
+    .eq("mobilization_request_id", id)
+    .eq("final_status", "pending")
+    .not("selected_crew_id", "is", null);
+  const travellingIds = (travelling ?? []).map((p) => p.selected_crew_id as string);
+  if (travellingIds.length) {
+    await supabase.from("crew_profiles").update({ deployment_status: "in_transit" }).in("id", travellingIds).eq("deployment_status", "onshore");
+  }
+
   revalidateMobilization(id);
+  revalidatePath("/rotations");
   return {};
 }
 
@@ -900,7 +1023,9 @@ export async function cancelMobilization(id: string, reason: string) {
   if (error) return { error: error.message };
 
   // Free up any pending reservations this request was holding.
+  const { data: pendingBefore } = await supabase.from("mobilization_positions").select("selected_crew_id").eq("mobilization_request_id", id).eq("final_status", "pending");
   await supabase.from("mobilization_positions").update({ final_status: "cancelled", updated_by: userId }).eq("mobilization_request_id", id).eq("final_status", "pending");
+  await resetTransitStatus(supabase, (pendingBefore ?? []).map((p) => p.selected_crew_id));
 
   await postSystemComment(supabase, access.orgId, id, `Cancelled — ${reason.trim()}`);
   revalidateMobilization(id);

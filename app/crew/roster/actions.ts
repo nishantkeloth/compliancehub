@@ -50,15 +50,8 @@ export async function bulkAssignCrew(
 
   const failed: string[] = [];
   for (const crewId of crewIds) {
-    const { error: closeError } = await supabase
-      .from("crew_assignments")
-      .update({ end_date: effectiveStartDate, updated_by: userId })
-      .eq("crew_id", crewId)
-      .is("end_date", null);
-    if (closeError) {
-      failed.push(crewId);
-      continue;
-    }
+    // Phase 6 control: never silently close an active tour — it ends only
+    // on sign-off. The one-active DB index rejects the insert otherwise.
     const { data: assignment, error: insertError } = await supabase
       .from("crew_assignments")
       .insert({
@@ -66,6 +59,9 @@ export async function bulkAssignCrew(
         crew_id: crewId,
         offshore_site_id: offshoreSiteId,
         start_date: effectiveStartDate,
+        planned_start_date: effectiveStartDate,
+        actual_start_date: effectiveStartDate,
+        assignment_status: "active",
         notes,
         created_by: userId,
         updated_by: userId,
@@ -76,6 +72,7 @@ export async function bulkAssignCrew(
       failed.push(crewId);
       continue;
     }
+    await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", crewId);
     await supabase.from("manual_assignment_overrides").insert({
       org_id: access.orgId,
       crew_id: crewId,
@@ -89,8 +86,9 @@ export async function bulkAssignCrew(
   crewIds.forEach(revalidateDetail);
   revalidateRoster();
 
+  revalidatePath("/rotations");
   if (failed.length > 0) {
-    return { error: `${failed.length} of ${crewIds.length} crew member(s) couldn't be assigned. Try those again.`, failed };
+    return { error: `${failed.length} of ${crewIds.length} crew member(s) couldn't be assigned — most likely they still have an active assignment that needs a sign-off first.`, failed };
   }
   return {};
 }

@@ -246,14 +246,14 @@ export async function assignCrewToSite(crewId: string, formData: FormData) {
   if (!reason) return { error: "A reason is required for a direct (non-mobilization) assignment." };
   const startDate = str(formData, "startDate") || new Date().toISOString().slice(0, 10);
 
-  // Close out any currently-open assignment for this crew member first — only
-  // one open (end_date is null) assignment per crew_id is allowed (DB constraint).
-  const { error: closeError } = await supabase
-    .from("crew_assignments")
-    .update({ end_date: startDate, updated_by: userId })
-    .eq("crew_id", crewId)
-    .is("end_date", null);
-  if (closeError) return { error: closeError.message };
+  // Phase 6 control: an active assignment ends only on sign-off — never
+  // silently closed here. Only one open (end_date is null) assignment
+  // per crew_id is allowed (DB index crew_assignments_one_active_idx).
+  const { data: stillActive } = await supabase.from("crew_assignments").select("id, offshore_sites(name)").eq("crew_id", crewId).is("end_date", null).limit(1);
+  if (stillActive && stillActive.length > 0) {
+    const site = (Array.isArray(stillActive[0].offshore_sites) ? stillActive[0].offshore_sites[0] : stillActive[0].offshore_sites) as { name?: string } | null;
+    return { error: `This crew member is still active on ${site?.name ?? "another vessel"} — record their sign-off under Rotations first.` };
+  }
 
   const { data: assignment, error } = await supabase
     .from("crew_assignments")
@@ -262,13 +262,20 @@ export async function assignCrewToSite(crewId: string, formData: FormData) {
       crew_id: crewId,
       offshore_site_id: offshoreSiteId,
       start_date: startDate,
+      planned_start_date: startDate,
+      actual_start_date: startDate,
+      assignment_status: "active",
       notes: optStr(formData, "notes"),
       created_by: userId,
       updated_by: userId,
     })
     .select("id")
     .single();
-  if (error) return { error: error.message };
+  if (error) {
+    if (error.message.includes("crew_assignments_one_active_idx")) return { error: "This crew member already has an active vessel assignment — record their sign-off first." };
+    return { error: error.message };
+  }
+  await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", crewId);
 
   await supabase.from("manual_assignment_overrides").insert({
     org_id: access.orgId,
@@ -284,16 +291,53 @@ export async function assignCrewToSite(crewId: string, formData: FormData) {
   return {};
 }
 
+// Phase 6: an assignment ends only on a sign-off confirmation (recorded
+// under Rotations, with the demob checklist). This quick path is the
+// emergency sign-off — it needs a reason and mobilization.emergency_override,
+// and writes a signoff_confirmations row flagged is_emergency so it's
+// audited like any other rotation exception.
 export async function endCrewAssignment(id: string, crewId: string, formData: FormData) {
-  const { supabase, userId } = await requireCrewManage();
+  const { supabase, access, userId } = await requireCrewManage();
+  const reason = str(formData, "reason");
+  if (!reason) return { error: "Record the sign-off under Rotations (with the demobilization checklist), or give a reason for an emergency sign-off here." };
+  if (!can(access, "mobilization.emergency_override")) {
+    return { error: "Emergency sign-off requires the emergency-override permission — record a normal sign-off under Rotations instead." };
+  }
   const endDate = str(formData, "endDate") || new Date().toISOString().slice(0, 10);
+
+  const { data: assignment } = await supabase.from("crew_assignments").select("id, org_id, offshore_site_id, planned_end_date, end_date").eq("id", id).single();
+  if (!assignment) return { error: "Could not find that assignment." };
+  if (assignment.end_date) return { error: "This assignment is already signed off." };
+
+  const { data: signoff, error: signoffError } = await supabase
+    .from("signoff_confirmations")
+    .insert({
+      org_id: assignment.org_id,
+      crew_assignment_id: id,
+      crew_id: crewId,
+      offshore_site_id: assignment.offshore_site_id,
+      planned_signoff_date: assignment.planned_end_date,
+      actual_signoff_at: endDate + "T00:00:00Z",
+      is_emergency: true,
+      emergency_reason: reason,
+      authorized_by: userId,
+      confirmed_by: userId,
+    })
+    .select("id")
+    .single();
+  if (signoffError) return { error: signoffError.message };
+
   const { error } = await supabase
     .from("crew_assignments")
-    .update({ end_date: endDate, updated_by: userId })
+    .update({ end_date: endDate, actual_end_date: endDate, assignment_status: "signed_off", signoff_confirmation_id: signoff?.id, updated_by: userId })
     .eq("id", id);
   if (error) return { error: error.message };
+  await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", crewId);
+  await supabase.from("crew_change_requests").update({ status: "completed", updated_at: new Date().toISOString() }).eq("crew_assignment_id", id).eq("status", "approved");
+
   revalidateDetail(crewId);
   revalidateRoster();
+  revalidatePath("/rotations");
   return {};
 }
 

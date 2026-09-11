@@ -79,6 +79,10 @@ export default function RosterBoard({
   // (unassign) doesn't create an assignment, so it stays immediate.
   const [pendingAssign, setPendingAssign] = useState<{ crewId: string; siteId: string } | null>(null);
   const [assignReason, setAssignReason] = useState("");
+  // Phase 6: dropping onto the bench is an emergency sign-off (an
+  // assignment ends only on a sign-off confirmation — the full demob
+  // checklist lives under Rotations; this is the reason-required shortcut).
+  const [pendingUnassign, setPendingUnassign] = useState<string | null>(null);
 
   const crewById = useMemo(() => Object.fromEntries(crew.map((c) => [c.id, c])), [crew]);
   const openAssignmentByCrew = useMemo(() => {
@@ -116,6 +120,7 @@ export default function RosterBoard({
         if (open) {
           const fd = new FormData();
           fd.set("endDate", todayIso());
+          fd.set("reason", reason ?? "");
           res = await endCrewAssignment(open.id, crewId, fd);
         }
       }
@@ -238,8 +243,8 @@ export default function RosterBoard({
         {canManage && activeTab === "board" && (
           <span className="ml-auto">
             {canEmergencyAssign
-              ? "Drag a card to another vessel to reassign (emergency override — reason required)"
-              : "Drag a card to the bench to unassign — assigning to a vessel now happens through an approved mobilization"}
+              ? "Drag to a vessel = emergency assignment, drag to the bench = emergency sign-off (reason required, logged)"
+              : "Assignments start with boarding and end with sign-off — see Mobilizations and Rotations"}
           </span>
         )}
       </div>
@@ -258,7 +263,13 @@ export default function RosterBoard({
               onDragLeaveCol={() => setDragOverSite((s) => (s === "__pool__" ? null : s))}
               onDrop={(crewId) => {
                 setDragOverSite(null);
-                moveCrew(crewId, null);
+                if ((localSiteByCrew[crewId] ?? null) === null) return;
+                if (!canEmergencyAssign) {
+                  setBgError("An assignment ends only on a sign-off confirmation — record it under Rotations (emergency sign-off here needs the emergency-override permission).");
+                  return;
+                }
+                setAssignReason("");
+                setPendingUnassign(crewId);
               }}
             />
             {sites.map((site) => (
@@ -314,14 +325,30 @@ export default function RosterBoard({
 
       {pendingAssign && (
         <AssignReasonModal
-          crewName={crewById[pendingAssign.crewId]?.fullName ?? "Crew member"}
-          siteName={sites.find((s) => s.id === pendingAssign.siteId)?.name ?? "vessel"}
+          title={`Assign ${crewById[pendingAssign.crewId]?.fullName ?? "Crew member"} to ${sites.find((s) => s.id === pendingAssign.siteId)?.name ?? "vessel"}`}
+          body="Direct assignment is a restricted emergency override — normal assignment happens through an approved mobilization's boarding confirmation, and this use will be logged."
+          confirmLabel="Assign"
           reason={assignReason}
           setReason={setAssignReason}
           onCancel={() => setPendingAssign(null)}
           onConfirm={() => {
             moveCrew(pendingAssign.crewId, pendingAssign.siteId, assignReason.trim());
             setPendingAssign(null);
+          }}
+        />
+      )}
+
+      {pendingUnassign && (
+        <AssignReasonModal
+          title={`Emergency sign-off — ${crewById[pendingUnassign]?.fullName ?? "Crew member"}`}
+          body="This ends the active assignment today without the demobilization checklist. For a normal sign-off (handover, property, timesheet, clearance, performance) use Rotations → Sign off. This will be recorded as an emergency sign-off."
+          confirmLabel="Sign off"
+          reason={assignReason}
+          setReason={setAssignReason}
+          onCancel={() => setPendingUnassign(null)}
+          onConfirm={() => {
+            moveCrew(pendingUnassign, null, assignReason.trim());
+            setPendingUnassign(null);
           }}
         />
       )}
@@ -623,15 +650,17 @@ function BulkAssignModal({
 }
 
 function AssignReasonModal({
-  crewName,
-  siteName,
+  title,
+  body,
+  confirmLabel,
   reason,
   setReason,
   onCancel,
   onConfirm,
 }: {
-  crewName: string;
-  siteName: string;
+  title: string;
+  body: string;
+  confirmLabel: string;
   reason: string;
   setReason: (v: string) => void;
   onCancel: () => void;
@@ -649,12 +678,10 @@ function AssignReasonModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-[15px] font-bold mb-0.5" style={{ color: "var(--ch-ink)" }}>
-          Assign {crewName} to {siteName}
+          {title}
         </h3>
         <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-          Direct assignment is a restricted emergency override — normal assignment happens
-          through an approved mobilization&rsquo;s boarding confirmation, and this use will be
-          logged.
+          {body}
         </p>
         <label className="text-[11px] font-bold uppercase tracking-wide block mb-1" style={{ color: "var(--ch-sub)" }}>
           Reason (required)
@@ -665,7 +692,7 @@ function AssignReasonModal({
           style={{ borderColor: "var(--ch-line)" }}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          placeholder="Why this crew member is being assigned directly, outside a mobilization"
+          placeholder="Reason (will be logged)"
         />
         <div className="flex items-center gap-2 mt-4">
           <button
@@ -674,7 +701,7 @@ function AssignReasonModal({
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
             style={{ flex: 1 }}
           >
-            Assign
+            {confirmLabel}
           </button>
           <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>
             Cancel
