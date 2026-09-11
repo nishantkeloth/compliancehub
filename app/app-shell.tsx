@@ -80,6 +80,7 @@ export default async function AppShell({
   const mobilizationItems: NavItem[] = [];
   if (can(access, "mobilization.view")) {
     mobilizationItems.push({ href: "/mobilizations", key: "mobilizations", label: "Mobilizations" });
+    mobilizationItems.push({ href: "/readiness", key: "readiness", label: "Compliance Dashboard" });
   }
 
   const adminItems: NavItem[] = [];

@@ -190,6 +190,7 @@ function SummaryPanel({ crew, jobRoles, assignments }: { crew: Crew; jobRoles: R
 export default function CrewEditor({
   crew,
   canManage,
+  canEmergencyAssign,
   canViewCost,
   canViewSensitive,
   jobRoles,
@@ -209,6 +210,7 @@ export default function CrewEditor({
 }: {
   crew: Crew;
   canManage: boolean;
+  canEmergencyAssign: boolean;
   canViewCost: boolean;
   canViewSensitive: boolean;
   jobRoles: Ref[];
@@ -280,7 +282,14 @@ export default function CrewEditor({
       )}
 
       {activeTab === "assignment" && (
-        <AssignmentSection crewId={crew.id} offshoreSites={offshoreSites} assignments={assignments} canManage={canManage} onChanged={refresh} />
+        <AssignmentSection
+          crewId={crew.id}
+          offshoreSites={offshoreSites}
+          assignments={assignments}
+          canManage={canManage}
+          canEmergencyAssign={canEmergencyAssign}
+          onChanged={refresh}
+        />
       )}
 
       {activeTab === "documents" && canViewDocuments && (
@@ -683,18 +692,21 @@ function AssignmentSection({
   offshoreSites,
   assignments,
   canManage,
+  canEmergencyAssign,
   onChanged,
 }: {
   crewId: string;
   offshoreSites: Ref[];
   assignments: Assignment[];
   canManage: boolean;
+  canEmergencyAssign: boolean;
   onChanged: () => void;
 }) {
   const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(assignments);
   const [, startTransition] = useTransition();
   const [offshoreSiteId, setOffshoreSiteId] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
 
@@ -703,11 +715,16 @@ function AssignmentSection({
 
   const assign = () => {
     if (!offshoreSiteId) return;
+    if (!reason.trim()) {
+      setError("A reason is required — direct assignment is a restricted emergency override; normal assignments happen through an approved mobilization's boarding confirmation.");
+      return;
+    }
     setError(null);
     setBgError(null);
     const fd = new FormData();
     fd.set("offshoreSiteId", offshoreSiteId);
     fd.set("startDate", startDate);
+    fd.set("reason", reason.trim());
 
     const siteName = offshoreSites.find((s) => s.id === offshoreSiteId)?.name ?? "";
     const previousCurrent = current;
@@ -722,6 +739,7 @@ function AssignmentSection({
     if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: startDate });
     addOptimistic(optimisticNew);
     setOffshoreSiteId("");
+    setReason("");
 
     startTransition(async () => {
       const res = await assignCrewToSite(crewId, fd);
@@ -789,20 +807,41 @@ function AssignmentSection({
         <div className="text-sm mb-3" style={{ color: "var(--ch-sub)" }}>Not currently assigned to a vessel.</div>
       )}
 
-      {canManage && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <select className={inputCls} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
-            <option value="">{current ? "Reassign to…" : "Assign to…"}</option>
-            {offshoreSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-            Start date
-            <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+      {canEmergencyAssign ? (
+        <div>
+          <div className="text-xs mb-2 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+            Emergency override — normal assignments happen automatically when boarding is confirmed on an approved mobilization. Only use this to assign directly, and give a reason; every use is logged.
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select className={inputCls} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
+              <option value="">{current ? "Reassign to…" : "Assign to…"}</option>
+              {offshoreSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+              Start date
+              <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </label>
+            <button onClick={assign} disabled={!offshoreSiteId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+              {current ? "Reassign" : "Assign"}
+            </button>
+          </div>
+          <label className="text-xs block mt-2" style={{ color: "var(--ch-sub)" }}>
+            Reason (required)
+            <input
+              className={`${inputCls} w-full mt-1`}
+              style={inputStyle}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why this crew member is being assigned directly, outside a mobilization"
+            />
           </label>
-          <button onClick={assign} disabled={!offshoreSiteId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-            {current ? "Reassign" : "Assign"}
-          </button>
         </div>
+      ) : (
+        canManage && (
+          <div className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Direct assignment requires the emergency-override permission — normal assignment happens through an approved mobilization&rsquo;s boarding confirmation. See Mobilizations.
+          </div>
+        )
       )}
       <ErrorLine error={error} />
 

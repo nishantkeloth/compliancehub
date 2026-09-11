@@ -19,6 +19,10 @@ export default async function VesselRosterPage() {
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "crew.view")) redirect("/");
   const canManage = can(access, "crew.manage");
+  // Phase 4: assigning a vessel here is the restricted emergency path —
+  // normal assignment happens through an approved mobilization's
+  // boarding confirmation. See claude/phase4-readiness-compliance.md.
+  const canEmergencyAssign = canManage && can(access, "mobilization.emergency_override");
 
   const [crewRes, assignmentsRes, sitesRes, manningRes, contractorsRes, documentTypesRes, crewDocumentsRes] = await Promise.all([
     supabase
@@ -135,9 +139,12 @@ export default async function VesselRosterPage() {
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Plan and reassign crew by vessel. This sits alongside the per-person Vessel Assignment
         card on each crew profile — use whichever is quicker for the change you're making.
+        {canManage && !canEmergencyAssign && (
+          <> Direct assignment here is a restricted emergency override; normal assignment happens through an approved mobilization&rsquo;s boarding confirmation.</>
+        )}
       </p>
 
-      <RosterBoard crew={crew} sites={sites} history={history} canManage={canManage} />
+      <RosterBoard crew={crew} sites={sites} history={history} canManage={canManage} canEmergencyAssign={canEmergencyAssign} />
     </>
   );
 }

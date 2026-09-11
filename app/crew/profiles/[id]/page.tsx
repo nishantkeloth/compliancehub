@@ -26,6 +26,12 @@ export default async function CrewProfileDetailPage({
   const canViewSensitive = can(access, "crew.view_sensitive");
   const canViewDocuments = can(access, "crew.documents.view");
   const canManageDocuments = can(access, "crew.documents.manage");
+  // Phase 4: direct vessel assignment from a crew profile is now the
+  // restricted emergency path — normal assignments originate from an
+  // approved mobilization's boarding confirmation instead. Requires both
+  // crew.manage AND mobilization.emergency_override, plus a reason
+  // (enforced in assignCrewToSite) — see claude/phase4-readiness-compliance.md.
+  const canEmergencyAssign = canManage && can(access, "mobilization.emergency_override");
 
   const fields =
     BASE_FIELDS +
@@ -108,6 +114,7 @@ export default async function CrewProfileDetailPage({
       <CrewEditor
         crew={crew as any}
         canManage={canManage}
+        canEmergencyAssign={canEmergencyAssign}
         canViewCost={canViewCost}
         canViewSensitive={canViewSensitive}
         jobRoles={jobRolesRes.data ?? []}

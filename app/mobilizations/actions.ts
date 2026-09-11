@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { loadPositionContext, evaluateCandidateReadiness, evaluateCandidatesReadiness, snapshotSelectedPositions, writeReadinessSnapshot } from "@/lib/readiness";
 
 type Supa = Awaited<ReturnType<typeof createClient>>;
 
@@ -57,6 +58,41 @@ async function assertNotTerminal(supabase: Supa, id: string) {
     throw new Error(`This mobilization request is ${req.status.replace(/_/g, " ")} and can no longer be changed.`);
   }
   return req;
+}
+
+// Phase 4: evaluates every selected position's readiness and returns a
+// human-readable explanation of any that are blocked (not_ready) —
+// null when everything is clear to proceed. Used to gate the workflow
+// transitions the acceptance criteria call "final approval" (internal
+// approval, client approval, marking ready to mobilize, and boarding);
+// entering compliance/internal review itself stays a soft warning (see
+// advanceToInternalApproval) since the crew is still being worked out
+// at that point. An approved compliance waiver moves a check to
+// "overridden" rather than "fail", so a waived position is not blocked
+// here — that's the whole point of the waiver mechanism.
+async function checkBlockingReadiness(supabase: Supa, orgId: string, requestId: string): Promise<string | null> {
+  const { data: positions } = await supabase
+    .from("mobilization_positions")
+    .select("id, selected_crew_id, crew_profiles(full_name)")
+    .eq("mobilization_request_id", requestId)
+    .not("selected_crew_id", "is", null);
+
+  const problems: string[] = [];
+  for (const p of positions ?? []) {
+    if (!p.selected_crew_id) continue;
+    const ctx = await loadPositionContext(supabase, orgId, p.id);
+    if ("error" in ctx) continue;
+    const evaluation = await evaluateCandidateReadiness(supabase, ctx, p.selected_crew_id);
+    if ("error" in evaluation) continue;
+    if (evaluation.overallOutcome === "not_ready") {
+      const crewProfile = Array.isArray(p.crew_profiles) ? p.crew_profiles[0] : p.crew_profiles;
+      const crewName = (crewProfile as { full_name?: string } | null)?.full_name ?? "Crew member";
+      const failing = evaluation.checks.filter((c) => c.blocking && c.result === "fail").map((c) => c.description);
+      problems.push(`${crewName} — ${failing.join("; ")}`);
+    }
+  }
+  if (problems.length === 0) return null;
+  return `Not every position is ready: ${problems.join(" | ")}. Resolve these or request a compliance waiver before proceeding.`;
 }
 
 async function postSystemComment(supabase: Supa, orgId: string | null, requestId: string, body: string) {
@@ -280,47 +316,24 @@ export type Candidate = {
   currency: string | null;
 };
 
+// Candidate tiering is derived from the Phase 4 readiness engine's
+// overall outcome rather than a second, parallel eligibility
+// implementation — "not_ready" (an unwaived blocking check failed) maps
+// to ineligible, "ready_with_warning"/"overridden" to partial, and a
+// clean "ready" to eligible.
+const OUTCOME_TO_TIER: Record<string, CandidateTier> = {
+  not_ready: "ineligible",
+  ready_with_warning: "partial",
+  overridden: "partial",
+  ready: "eligible",
+};
+
 export async function listCandidates(positionId: string): Promise<{ candidates: Candidate[] } | { error: string }> {
   const { supabase, access } = await requireView();
   const canViewCost = can(access, "crew.view_cost");
 
-  const { data: position, error: positionError } = await supabase
-    .from("mobilization_positions")
-    .select("id, mobilization_request_id, job_role_id, required_onboard_date, crew_matrix_line_id")
-    .eq("id", positionId)
-    .single();
-  if (positionError || !position) return { error: "Could not find that position." };
-
-  const { data: request, error: requestError } = await supabase
-    .from("mobilization_requests")
-    .select("required_onboard_date")
-    .eq("id", position.mobilization_request_id)
-    .single();
-  if (requestError || !request) return { error: "Could not find the parent mobilization request." };
-
-  const effectiveDate = position.required_onboard_date ?? request.required_onboard_date;
-
-  const [requiredSkillsRes, requiredDocsRes] = await Promise.all([
-    position.crew_matrix_line_id
-      ? supabase.from("crew_matrix_line_skills").select("skill_id, skills(name)").eq("line_id", position.crew_matrix_line_id)
-      : Promise.resolve({ data: [] as { skill_id: string; skills: { name?: string } | { name?: string }[] | null }[] }),
-    position.crew_matrix_line_id
-      ? supabase
-          .from("crew_matrix_line_documents")
-          .select("document_type_id, minimum_remaining_validity_days, is_mandatory, waiver_permitted, document_types(name)")
-          .eq("line_id", position.crew_matrix_line_id)
-      : Promise.resolve({
-          data: [] as {
-            document_type_id: string;
-            minimum_remaining_validity_days: number | null;
-            is_mandatory: boolean;
-            waiver_permitted: boolean;
-            document_types: { name?: string } | { name?: string }[] | null;
-          }[],
-        }),
-  ]);
-  const requiredSkills = requiredSkillsRes.data ?? [];
-  const requiredDocs = requiredDocsRes.data ?? [];
+  const ctx = await loadPositionContext(supabase, access.orgId!, positionId);
+  if ("error" in ctx) return ctx;
 
   // day_rate/currency are always selected here (this data never leaves
   // the server — Candidate strips them out below unless the caller
@@ -329,8 +342,8 @@ export async function listCandidates(positionId: string): Promise<{ candidates: 
   const CREW_FIELDS = "id, employee_code, full_name, availability_date, default_rotation_template_id, rotation_templates(name), day_rate, currency";
 
   const [primaryRes, secondaryLinkRes] = await Promise.all([
-    supabase.from("crew_profiles").select(CREW_FIELDS).eq("org_id", access.orgId).eq("employment_status", "active").eq("primary_job_role_id", position.job_role_id),
-    supabase.from("crew_secondary_roles").select("crew_id").eq("job_role_id", position.job_role_id),
+    supabase.from("crew_profiles").select(CREW_FIELDS).eq("org_id", access.orgId).eq("employment_status", "active").eq("primary_job_role_id", ctx.jobRoleId),
+    supabase.from("crew_secondary_roles").select("crew_id").eq("job_role_id", ctx.jobRoleId),
   ]);
   const primary = primaryRes.data ?? [];
   const secondaryCrewIds = (secondaryLinkRes.data ?? [])
@@ -344,76 +357,18 @@ export async function listCandidates(positionId: string): Promise<{ candidates: 
   if (pool.length === 0) return { candidates: [] as Candidate[] };
   const crewIds = pool.map((c) => c.id);
 
-  const [skillsRes, docsRes, assignmentsRes, reservationsRes] = await Promise.all([
-    supabase.from("crew_skills").select("crew_id, skill_id").in("crew_id", crewIds),
-    supabase.from("crew_documents").select("crew_id, document_type_id, expiry_date").in("crew_id", crewIds),
-    supabase.from("crew_assignments").select("crew_id, offshore_sites(name)").in("crew_id", crewIds).is("end_date", null),
-    supabase.from("mobilization_positions").select("id, selected_crew_id").in("selected_crew_id", crewIds).eq("final_status", "pending"),
-  ]);
-  const crewSkills = skillsRes.data ?? [];
-  const crewDocs = docsRes.data ?? [];
-  const openAssignments = assignmentsRes.data ?? [];
-  const reservations = (reservationsRes.data ?? []).filter((r) => r.id !== positionId);
+  const evaluations = await evaluateCandidatesReadiness(supabase, ctx, crewIds);
 
   const candidates: Candidate[] = pool.map((c) => {
-    const reasons: string[] = [];
-    let tier: CandidateTier = "eligible";
+    const evaluation = evaluations[c.id];
+    const checks = evaluation?.checks ?? [];
+    const tier = evaluation ? OUTCOME_TO_TIER[evaluation.overallOutcome] ?? "partial" : "partial";
+    const reasons = checks
+      .filter((chk) => chk.result === "fail" || chk.result === "warning" || chk.result === "overridden")
+      .map((chk) => chk.recommendedAction ?? chk.description);
 
-    const reservedElsewhere = reservations.find((r) => r.selected_crew_id === c.id);
-    if (reservedElsewhere) {
-      tier = "ineligible";
-      reasons.push("Already reserved on another mobilization request.");
-    }
-
-    if (c.availability_date && c.availability_date > effectiveDate) {
-      tier = "ineligible";
-      reasons.push(`Not available until ${c.availability_date}.`);
-    }
-
-    const mySkillIds = new Set(crewSkills.filter((s) => s.crew_id === c.id).map((s) => s.skill_id));
-    const missingSkills = requiredSkills.filter((rs) => !mySkillIds.has(rs.skill_id));
-    if (requiredSkills.length > 0 && missingSkills.length > 0 && tier !== "ineligible") tier = "partial";
-    if (missingSkills.length > 0) {
-      const names = missingSkills.map((s) => {
-        const rel = Array.isArray(s.skills) ? s.skills[0] : s.skills;
-        return rel?.name ?? "skill";
-      });
-      reasons.push(`Missing skill${missingSkills.length > 1 ? "s" : ""}: ${names.join(", ")}.`);
-    }
-
-    const myDocs = crewDocs.filter((d) => d.crew_id === c.id);
-    for (const rd of requiredDocs) {
-      const doc = myDocs.find((d) => d.document_type_id === rd.document_type_id);
-      const docName = (() => {
-        const rel = Array.isArray(rd.document_types) ? rd.document_types[0] : rd.document_types;
-        return rel?.name ?? "document";
-      })();
-      const minValidDate = rd.minimum_remaining_validity_days
-        ? addDays(effectiveDate, rd.minimum_remaining_validity_days)
-        : effectiveDate;
-      const expired = !doc?.expiry_date || doc.expiry_date < minValidDate;
-      if (expired) {
-        if (rd.is_mandatory && !rd.waiver_permitted) {
-          tier = "ineligible";
-          reasons.push(`Missing/expired mandatory document: ${docName}.`);
-        } else if (rd.is_mandatory && rd.waiver_permitted) {
-          if (tier !== "ineligible") tier = "partial";
-          reasons.push(`Missing/expired document (waiver possible): ${docName}.`);
-        } else {
-          reasons.push(`Missing/expired optional document: ${docName}.`);
-        }
-      }
-    }
-
-    const currentAssignment = openAssignments.find((a) => a.crew_id === c.id);
-    const currentVesselName = currentAssignment
-      ? ((Array.isArray(currentAssignment.offshore_sites) ? currentAssignment.offshore_sites[0] : currentAssignment.offshore_sites) as { name?: string } | null)?.name ?? null
-      : null;
-    if (currentVesselName && tier !== "ineligible") {
-      tier = "partial";
-      reasons.push(`Currently deployed on ${currentVesselName}.`);
-    }
-
+    const vesselCheck = checks.find((chk) => chk.code === "VESSEL_ASSIGNMENT");
+    const skillsCheck = checks.find((chk) => chk.code === "REQUIRED_SKILLS");
     const rotationRel = Array.isArray(c.rotation_templates) ? c.rotation_templates[0] : c.rotation_templates;
 
     return {
@@ -423,9 +378,9 @@ export async function listCandidates(positionId: string): Promise<{ candidates: 
       tier,
       reasons,
       availability_date: c.availability_date,
-      current_vessel: currentVesselName,
+      current_vessel: vesselCheck?.actualValue && vesselCheck.result === "warning" ? vesselCheck.actualValue : null,
       current_rotation: rotationRel?.name ?? null,
-      skill_match: requiredSkills.length > 0 ? `${requiredSkills.length - missingSkills.length}/${requiredSkills.length}` : "—",
+      skill_match: skillsCheck?.actualValue ?? "—",
       day_rate: canViewCost ? c.day_rate ?? null : null,
       currency: canViewCost ? c.currency ?? null : null,
     };
@@ -437,10 +392,47 @@ export async function listCandidates(positionId: string): Promise<{ candidates: 
   return { candidates };
 }
 
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+// Live per-check readiness for the position's currently selected
+// candidate — what the position detail UI uses to explain exactly why
+// a person is/isn't ready (Phase 4 acceptance criteria), and what
+// feeds the "which requirement failed" picker when requesting a
+// waiver. Recomputed on demand rather than read from the last
+// snapshot, since master data (documents, skills, assignments) can
+// change between snapshot points.
+export async function getPositionReadiness(positionId: string) {
+  const { supabase, access } = await requireView();
+  const ctx = await loadPositionContext(supabase, access.orgId!, positionId);
+  if ("error" in ctx) return ctx;
+  const { data: position, error: positionError } = await supabase.from("mobilization_positions").select("selected_crew_id").eq("id", positionId).single();
+  if (positionError || !position) return { error: "Could not find that position." };
+  if (!position.selected_crew_id) return { error: "No candidate is selected for this position yet." };
+  const evaluation = await evaluateCandidateReadiness(supabase, ctx, position.selected_crew_id);
+  if ("error" in evaluation) return evaluation;
+  return { evaluation };
+}
+
+export async function listWaiversForPosition(positionId: string) {
+  const { supabase, access } = await requireView();
+  const { data, error } = await supabase
+    .from("compliance_waivers")
+    .select("id, check_code, requirement_description, justification, attachment_url, status, requested_by, requested_at, decided_by, decided_at, decision_note, expires_at")
+    .eq("mobilization_position_id", positionId)
+    .order("requested_at", { ascending: false });
+  if (error) return { error: error.message };
+
+  const userIds = Array.from(new Set((data ?? []).flatMap((w) => [w.requested_by, w.decided_by]).filter((id): id is string => !!id)));
+  const nameById: Record<string, string> = {};
+  if (userIds.length) {
+    const { data: profiles } = await supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).in("id", userIds);
+    for (const p of profiles ?? []) nameById[p.id] = p.full_name;
+  }
+
+  const waivers = (data ?? []).map((w) => ({
+    ...w,
+    requested_by_name: w.requested_by ? nameById[w.requested_by] ?? "—" : "—",
+    decided_by_name: w.decided_by ? nameById[w.decided_by] ?? "—" : null,
+  }));
+  return { waivers };
 }
 
 /* ================= Selection / reservation / replacement ================= */
@@ -617,7 +609,7 @@ export async function markPositionVacant(positionId: string, requestId: string, 
 }
 
 export async function confirmBoarding(positionId: string, requestId: string) {
-  const { supabase, userId } = await requireManage();
+  const { supabase, access, userId } = await requireManage();
   const req = await getRequest(supabase, requestId);
   if (!["ready_to_mobilize", "in_transit"].includes(req.status)) {
     return { error: "Boarding can only be confirmed once the request is ready to mobilize or in transit." };
@@ -630,6 +622,18 @@ export async function confirmBoarding(positionId: string, requestId: string) {
   if (fetchError || !position) return { error: "Could not find that position." };
   if (!position.selected_crew_id) return { error: "Select a candidate before confirming boarding." };
   if (position.final_status === "filled") return { error: "This position is already marked as boarded." };
+
+  // Last gate before an active crew_assignment is created — evaluate
+  // this one position's readiness right now (not the stale value from
+  // the last snapshot) and block if anything unwaived is still blocking.
+  const ctx = await loadPositionContext(supabase, access.orgId!, positionId);
+  if (!("error" in ctx)) {
+    const evaluation = await evaluateCandidateReadiness(supabase, ctx, position.selected_crew_id);
+    if (!("error" in evaluation) && evaluation.overallOutcome === "not_ready") {
+      const failing = evaluation.checks.filter((c) => c.blocking && c.result === "fail").map((c) => c.description);
+      return { error: `This crew member isn't ready to board: ${failing.join("; ")}. Resolve these or request a compliance waiver first.` };
+    }
+  }
 
   const startDate = position.required_onboard_date ?? req.required_onboard_date;
 
@@ -659,6 +663,16 @@ export async function confirmBoarding(positionId: string, requestId: string) {
     .update({ final_status: "filled", readiness_status: "boarded", updated_by: userId })
     .eq("id", positionId);
   if (error) return { error: error.message };
+
+  // Phase 4 snapshot trigger 4/4: "boarding confirmed" — re-evaluate
+  // fresh (readiness_status/final_status just changed) rather than
+  // reusing the evaluation computed above for the gate.
+  if (!("error" in ctx)) {
+    const finalEvaluation = await evaluateCandidateReadiness(supabase, ctx, position.selected_crew_id);
+    if (!("error" in finalEvaluation)) {
+      await writeReadinessSnapshot(supabase, ctx, "boarding_confirmed", finalEvaluation, userId);
+    }
+  }
 
   revalidateMobilization(requestId);
   return {};
@@ -740,7 +754,7 @@ export async function returnToPlanning(id: string, comment: string) {
 }
 
 export async function advanceToInternalApproval(id: string) {
-  const { supabase, userId } = await requireComplianceReview();
+  const { supabase, access, userId } = await requireComplianceReview();
   const req = await getRequest(supabase, id);
   if (req.status !== "compliance_review") return { error: `This request is ${req.status.replace(/_/g, " ")}, not in compliance review.` };
 
@@ -752,6 +766,14 @@ export async function advanceToInternalApproval(id: string) {
 
   const { error } = await supabase.from("mobilization_requests").update({ status: "internal_approval", updated_by: userId }).eq("id", id);
   if (error) return { error: error.message };
+
+  // Phase 4 snapshot trigger 1/4: "sent for internal approval". This
+  // stage stays a soft warning rather than a hard block — the whole
+  // point of internal approval is to catch and work through readiness
+  // gaps, so blocking here would be premature; approveInternal below is
+  // where blocking checks actually stop the request.
+  await snapshotSelectedPositions(supabase, access.orgId!, id, "internal_approval_sent", userId);
+
   revalidateMobilization(id);
   return unresolvedCount ? { warning: `${unresolvedCount} position(s) are still unselected or flagged with a compliance issue.` } : {};
 }
@@ -760,6 +782,13 @@ export async function approveInternal(id: string, comment?: string) {
   const { supabase, access, userId } = await requireApprove();
   const req = await getRequest(supabase, id);
   if (req.status !== "internal_approval") return { error: `This request is ${req.status.replace(/_/g, " ")}, not pending internal approval.` };
+
+  // Phase 4 acceptance criteria: blocking checks must prevent final
+  // approval. Internal approval is the first real "approval" action, so
+  // it's gated here — a position with an unwaived blocking failure can't
+  // be approved past this point.
+  const blocked = await checkBlockingReadiness(supabase, access.orgId!, id);
+  if (blocked) return { error: blocked };
 
   const nextStatus = req.client_approval_required ? "client_approval" : "travel_arrangement";
   const update: Record<string, unknown> = { status: nextStatus, updated_by: userId };
@@ -770,6 +799,15 @@ export async function approveInternal(id: string, comment?: string) {
   const { error } = await supabase.from("mobilization_requests").update(update).eq("id", id);
   if (error) return { error: error.message };
   if (comment?.trim()) await postSystemComment(supabase, access.orgId, id, `Internal approval — ${comment.trim()}`);
+
+  // Phase 4 snapshot trigger 2/4: "sent to client" — only fires when
+  // this approval actually moves the request into the client-approval
+  // stage. When no client approval is required, the next relevant
+  // snapshot trigger is "marked ready to mobilize" (markTravelArranged).
+  if (nextStatus === "client_approval") {
+    await snapshotSelectedPositions(supabase, access.orgId!, id, "client_approval_sent", userId);
+  }
+
   revalidateMobilization(id);
   return { nextStatus };
 }
@@ -786,6 +824,9 @@ export async function approveClient(id: string, referenceOrComment?: string) {
     .eq("client_approval_status", "pending");
   if (pendingCount) return { error: `${pendingCount} position(s) are still awaiting client approval — resolve them first.` };
 
+  const blocked = await checkBlockingReadiness(supabase, access.orgId!, id);
+  if (blocked) return { error: blocked };
+
   const { error } = await supabase
     .from("mobilization_requests")
     .update({ status: "travel_arrangement", approved_by: userId, approved_at: new Date().toISOString(), updated_by: userId })
@@ -797,11 +838,19 @@ export async function approveClient(id: string, referenceOrComment?: string) {
 }
 
 export async function markTravelArranged(id: string) {
-  const { supabase, userId } = await requireManage();
+  const { supabase, access, userId } = await requireManage();
   const req = await getRequest(supabase, id);
   if (req.status !== "travel_arrangement") return { error: `This request is ${req.status.replace(/_/g, " ")}, not in travel arrangement.` };
+
+  const blocked = await checkBlockingReadiness(supabase, access.orgId!, id);
+  if (blocked) return { error: blocked };
+
   const { error } = await supabase.from("mobilization_requests").update({ status: "ready_to_mobilize", updated_by: userId }).eq("id", id);
   if (error) return { error: error.message };
+
+  // Phase 4 snapshot trigger 3/4: "marked ready to mobilize".
+  await snapshotSelectedPositions(supabase, access.orgId!, id, "ready_to_mobilize", userId);
+
   revalidateMobilization(id);
   return {};
 }

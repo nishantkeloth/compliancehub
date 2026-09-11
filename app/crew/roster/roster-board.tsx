@@ -38,11 +38,13 @@ export default function RosterBoard({
   sites,
   history,
   canManage,
+  canEmergencyAssign,
 }: {
   crew: CrewRow[];
   sites: SiteRow[];
   history: HistoryRow[];
   canManage: boolean;
+  canEmergencyAssign: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -68,6 +70,15 @@ export default function RosterBoard({
   const [bulkVessel, setBulkVessel] = useState("");
   const [bulkStartDate, setBulkStartDate] = useState(todayIso());
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkReason, setBulkReason] = useState("");
+
+  // Phase 4: dropping a card onto a vessel is the restricted emergency
+  // path (creates a crew_assignments row directly, bypassing a
+  // mobilization), so it needs a reason — collected in this small modal
+  // instead of assigning immediately on drop. Dropping onto the pool
+  // (unassign) doesn't create an assignment, so it stays immediate.
+  const [pendingAssign, setPendingAssign] = useState<{ crewId: string; siteId: string } | null>(null);
+  const [assignReason, setAssignReason] = useState("");
 
   const crewById = useMemo(() => Object.fromEntries(crew.map((c) => [c.id, c])), [crew]);
   const openAssignmentByCrew = useMemo(() => {
@@ -81,9 +92,10 @@ export default function RosterBoard({
   const countForSite = (siteId: string | null) =>
     crew.filter((c) => (localSiteByCrew[c.id] ?? null) === siteId).length;
 
-  function moveCrew(crewId: string, newSiteId: string | null) {
+  function moveCrew(crewId: string, newSiteId: string | null, reason?: string) {
     const person = crewById[crewId];
     if (!person || !canManage) return;
+    if (newSiteId && !canEmergencyAssign) return;
     const previousSiteId = localSiteByCrew[crewId] ?? null;
     if (previousSiteId === newSiteId) return;
 
@@ -97,6 +109,7 @@ export default function RosterBoard({
         const fd = new FormData();
         fd.set("offshoreSiteId", newSiteId);
         fd.set("startDate", todayIso());
+        fd.set("reason", reason ?? "");
         res = await assignCrewToSite(crewId, fd);
       } else {
         const open = openAssignmentByCrew[crewId];
@@ -124,12 +137,13 @@ export default function RosterBoard({
     setBulkVessel(sites[0]?.id ?? "");
     setBulkStartDate(todayIso());
     setBulkSelected(new Set(crew.filter((c) => (localSiteByCrew[c.id] ?? null) === null).map((c) => c.id)));
+    setBulkReason("");
     setBulkOpen(true);
   }
 
   function submitBulk() {
     const ids = Array.from(bulkSelected);
-    if (!bulkVessel || ids.length === 0 || !canManage) return;
+    if (!bulkVessel || ids.length === 0 || !canEmergencyAssign || !bulkReason.trim()) return;
     const vessel = sites.find((s) => s.id === bulkVessel);
     const previous: Record<string, string | null> = {};
     ids.forEach((id) => (previous[id] = localSiteByCrew[id] ?? null));
@@ -148,7 +162,7 @@ export default function RosterBoard({
     setBulkOpen(false);
 
     startTransition(async () => {
-      const res = await bulkAssignCrew(ids, bulkVessel, bulkStartDate, null);
+      const res = await bulkAssignCrew(ids, bulkVessel, bulkStartDate, null, bulkReason.trim());
       setPendingIds((prev) => {
         const next = new Set(prev);
         ids.forEach((id) => next.delete(id));
@@ -204,7 +218,7 @@ export default function RosterBoard({
           style={{ borderColor: "var(--ch-line)" }}
         />
         <div className="flex-1" />
-        {canManage && (
+        {canEmergencyAssign && (
           <button onClick={openBulkModal} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">
             + Bulk assign
           </button>
@@ -221,7 +235,13 @@ export default function RosterBoard({
             {DOCUMENT_STATUS_LABELS[s]}
           </span>
         ))}
-        {canManage && activeTab === "board" && <span className="ml-auto">Drag a card to another vessel to reassign</span>}
+        {canManage && activeTab === "board" && (
+          <span className="ml-auto">
+            {canEmergencyAssign
+              ? "Drag a card to another vessel to reassign (emergency override — reason required)"
+              : "Drag a card to the bench to unassign — assigning to a vessel now happens through an approved mobilization"}
+          </span>
+        )}
       </div>
 
       {activeTab === "board" ? (
@@ -254,7 +274,12 @@ export default function RosterBoard({
                 onDragLeaveCol={() => setDragOverSite((s) => (s === site.id ? null : s))}
                 onDrop={(crewId) => {
                   setDragOverSite(null);
-                  moveCrew(crewId, site.id);
+                  if (!canEmergencyAssign) {
+                    setBgError("Direct assignment is a restricted emergency override — assign crew through an approved mobilization's boarding confirmation instead.");
+                    return;
+                  }
+                  setAssignReason("");
+                  setPendingAssign({ crewId, siteId: site.id });
                 }}
               />
             ))}
@@ -280,8 +305,24 @@ export default function RosterBoard({
           setStartDate={setBulkStartDate}
           selected={bulkSelected}
           setSelected={setBulkSelected}
+          reason={bulkReason}
+          setReason={setBulkReason}
           onCancel={() => setBulkOpen(false)}
           onSubmit={submitBulk}
+        />
+      )}
+
+      {pendingAssign && (
+        <AssignReasonModal
+          crewName={crewById[pendingAssign.crewId]?.fullName ?? "Crew member"}
+          siteName={sites.find((s) => s.id === pendingAssign.siteId)?.name ?? "vessel"}
+          reason={assignReason}
+          setReason={setAssignReason}
+          onCancel={() => setPendingAssign(null)}
+          onConfirm={() => {
+            moveCrew(pendingAssign.crewId, pendingAssign.siteId, assignReason.trim());
+            setPendingAssign(null);
+          }}
         />
       )}
 
@@ -444,6 +485,8 @@ function BulkAssignModal({
   setStartDate,
   selected,
   setSelected,
+  reason,
+  setReason,
   onCancel,
   onSubmit,
 }: {
@@ -456,6 +499,8 @@ function BulkAssignModal({
   setStartDate: (v: string) => void;
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
+  reason: string;
+  setReason: (v: string) => void;
   onCancel: () => void;
   onSubmit: () => void;
 }) {
@@ -483,7 +528,9 @@ function BulkAssignModal({
           Bulk assign crew
         </h3>
         <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
-          Select unassigned crew and put them on a vessel in one action.
+          Select unassigned crew and put them on a vessel in one action. This is a restricted
+          emergency override — normal assignment happens through an approved mobilization&rsquo;s
+          boarding confirmation, and every use here is logged.
         </p>
 
         <div className="mb-3">
@@ -544,14 +591,90 @@ function BulkAssignModal({
           </div>
         </div>
 
+        <div className="mb-1">
+          <label className="text-[11px] font-bold uppercase tracking-wide block mb-1" style={{ color: "var(--ch-sub)" }}>
+            Reason (required)
+          </label>
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why these crew members are being assigned directly, outside a mobilization"
+          />
+        </div>
+
         <div className="flex items-center gap-2 mt-4">
           <button
             onClick={onSubmit}
-            disabled={!vessel || selected.size === 0}
+            disabled={!vessel || selected.size === 0 || !reason.trim()}
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
             style={{ flex: 1 }}
           >
             Assign selected
+          </button>
+          <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssignReasonModal({
+  crewName,
+  siteName,
+  reason,
+  setReason,
+  onCancel,
+  onConfirm,
+}: {
+  crewName: string;
+  siteName: string;
+  reason: string;
+  setReason: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center p-4"
+      style={{ background: "rgba(15,23,42,0.35)" }}
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white rounded-xl border w-full max-w-sm p-5"
+        style={{ borderColor: "var(--ch-line)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-[15px] font-bold mb-0.5" style={{ color: "var(--ch-ink)" }}>
+          Assign {crewName} to {siteName}
+        </h3>
+        <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+          Direct assignment is a restricted emergency override — normal assignment happens
+          through an approved mobilization&rsquo;s boarding confirmation, and this use will be
+          logged.
+        </p>
+        <label className="text-[11px] font-bold uppercase tracking-wide block mb-1" style={{ color: "var(--ch-sub)" }}>
+          Reason (required)
+        </label>
+        <input
+          autoFocus
+          className="border rounded-lg px-3 py-2 text-sm w-full"
+          style={{ borderColor: "var(--ch-line)" }}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Why this crew member is being assigned directly, outside a mobilization"
+        />
+        <div className="flex items-center gap-2 mt-4">
+          <button
+            onClick={onConfirm}
+            disabled={!reason.trim()}
+            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            style={{ flex: 1 }}
+          >
+            Assign
           </button>
           <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>
             Cancel

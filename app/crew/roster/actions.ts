@@ -26,15 +26,26 @@ const revalidateDetail = (id: string) => revalidatePath(`/crew/profiles/${id}`);
 // per-crew profile page and the roster board's drag-and-drop use for a
 // single person). Same rule applies per crew member: close out whatever
 // open assignment they currently have, then open a new one.
+//
+// Phase 4: like assignCrewToSite, this is now the restricted emergency
+// path — normal assignment happens through an approved mobilization's
+// boarding confirmation — so it requires mobilization.emergency_override
+// on top of crew.manage, a reason, and logs each assignment to
+// manual_assignment_overrides.
 export async function bulkAssignCrew(
   crewIds: string[],
   offshoreSiteId: string,
   startDate: string,
-  notes: string | null
+  notes: string | null,
+  reason: string
 ) {
   if (crewIds.length === 0) return { error: "Select at least one crew member." };
   if (!offshoreSiteId) return { error: "Select a vessel." };
+  if (!reason?.trim()) return { error: "A reason is required for a direct (non-mobilization) assignment." };
   const { supabase, access, userId } = await requireCrewManage();
+  if (!can(access, "mobilization.emergency_override")) {
+    return { error: "Direct assignment is a restricted emergency override — you need that permission to use it. Assign crew through an approved mobilization instead." };
+  }
   const effectiveStartDate = startDate || new Date().toISOString().slice(0, 10);
 
   const failed: string[] = [];
@@ -48,16 +59,31 @@ export async function bulkAssignCrew(
       failed.push(crewId);
       continue;
     }
-    const { error: insertError } = await supabase.from("crew_assignments").insert({
+    const { data: assignment, error: insertError } = await supabase
+      .from("crew_assignments")
+      .insert({
+        org_id: access.orgId,
+        crew_id: crewId,
+        offshore_site_id: offshoreSiteId,
+        start_date: effectiveStartDate,
+        notes,
+        created_by: userId,
+        updated_by: userId,
+      })
+      .select("id")
+      .single();
+    if (insertError) {
+      failed.push(crewId);
+      continue;
+    }
+    await supabase.from("manual_assignment_overrides").insert({
       org_id: access.orgId,
       crew_id: crewId,
       offshore_site_id: offshoreSiteId,
-      start_date: effectiveStartDate,
-      notes,
+      crew_assignment_id: assignment?.id,
+      reason: reason.trim(),
       created_by: userId,
-      updated_by: userId,
     });
-    if (insertError) failed.push(crewId);
   }
 
   crewIds.forEach(revalidateDetail);
