@@ -38,9 +38,8 @@ export default async function AppShell({
   const access = await getEffectiveAccess(supabase, user.id);
   const companyName = access.companyName ?? "—";
 
-  const overviewItems: NavItem[] = [{ href: "/", key: "dashboard", label: "Dashboard" }];
-
   const complianceItems: NavItem[] = [
+    { href: "/", key: "dashboard", label: "Dashboard" },
     { href: "/actions", key: "actions", label: "Corrective Actions" },
   ];
   if (access.orgId) {
@@ -112,13 +111,12 @@ export default async function AppShell({
   }
 
   const navSections: NavSection[] = [
-    { title: "Overview", items: overviewItems },
-    { title: "Compliance & Inspections", items: complianceItems },
     { title: "Contracts & Projects", items: contractItems },
     { title: "Crew Matrix", items: crewItems },
     { title: "Mobilization", items: mobilizationItems },
     { title: "Materials", items: materialsItems },
     { title: "Operations", items: operationsItems },
+    { title: "Compliance & Inspections", items: complianceItems },
     { title: "Administration", items: adminItems },
   ].filter((section) => section.items.length > 0);
 

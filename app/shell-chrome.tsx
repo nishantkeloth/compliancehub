@@ -10,6 +10,7 @@
 // after, so there's no flash of the wrong active link or title.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSyncExternalStore } from "react";
 
 export type NavItem = { href: string; key: string; label: string };
 export type NavSection = { title: string; items: NavItem[] };
@@ -28,6 +29,66 @@ function matchNavItem(pathname: string, navSections: NavSection[]): NavItem | nu
     }
   }
   return best;
+}
+
+/* ---- Collapsed/expanded state for the nav tree ----
+ * Per-browser convenience kept in localStorage via useSyncExternalStore so
+ * the server render (nothing expanded except the active section) and the
+ * first client render agree, with no setState-in-effect. The section that
+ * contains the current page is always shown open, so the tree always
+ * reveals where you are; every other section remembers what you did.
+ */
+const STORAGE_KEY = "ch-nav-open";
+const listeners = new Set<() => void>();
+let cached: string | null = null;
+
+function readStore(): string {
+  if (cached !== null) return cached;
+  try {
+    cached = window.localStorage.getItem(STORAGE_KEY) ?? "{}";
+  } catch {
+    cached = "{}";
+  }
+  return cached;
+}
+function subscribe(cb: () => void) {
+  listeners.add(cb);
+  return () => listeners.delete(cb);
+}
+function writeStore(next: Record<string, boolean>) {
+  cached = JSON.stringify(next);
+  try {
+    window.localStorage.setItem(STORAGE_KEY, cached);
+  } catch {
+    /* private mode / blocked storage — state still lives in `cached` */
+  }
+  listeners.forEach((cb) => cb());
+}
+function useOpenSections(): [Record<string, boolean>, (title: string, open: boolean) => void] {
+  const raw = useSyncExternalStore(subscribe, readStore, () => "{}");
+  let parsed: Record<string, boolean> = {};
+  try {
+    parsed = JSON.parse(raw) as Record<string, boolean>;
+  } catch {
+    parsed = {};
+  }
+  const set = (title: string, open: boolean) => writeStore({ ...parsed, [title]: open });
+  return [parsed, set];
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      className="shrink-0 transition-transform"
+      style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+      aria-hidden
+    >
+      <path d="M3 1.5 L7 5 L3 8.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 export default function ShellChrome({
@@ -60,6 +121,8 @@ export default function ShellChrome({
   const matched = matchNavItem(pathname, navSections);
   const activeKey = active ?? matched?.key;
   const resolvedTitle = title ?? matched?.label ?? "";
+  const activeSection = navSections.find((s) => s.items.some((it) => it.key === activeKey))?.title;
+  const [openSections, setOpen] = useOpenSections();
 
   return (
     <div className="flex min-h-screen" style={{ background: "var(--ch-paper)" }}>
@@ -84,31 +147,48 @@ export default function ShellChrome({
           </div>
         </div>
 
-        <nav className="px-2.5 pt-3.5 flex-1 overflow-y-auto">
-          {navSections.map((section, i) => (
-            <div key={section.title} className={i === 0 ? "" : "mt-3.5"}>
-              <div
-                className="px-2.5 pb-1.5 text-[10.5px] font-bold tracking-wider uppercase"
-                style={{ color: "#5c6a82" }}
-              >
-                {section.title}
-              </div>
-              {section.items.map((item) => (
-                <Link
-                  key={item.key}
-                  href={item.href}
-                  className="flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-[13.5px] font-semibold mb-0.5"
-                  style={
-                    activeKey === item.key
-                      ? { background: "var(--ch-sidebar-active)", color: "#fff" }
-                      : { color: "#aeb9cc" }
-                  }
+        <nav className="px-2.5 pt-3 flex-1 overflow-y-auto">
+          {navSections.map((section, i) => {
+            const isActiveSection = section.title === activeSection;
+            const open = isActiveSection || (openSections[section.title] ?? false);
+            return (
+              <div key={section.title} className={i === 0 ? "" : "mt-1"}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(section.title, !open)}
+                  aria-expanded={open}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[11px] font-bold tracking-wider uppercase text-left"
+                  style={{ color: isActiveSection ? "#dfe6f0" : "#8a96ab" }}
                 >
-                  {item.label}
-                </Link>
-              ))}
-            </div>
-          ))}
+                  <Chevron open={open} />
+                  <span className="flex-1">{section.title}</span>
+                  {!open && (
+                    <span className="text-[10px] font-semibold normal-case tracking-normal" style={{ color: "#5c6a82" }}>
+                      {section.items.length}
+                    </span>
+                  )}
+                </button>
+                {open && (
+                  <div className="ml-[15px] pl-2 mb-1.5 border-l" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
+                    {section.items.map((item) => (
+                      <Link
+                        key={item.key}
+                        href={item.href}
+                        className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] font-semibold mb-0.5"
+                        style={
+                          activeKey === item.key
+                            ? { background: "var(--ch-sidebar-active)", color: "#fff" }
+                            : { color: "#aeb9cc" }
+                        }
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="border-t border-white/10 px-[18px] py-3.5">
