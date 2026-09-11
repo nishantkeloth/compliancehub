@@ -59,6 +59,9 @@ export default async function AppShell({
   if (can(access, "projects.view")) {
     contractItems.push({ href: "/projects", key: "projects", label: "Projects" });
   }
+  if (can(access, "crew.manage")) {
+    contractItems.push({ href: "/sites", key: "sites", label: "Offshore Sites" });
+  }
 
   const crewItems: NavItem[] = [];
   if (can(access, "crew.view")) {

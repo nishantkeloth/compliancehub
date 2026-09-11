@@ -27,7 +27,11 @@ function optStr(formData: FormData, key: string) {
   return v || null;
 }
 
-const revalidateSetup = () => revalidatePath("/crew/setup");
+const revalidateSetup = () => {
+  revalidatePath("/crew/setup");
+  // Offshore sites live on their own page but share these actions.
+  revalidatePath("/sites");
+};
 
 /* ---------------- Job roles ---------------- */
 

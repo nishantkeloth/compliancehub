@@ -29,9 +29,8 @@ function optStr(formData: FormData, key: string) {
 
 const revalidateClients = () => {
   revalidatePath("/crew/clients");
-  // Offshore Sites (Crew Setup) shows the client name next to each
-  // contractor in its dropdown, so keep that in sync too.
-  revalidatePath("/crew/setup");
+  // Offshore Sites picks from these in its dropdowns, so keep it in sync.
+  revalidatePath("/sites");
 };
 
 export async function createClient_(formData: FormData) {

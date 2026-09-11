@@ -36,8 +36,8 @@ function optNum(formData: FormData, key: string) {
 const revalidateProjects = (id?: string) => {
   revalidatePath("/projects");
   if (id) revalidatePath(`/projects/${id}`);
-  // Offshore Sites (Crew Setup) picks a project from a dropdown.
-  revalidatePath("/crew/setup");
+  // Offshore Sites picks from these in its dropdowns, so keep it in sync.
+  revalidatePath("/sites");
 };
 
 const PROJECT_STATUSES = ["planned", "mobilizing", "active", "demobilizing", "completed", "cancelled"] as const;

@@ -29,9 +29,8 @@ function optStr(formData: FormData, key: string) {
 
 const revalidateContractors = () => {
   revalidatePath("/crew/contractors");
-  // Offshore Sites (Crew Setup) picks a contractor from a dropdown, so
-  // keep that list in sync too.
-  revalidatePath("/crew/setup");
+  // Offshore Sites picks from these in its dropdowns, so keep it in sync.
+  revalidatePath("/sites");
 };
 
 export async function createContractor(formData: FormData) {
