@@ -104,6 +104,9 @@ export default async function AppShell({
   if (can(access, "team.manage_number_ranges")) {
     adminItems.push({ href: "/team/number-ranges", key: "number-ranges", label: "Number Ranges" });
   }
+  if (can(access, "ai.configure")) {
+    adminItems.push({ href: "/team/ai", key: "ai-settings", label: "AI Settings" });
+  }
 
   const navSections: NavSection[] = [
     { title: "Overview", items: overviewItems },

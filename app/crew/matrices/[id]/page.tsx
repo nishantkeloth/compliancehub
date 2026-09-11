@@ -46,6 +46,10 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       supabase.from("document_types").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     ]);
 
+  // Phase 9: AI review is offered unless the company has switched AI off.
+  const { data: aiSettings } = await supabase.from("ai_settings").select("ai_enabled").eq("org_id", access.orgId).maybeSingle();
+  const aiVisible = aiSettings?.ai_enabled ?? true;
+
   const lineIds = (lines ?? []).map((l) => l.id as string);
   const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }] = await Promise.all([
     lineIds.length
@@ -149,6 +153,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       canSubmit={can(access, "crew.matrix.submit")}
       canApproveInternal={can(access, "crew.matrix.approve_internal")}
       canApproveClient={can(access, "crew.matrix.approve_client")}
+      aiVisible={aiVisible}
     />
   );
 }

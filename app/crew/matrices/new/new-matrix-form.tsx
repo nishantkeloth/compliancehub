@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewMatrix, generateDraftFromManning } from "../actions";
+import AiGenerate from "./ai-generate";
 
 type Project = { id: string; project_name: string };
 type Site = { id: string; name: string; project_id: string | null };
@@ -12,9 +13,9 @@ const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
-type Mode = "blank" | "generate";
+type Mode = "blank" | "generate" | "ai";
 
-export default function NewMatrixForm({ projects, sites }: { projects: Project[]; sites: Site[] }) {
+export default function NewMatrixForm({ projects, sites, aiVisible }: { projects: Project[]; sites: Site[]; aiVisible: boolean }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [mode, setMode] = useState<Mode>("blank");
@@ -74,7 +75,7 @@ export default function NewMatrixForm({ projects, sites }: { projects: Project[]
   };
 
   return (
-    <div className={`${cardCls} p-5 max-w-2xl`} style={cardStyle}>
+    <div className={`${cardCls} p-5 ${mode === "ai" ? "max-w-5xl" : "max-w-2xl"}`} style={cardStyle}>
       <div className="flex gap-2 mb-5">
         <button
           type="button"
@@ -92,6 +93,16 @@ export default function NewMatrixForm({ projects, sites }: { projects: Project[]
         >
           Generate from manning requirements
         </button>
+        {aiVisible && (
+          <button
+            type="button"
+            onClick={() => setMode("ai")}
+            className="rounded-lg px-4 py-2 text-sm font-semibold border"
+            style={mode === "ai" ? { background: "var(--ch-navy-soft)", color: "var(--ch-navy)", borderColor: "var(--ch-navy-soft)" } : { borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+          >
+            ✦ Generate with AI
+          </button>
+        )}
       </div>
 
       {error && (
@@ -163,6 +174,14 @@ export default function NewMatrixForm({ projects, sites }: { projects: Project[]
             {submitting ? "Creating…" : "Create draft matrix"}
           </button>
         </>
+      ) : mode === "ai" ? (
+        <AiGenerate
+          key={`${projectId}-${offshoreSiteId}`}
+          projectId={projectId}
+          offshoreSiteId={offshoreSiteId}
+          projectName={projects.find((p) => p.id === projectId)?.project_name ?? ""}
+          siteName={sites.find((s) => s.id === offshoreSiteId)?.name ?? ""}
+        />
       ) : (
         <>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>

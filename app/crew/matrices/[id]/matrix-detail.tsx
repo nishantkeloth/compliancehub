@@ -17,6 +17,7 @@ import {
   createNewVersion,
 } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
+import AiReviewPanel from "./ai-review-panel";
 import LinesEditor, { type Line, type Ref } from "./lines-editor";
 
 type Matrix = {
@@ -58,6 +59,7 @@ export default function MatrixDetail({
   canSubmit,
   canApproveInternal,
   canApproveClient,
+  aiVisible = false,
 }: {
   matrix: Matrix;
   lines: Line[];
@@ -71,6 +73,7 @@ export default function MatrixDetail({
   canSubmit: boolean;
   canApproveInternal: boolean;
   canApproveClient: boolean;
+  aiVisible?: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -275,6 +278,7 @@ export default function MatrixDetail({
                   ))}
                 </ul>
               )}
+              {aiVisible && canManage && <AiReviewPanel crewMatrixId={matrix.id} isDraft={isDraft} />}
             </div>
           </div>
         ))}

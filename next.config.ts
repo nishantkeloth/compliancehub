@@ -20,6 +20,9 @@ const nextConfig: NextConfig = {
   // re-querying Supabase for it.
   experimental: {
     staleTimes: { dynamic: 30 },
+    // Phase 9: "Generate with AI" uploads source documents (PDF/DOCX/XLSX/images)
+    // through a server action. The default 1 MB body limit would reject them.
+    serverActions: { bodySizeLimit: "25mb" },
   },
 };
 
