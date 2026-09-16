@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useOptimistic } from "react";
 import { useRouter } from "next/navigation";
 import {
   createCrewMatrixLine,
@@ -428,9 +428,17 @@ function LineRequirements({
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const run = (fn: () => Promise<{ error?: string } | undefined>) => {
+  // `optimistic`, when passed, runs synchronously as the first thing inside
+  // the transition — so it must be the function that calls a useOptimistic
+  // setter. Keeping it inside the same transition as the async server call
+  // is what keeps the optimistic value on screen for the whole round trip
+  // instead of flashing back immediately (a transition that only wrapped
+  // the optimistic dispatch would settle right away, before the request
+  // even lands).
+  const run = (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void) => {
     setError(null);
     startTransition(async () => {
+      optimistic?.();
       const res = await fn();
       if (res?.error) {
         setError(res.error);
@@ -496,6 +504,33 @@ function SkillsPanel({
   );
 }
 
+type DocRow = Line["documents"][number];
+type DocOptimisticAction =
+  | { type: "add"; docTypeId: string }
+  | { type: "remove"; id: string }
+  | { type: "update"; id: string; patch: Partial<DocRow> };
+
+function docsOptimisticReducer(state: DocRow[], action: DocOptimisticAction): DocRow[] {
+  switch (action.type) {
+    case "add":
+      // Placeholder row shown instantly on click; the real row (with a
+      // real id and name) replaces it once the server call resolves and
+      // the parent refreshes — this optimistic copy never gets its name
+      // rendered on its own (the label comes from documentTypes, not
+      // this row), so a blank `name` here is fine.
+      return [
+        ...state,
+        { id: `optimistic-${action.docTypeId}`, document_type_id: action.docTypeId, name: "", minimum_remaining_validity_days: null, is_mandatory: true, waiver_permitted: false },
+      ];
+    case "remove":
+      return state.filter((d) => d.id !== action.id);
+    case "update":
+      return state.map((d) => (d.id === action.id ? { ...d, ...action.patch } : d));
+    default:
+      return state;
+  }
+}
+
 function DocumentsPanel({
   crewMatrixId,
   line,
@@ -507,9 +542,10 @@ function DocumentsPanel({
   line: Line;
   canEdit: boolean;
   documentTypes: Ref[];
-  run: (fn: () => Promise<{ error?: string } | undefined>) => void;
+  run: (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void) => void;
 }) {
-  const byTypeId = new Map(line.documents.map((d) => [d.document_type_id, d]));
+  const [optimisticDocs, applyOptimistic] = useOptimistic<DocRow[], DocOptimisticAction>(line.documents, docsOptimisticReducer);
+  const byTypeId = new Map(optimisticDocs.map((d) => [d.document_type_id, d]));
 
   const toggleSelected = (docTypeId: string, checked: boolean) => {
     if (checked) {
@@ -517,29 +553,44 @@ function DocumentsPanel({
       fd.set("documentTypeId", docTypeId);
       fd.set("minimumRemainingValidityDays", "");
       // Newly checked docs default to mandatory (matches addLineDocument's default).
-      run(() => addLineDocument(line.id, crewMatrixId, fd));
+      run(
+        () => addLineDocument(line.id, crewMatrixId, fd),
+        () => applyOptimistic({ type: "add", docTypeId })
+      );
     } else {
       const existing = byTypeId.get(docTypeId);
-      if (existing) run(() => removeLineDocument(existing.id, crewMatrixId));
+      if (existing) {
+        run(
+          () => removeLineDocument(existing.id, crewMatrixId),
+          () => applyOptimistic({ type: "remove", id: existing.id })
+        );
+      }
     }
   };
 
-  const toggleField = (doc: Line["documents"][number], field: "is_mandatory" | "waiver_permitted") => {
+  const toggleField = (doc: DocRow, field: "is_mandatory" | "waiver_permitted") => {
     const fd = new FormData();
     fd.set("minimumRemainingValidityDays", doc.minimum_remaining_validity_days?.toString() ?? "");
     const nextMandatory = field === "is_mandatory" ? !doc.is_mandatory : doc.is_mandatory;
     const nextWaiver = field === "waiver_permitted" ? !doc.waiver_permitted : doc.waiver_permitted;
     if (!nextMandatory) fd.set("isMandatory", "off");
     if (nextWaiver) fd.set("waiverPermitted", "on");
-    run(() => updateLineDocument(doc.id, crewMatrixId, fd));
+    run(
+      () => updateLineDocument(doc.id, crewMatrixId, fd),
+      () => applyOptimistic({ type: "update", id: doc.id, patch: { is_mandatory: nextMandatory, waiver_permitted: nextWaiver } })
+    );
   };
 
-  const updateValidityDays = (doc: Line["documents"][number], value: string) => {
+  const updateValidityDays = (doc: DocRow, value: string) => {
     const fd = new FormData();
     fd.set("minimumRemainingValidityDays", value);
     if (!doc.is_mandatory) fd.set("isMandatory", "off");
     if (doc.waiver_permitted) fd.set("waiverPermitted", "on");
-    run(() => updateLineDocument(doc.id, crewMatrixId, fd));
+    const parsed = value === "" ? null : Number(value);
+    run(
+      () => updateLineDocument(doc.id, crewMatrixId, fd),
+      () => applyOptimistic({ type: "update", id: doc.id, patch: { minimum_remaining_validity_days: Number.isNaN(parsed) ? null : parsed } })
+    );
   };
 
   return (
