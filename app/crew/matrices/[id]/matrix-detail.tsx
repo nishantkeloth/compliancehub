@@ -19,6 +19,7 @@ import {
 import { StatusPill } from "@/app/contracts/contracts-manager";
 import AiReviewPanel from "./ai-review-panel";
 import LinesEditor, { type Line, type Ref } from "./lines-editor";
+import StaffingPlanView from "./staffing-plan";
 
 type Matrix = {
   id: string;
@@ -77,7 +78,7 @@ export default function MatrixDetail({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [tab, setTab] = useState<"overview" | "lines" | "history" | "versions">("overview");
+  const [tab, setTab] = useState<"overview" | "lines" | "staffing" | "history" | "versions">("overview");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,6 +110,7 @@ export default function MatrixDetail({
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "lines", label: `Lines (${lines.length})` },
+    { key: "staffing", label: "Staffing Plan" },
     { key: "history", label: "Approval History" },
     { key: "versions", label: `Versions (${versions.length})` },
   ];
@@ -295,6 +297,8 @@ export default function MatrixDetail({
           documentTypes={documentTypes}
         />
       )}
+
+      {tab === "staffing" && <StaffingPlanView lines={lines} documentTypes={documentTypes} />}
 
       {tab === "history" && (
         <div className="space-y-2">
