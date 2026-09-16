@@ -585,21 +585,31 @@ function DocumentsPanel({
     );
   };
 
-  const updateValidityDays = (doc: DocRow, value: string) => {
-    const fd = new FormData();
-    fd.set("minimumRemainingValidityDays", value);
-    if (!doc.is_mandatory) fd.set("isMandatory", "off");
-    if (doc.waiver_permitted) fd.set("waiverPermitted", "on");
-    const parsed = value === "" ? null : Number(value);
-    run(
-      () => updateLineDocument(doc.id, crewMatrixId, fd),
-      () => applyOptimistic({ type: "update", id: doc.id, patch: { minimum_remaining_validity_days: Number.isNaN(parsed) ? null : parsed } })
-    );
+  // Adds every document type not yet on this line, and removes every one
+  // that is — both just replay toggleSelected per row, so each still goes
+  // through the same optimistic + server-action path as a manual click.
+  const selectAll = () => {
+    documentTypes.forEach((docType) => {
+      if (!byTypeId.has(docType.id)) toggleSelected(docType.id, true);
+    });
+  };
+  const deselectAll = () => {
+    documentTypes.forEach((docType) => {
+      if (byTypeId.has(docType.id)) toggleSelected(docType.id, false);
+    });
   };
 
   return (
     <div>
-      <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Required document types</div>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Required document types</div>
+        {canEdit && documentTypes.length > 0 && (
+          <div className="flex items-center gap-2">
+            <button onClick={selectAll} className="text-xs font-semibold ch-link-navy">Select all</button>
+            <button onClick={deselectAll} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Deselect all</button>
+          </div>
+        )}
+      </div>
       {documentTypes.length === 0 ? (
         <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types configured yet.</div>
       ) : (
@@ -620,23 +630,9 @@ function DocumentsPanel({
                 </label>
                 {doc &&
                   (canEdit ? (
-                    <>
-                      <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
-                        <input type="checkbox" checked={doc.is_mandatory} onChange={() => toggleField(doc, "is_mandatory")} /> Mandatory
-                      </label>
-                      <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
-                        <input type="checkbox" checked={doc.waiver_permitted} onChange={() => toggleField(doc, "waiver_permitted")} /> Waiver OK
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="Min. days valid"
-                        className={`${inputCls} w-32`}
-                        style={inputStyle}
-                        defaultValue={doc.minimum_remaining_validity_days ?? ""}
-                        onBlur={(e) => updateValidityDays(doc, e.target.value)}
-                      />
-                    </>
+                    <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                      <input type="checkbox" checked={doc.is_mandatory} onChange={() => toggleField(doc, "is_mandatory")} /> Mandatory
+                    </label>
                   ) : (
                     <span style={{ color: "var(--ch-sub)" }}>
                       {doc.is_mandatory ? "Mandatory" : "Optional"}
