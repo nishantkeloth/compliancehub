@@ -509,20 +509,19 @@ function DocumentsPanel({
   documentTypes: Ref[];
   run: (fn: () => Promise<{ error?: string } | undefined>) => void;
 }) {
-  const available = documentTypes.filter((d) => !line.documents.some((ld) => ld.document_type_id === d.id));
-  const [selected, setSelected] = useState(available[0]?.id ?? "");
-  const [validityDays, setValidityDays] = useState("");
-  const [mandatory, setMandatory] = useState(true);
-  const [waiver, setWaiver] = useState(false);
+  const byTypeId = new Map(line.documents.map((d) => [d.document_type_id, d]));
 
-  const add = () => {
-    if (!selected) return;
-    const fd = new FormData();
-    fd.set("documentTypeId", selected);
-    fd.set("minimumRemainingValidityDays", validityDays);
-    if (!mandatory) fd.set("isMandatory", "off");
-    if (waiver) fd.set("waiverPermitted", "on");
-    run(() => addLineDocument(line.id, crewMatrixId, fd));
+  const toggleSelected = (docTypeId: string, checked: boolean) => {
+    if (checked) {
+      const fd = new FormData();
+      fd.set("documentTypeId", docTypeId);
+      fd.set("minimumRemainingValidityDays", "");
+      // Newly checked docs default to mandatory (matches addLineDocument's default).
+      run(() => addLineDocument(line.id, crewMatrixId, fd));
+    } else {
+      const existing = byTypeId.get(docTypeId);
+      if (existing) run(() => removeLineDocument(existing.id, crewMatrixId));
+    }
   };
 
   const toggleField = (doc: Line["documents"][number], field: "is_mandatory" | "waiver_permitted") => {
@@ -535,46 +534,64 @@ function DocumentsPanel({
     run(() => updateLineDocument(doc.id, crewMatrixId, fd));
   };
 
+  const updateValidityDays = (doc: Line["documents"][number], value: string) => {
+    const fd = new FormData();
+    fd.set("minimumRemainingValidityDays", value);
+    if (!doc.is_mandatory) fd.set("isMandatory", "off");
+    if (doc.waiver_permitted) fd.set("waiverPermitted", "on");
+    run(() => updateLineDocument(doc.id, crewMatrixId, fd));
+  };
+
   return (
     <div>
       <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Required document types</div>
-      <div className="space-y-1.5 mb-2">
-        {line.documents.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>None yet.</div>}
-        {line.documents.map((d) => (
-          <div key={d.id} className="flex items-center gap-2 flex-wrap text-xs">
-            <span className="rounded-full border px-2.5 py-1" style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}>{d.name}</span>
-            {d.minimum_remaining_validity_days != null && <span style={{ color: "var(--ch-sub)" }}>min. {d.minimum_remaining_validity_days}d remaining</span>}
-            {canEdit ? (
-              <>
-                <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
-                  <input type="checkbox" checked={d.is_mandatory} onChange={() => toggleField(d, "is_mandatory")} /> Mandatory
+      {documentTypes.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types configured yet.</div>
+      ) : (
+        <div className="space-y-1 max-h-72 overflow-y-auto pr-1 rounded-lg border p-2" style={{ borderColor: "var(--ch-line)" }}>
+          {documentTypes.map((docType) => {
+            const doc = byTypeId.get(docType.id);
+            const selected = !!doc;
+            return (
+              <div key={docType.id} className="flex items-center gap-3 flex-wrap text-xs py-1">
+                <label className="flex items-center gap-2 min-w-[190px]" style={{ color: "var(--ch-ink)" }}>
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    disabled={!canEdit}
+                    onChange={(e) => toggleSelected(docType.id, e.target.checked)}
+                  />
+                  <span className={selected ? "font-semibold" : ""}>{docType.name}</span>
                 </label>
-                <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
-                  <input type="checkbox" checked={d.waiver_permitted} onChange={() => toggleField(d, "waiver_permitted")} /> Waiver OK
-                </label>
-                <button onClick={() => run(() => removeLineDocument(d.id, crewMatrixId))} className="font-bold" style={{ color: "var(--ch-fail)" }}>✕</button>
-              </>
-            ) : (
-              <span style={{ color: "var(--ch-sub)" }}>{d.is_mandatory ? "Mandatory" : "Optional"}{d.waiver_permitted ? " · waiver OK" : ""}</span>
-            )}
-          </div>
-        ))}
-      </div>
-      {canEdit && available.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <select className={inputCls} style={inputStyle} value={selected} onChange={(e) => setSelected(e.target.value)}>
-            {available.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
-          <input type="number" min="0" placeholder="Min. days valid" className={`${inputCls} w-32`} style={inputStyle} value={validityDays} onChange={(e) => setValidityDays(e.target.value)} />
-          <label className="flex items-center gap-1 text-xs" style={{ color: "var(--ch-sub)" }}>
-            <input type="checkbox" checked={mandatory} onChange={(e) => setMandatory(e.target.checked)} /> Mandatory
-          </label>
-          <label className="flex items-center gap-1 text-xs" style={{ color: "var(--ch-sub)" }}>
-            <input type="checkbox" checked={waiver} onChange={(e) => setWaiver(e.target.checked)} /> Waiver OK
-          </label>
-          <button onClick={add} className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold">Add</button>
+                {doc &&
+                  (canEdit ? (
+                    <>
+                      <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                        <input type="checkbox" checked={doc.is_mandatory} onChange={() => toggleField(doc, "is_mandatory")} /> Mandatory
+                      </label>
+                      <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                        <input type="checkbox" checked={doc.waiver_permitted} onChange={() => toggleField(doc, "waiver_permitted")} /> Waiver OK
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="Min. days valid"
+                        className={`${inputCls} w-32`}
+                        style={inputStyle}
+                        defaultValue={doc.minimum_remaining_validity_days ?? ""}
+                        onBlur={(e) => updateValidityDays(doc, e.target.value)}
+                      />
+                    </>
+                  ) : (
+                    <span style={{ color: "var(--ch-sub)" }}>
+                      {doc.is_mandatory ? "Mandatory" : "Optional"}
+                      {doc.waiver_permitted ? " · waiver OK" : ""}
+                      {doc.minimum_remaining_validity_days != null ? ` · min. ${doc.minimum_remaining_validity_days}d remaining` : ""}
+                    </span>
+                  ))}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
