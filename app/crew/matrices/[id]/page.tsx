@@ -43,7 +43,12 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
       supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
       supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
-      supabase.from("document_types").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
+      supabase
+        .from("document_types")
+        .select("id, name, category, warning_threshold_days, tracks_number")
+        .eq("org_id", access.orgId)
+        .eq("is_active", true)
+        .order("name"),
     ]);
 
   // Phase 9: AI review is offered unless the company has switched AI off.
@@ -68,6 +73,89 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       ? supabase.from("crew_matrix_line_client_requirements").select("id, line_id, requirement_text, is_mandatory").in("line_id", lineIds)
       : Promise.resolve({ data: [] }),
   ]);
+
+  // Staffing Plan (real crew, by rank): who's currently assigned to this
+  // matrix's site, matched to a line by primary_job_role_id, with their
+  // actual document values for whichever document types the matrix
+  // actually requires (kept to that set, not every org document type, to
+  // avoid an expensive fetch of irrelevant records).
+  const lineJobRoleIds = Array.from(new Set((lines ?? []).map((l) => l.job_role_id as string)));
+  const usedDocTypeIds = Array.from(new Set((lineDocuments ?? []).map((d) => d.document_type_id as string)));
+
+  const [{ data: siteAssignments }, { data: fieldDefs }] = await Promise.all([
+    supabase
+      .from("crew_assignments")
+      .select("crew_id")
+      .eq("org_id", access.orgId)
+      .eq("offshore_site_id", matrix.offshore_site_id)
+      .is("end_date", null),
+    supabase
+      .from("document_custom_field_definitions")
+      .select("id, label, field_key, applies_to_document_type_id")
+      .eq("org_id", access.orgId)
+      .eq("is_active", true),
+  ]);
+
+  const assignedCrewIds = Array.from(new Set((siteAssignments ?? []).map((a) => a.crew_id as string)));
+
+  const { data: matchedCrew } =
+    assignedCrewIds.length && lineJobRoleIds.length
+      ? await supabase
+          .from("crew_profiles")
+          .select("id, full_name, nationality, primary_job_role_id")
+          .eq("org_id", access.orgId)
+          .eq("employment_status", "active")
+          .in("id", assignedCrewIds)
+          .in("primary_job_role_id", lineJobRoleIds)
+      : { data: [] };
+
+  const matchedCrewIds = (matchedCrew ?? []).map((c) => c.id as string);
+
+  const { data: crewDocs } =
+    matchedCrewIds.length && usedDocTypeIds.length
+      ? await supabase
+          .from("crew_documents")
+          .select("crew_id, document_type_id, document_number, issue_date, expiry_date, custom_fields, created_at")
+          .eq("org_id", access.orgId)
+          .in("crew_id", matchedCrewIds)
+          .in("document_type_id", usedDocTypeIds)
+          .order("created_at", { ascending: false })
+      : { data: [] };
+
+  // Keep only the most recent crew_documents row per (crew_id, document_type_id).
+  const latestDocByCrewAndType = new Map<
+    string,
+    { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }
+  >();
+  for (const d of crewDocs ?? []) {
+    const key = `${d.crew_id}:${d.document_type_id}`;
+    if (!latestDocByCrewAndType.has(key)) {
+      latestDocByCrewAndType.set(key, {
+        document_number: d.document_number as string | null,
+        issue_date: d.issue_date as string | null,
+        expiry_date: d.expiry_date as string | null,
+        custom_fields: (d.custom_fields as Record<string, unknown> | null) ?? null,
+      });
+    }
+  }
+
+  const staffingCrew = (matchedCrew ?? []).map((c) => {
+    const documents: Record<
+      string,
+      { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }
+    > = {};
+    for (const docTypeId of usedDocTypeIds) {
+      const entry = latestDocByCrewAndType.get(`${c.id}:${docTypeId}`);
+      if (entry) documents[docTypeId] = entry;
+    }
+    return {
+      crew_id: c.id as string,
+      full_name: c.full_name as string,
+      nationality: c.nationality as string | null,
+      job_role_id: c.primary_job_role_id as string,
+      documents,
+    };
+  });
 
   const project = (Array.isArray(matrix.projects) ? matrix.projects[0] : matrix.projects) as { project_name?: string } | null;
   const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as { name?: string } | null;
@@ -149,6 +237,13 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       skills={skills ?? []}
       rotationTemplates={rotationTemplates ?? []}
       documentTypes={documentTypes ?? []}
+      staffingCrew={staffingCrew}
+      customFieldDefinitions={(fieldDefs ?? []).map((f) => ({
+        id: f.id as string,
+        label: f.label as string,
+        field_key: f.field_key as string,
+        applies_to_document_type_id: f.applies_to_document_type_id as string | null,
+      }))}
       canManage={can(access, "crew.matrix.manage")}
       canSubmit={can(access, "crew.matrix.submit")}
       canApproveInternal={can(access, "crew.matrix.approve_internal")}

@@ -20,6 +20,10 @@ import {
 } from "../actions";
 
 export type Ref = { id: string; name: string };
+// Document types as needed by the Staffing Plan tab (status computation +
+// number display), a superset of Ref — passing this where Ref[] is
+// expected (LinesEditor) is fine, TS structurally allows the wider shape.
+export type DocTypeRef = Ref & { category: string | null; warning_threshold_days: number | null; tracks_number: boolean };
 export type Line = {
   id: string;
   line_number: number;

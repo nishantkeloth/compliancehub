@@ -18,8 +18,8 @@ import {
 } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
 import AiReviewPanel from "./ai-review-panel";
-import LinesEditor, { type Line, type Ref } from "./lines-editor";
-import StaffingPlanView from "./staffing-plan";
+import LinesEditor, { type Line, type Ref, type DocTypeRef } from "./lines-editor";
+import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 
 type Matrix = {
   id: string;
@@ -56,6 +56,8 @@ export default function MatrixDetail({
   skills,
   rotationTemplates,
   documentTypes,
+  staffingCrew,
+  customFieldDefinitions,
   canManage,
   canSubmit,
   canApproveInternal,
@@ -69,7 +71,9 @@ export default function MatrixDetail({
   jobRoles: Ref[];
   skills: Ref[];
   rotationTemplates: Ref[];
-  documentTypes: Ref[];
+  documentTypes: DocTypeRef[];
+  staffingCrew: StaffingCrew[];
+  customFieldDefinitions: FieldDef[];
   canManage: boolean;
   canSubmit: boolean;
   canApproveInternal: boolean;
@@ -298,7 +302,9 @@ export default function MatrixDetail({
         />
       )}
 
-      {tab === "staffing" && <StaffingPlanView lines={lines} documentTypes={documentTypes} />}
+      {tab === "staffing" && (
+        <StaffingPlanView lines={lines} documentTypes={documentTypes} crew={staffingCrew} customFieldDefinitions={customFieldDefinitions} />
+      )}
 
       {tab === "history" && (
         <div className="space-y-2">
