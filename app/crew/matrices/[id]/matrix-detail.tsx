@@ -82,6 +82,10 @@ export default function MatrixDetail({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  // Separate transition for the Staffing Plan's own Regenerate button — kept
+  // apart from the general `run`/startTransition above so its "Regenerating…"
+  // state doesn't flicker on while an unrelated workflow action is pending.
+  const [staffingPending, startStaffingTransition] = useTransition();
   const [tab, setTab] = useState<"overview" | "lines" | "staffing" | "history" | "versions">("overview");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +147,19 @@ export default function MatrixDetail({
         return;
       }
       router.push("/crew/matrices");
+    });
+  };
+
+  // The Staffing Plan tab shows a server-fetched snapshot (crew_assignments /
+  // crew_documents / crew_profiles as of when this page loaded). Switching
+  // tabs is purely client-side state, so it never picks up documents or
+  // assignments that changed after the page loaded — e.g. someone just added
+  // crew_assignments or crew_documents elsewhere in the app. Regenerate
+  // re-runs the page's server component in place (router.refresh()) without
+  // losing the currently-selected tab or scroll position.
+  const regenerateStaffingPlan = () => {
+    startStaffingTransition(() => {
+      router.refresh();
     });
   };
 
@@ -303,7 +320,20 @@ export default function MatrixDetail({
       )}
 
       {tab === "staffing" && (
-        <StaffingPlanView lines={lines} documentTypes={documentTypes} crew={staffingCrew} customFieldDefinitions={customFieldDefinitions} />
+        <div>
+          <div className="flex items-center justify-end mb-2">
+            <button
+              onClick={regenerateStaffingPlan}
+              disabled={staffingPending}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+              title="Re-fetch crew assignments and documents for this staffing plan"
+            >
+              {staffingPending ? "Regenerating…" : "↻ Regenerate"}
+            </button>
+          </div>
+          <StaffingPlanView lines={lines} documentTypes={documentTypes} crew={staffingCrew} customFieldDefinitions={customFieldDefinitions} />
+        </div>
       )}
 
       {tab === "history" && (
