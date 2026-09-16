@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   updateCrewMatrixHeader,
@@ -81,12 +81,31 @@ export default function MatrixDetail({
   aiVisible?: boolean;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
   // Separate transition for the Staffing Plan's own Regenerate button — kept
   // apart from the general `run`/startTransition above so its "Regenerating…"
   // state doesn't flicker on while an unrelated workflow action is pending.
   const [staffingPending, startStaffingTransition] = useTransition();
-  const [tab, setTab] = useState<"overview" | "lines" | "staffing" | "history" | "versions">("overview");
+  type TabKey = "overview" | "lines" | "staffing" | "history" | "versions";
+  const VALID_TABS: TabKey[] = ["overview", "lines", "staffing", "history", "versions"];
+  // Regenerate calls router.refresh(), which re-suspends this page while the
+  // server component re-fetches — React remounts the client tree when that
+  // resolves, which would silently reset a plain useState("overview") back
+  // to the first tab (confirmed by testing: clicking Regenerate from
+  // Staffing Plan bounced the view back to Overview). Seeding from — and
+  // writing to — the `tab` URL param means the remounted component reads
+  // the same tab straight back out of the URL instead of losing it.
+  const tabFromUrl = searchParams.get("tab") as TabKey | null;
+  const [tab, setTabState] = useState<TabKey>(tabFromUrl && VALID_TABS.includes(tabFromUrl) ? tabFromUrl : "overview");
+  const setTab = (key: TabKey) => {
+    setTabState(key);
+    const params = new URLSearchParams(searchParams.toString());
+    if (key === "overview") params.delete("tab");
+    else params.set("tab", key);
+    const qs = params.toString();
+    router.replace(`/crew/matrices/${matrix.id}${qs ? `?${qs}` : ""}`, { scroll: false });
+  };
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
