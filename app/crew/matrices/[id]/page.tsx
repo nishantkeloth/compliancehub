@@ -157,6 +157,83 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     };
   });
 
+  // Staffing Plan — "Available candidates" view (pre-mobilization preview):
+  // crew matching one of this matrix's ranks who hold no active assignment
+  // anywhere in the company (org-wide, not just this site) and whose
+  // availability_date is today or earlier. Deliberately lighter than the
+  // Phase 3/4 candidate + readiness engine (no skills/experience/
+  // nationality/rest-period checks, no reservation) — this exists to
+  // answer "do we have enough free people for this rank" while planning,
+  // before a Mobilization Request is ever raised.
+  const { data: allActiveAssignments } = await supabase
+    .from("crew_assignments")
+    .select("crew_id")
+    .eq("org_id", access.orgId)
+    .is("end_date", null);
+  const assignedAnywhereCrewIds = new Set((allActiveAssignments ?? []).map((a) => a.crew_id as string));
+
+  const { data: roleMatchedCrew } =
+    lineJobRoleIds.length
+      ? await supabase
+          .from("crew_profiles")
+          .select("id, full_name, nationality, primary_job_role_id, availability_date")
+          .eq("org_id", access.orgId)
+          .eq("employment_status", "active")
+          .in("primary_job_role_id", lineJobRoleIds)
+      : { data: [] };
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const candidateCrewProfiles = (roleMatchedCrew ?? []).filter(
+    (c) => !assignedAnywhereCrewIds.has(c.id as string) && (!c.availability_date || (c.availability_date as string) <= todayStr)
+  );
+  const candidateCrewIds = candidateCrewProfiles.map((c) => c.id as string);
+
+  const { data: candidateDocs } =
+    candidateCrewIds.length && usedDocTypeIds.length
+      ? await supabase
+          .from("crew_documents")
+          .select("crew_id, document_type_id, document_number, issue_date, expiry_date, custom_fields, created_at")
+          .eq("org_id", access.orgId)
+          .in("crew_id", candidateCrewIds)
+          .in("document_type_id", usedDocTypeIds)
+          .order("created_at", { ascending: false })
+      : { data: [] };
+
+  const latestCandidateDocByCrewAndType = new Map<
+    string,
+    { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }
+  >();
+  for (const d of candidateDocs ?? []) {
+    const key = `${d.crew_id}:${d.document_type_id}`;
+    if (!latestCandidateDocByCrewAndType.has(key)) {
+      latestCandidateDocByCrewAndType.set(key, {
+        document_number: d.document_number as string | null,
+        issue_date: d.issue_date as string | null,
+        expiry_date: d.expiry_date as string | null,
+        custom_fields: (d.custom_fields as Record<string, unknown> | null) ?? null,
+      });
+    }
+  }
+
+  const candidateStaffingCrew = candidateCrewProfiles.map((c) => {
+    const documents: Record<
+      string,
+      { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }
+    > = {};
+    for (const docTypeId of usedDocTypeIds) {
+      const entry = latestCandidateDocByCrewAndType.get(`${c.id}:${docTypeId}`);
+      if (entry) documents[docTypeId] = entry;
+    }
+    return {
+      crew_id: c.id as string,
+      full_name: c.full_name as string,
+      nationality: c.nationality as string | null,
+      job_role_id: c.primary_job_role_id as string,
+      availability_date: c.availability_date as string | null,
+      documents,
+    };
+  });
+
   const project = (Array.isArray(matrix.projects) ? matrix.projects[0] : matrix.projects) as { project_name?: string } | null;
   const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as { name?: string } | null;
 
@@ -238,6 +315,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       rotationTemplates={rotationTemplates ?? []}
       documentTypes={documentTypes ?? []}
       staffingCrew={staffingCrew}
+      candidateStaffingCrew={candidateStaffingCrew}
       customFieldDefinitions={(fieldDefs ?? []).map((f) => ({
         id: f.id as string,
         label: f.label as string,

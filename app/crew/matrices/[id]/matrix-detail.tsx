@@ -57,6 +57,7 @@ export default function MatrixDetail({
   rotationTemplates,
   documentTypes,
   staffingCrew,
+  candidateStaffingCrew,
   customFieldDefinitions,
   canManage,
   canSubmit,
@@ -73,6 +74,7 @@ export default function MatrixDetail({
   rotationTemplates: Ref[];
   documentTypes: DocTypeRef[];
   staffingCrew: StaffingCrew[];
+  candidateStaffingCrew: StaffingCrew[];
   customFieldDefinitions: FieldDef[];
   canManage: boolean;
   canSubmit: boolean;
@@ -351,7 +353,13 @@ export default function MatrixDetail({
               {staffingPending ? "Regenerating…" : "↻ Regenerate"}
             </button>
           </div>
-          <StaffingPlanView lines={lines} documentTypes={documentTypes} crew={staffingCrew} customFieldDefinitions={customFieldDefinitions} />
+          <StaffingPlanView
+            lines={lines}
+            documentTypes={documentTypes}
+            crew={staffingCrew}
+            candidateCrew={candidateStaffingCrew}
+            customFieldDefinitions={customFieldDefinitions}
+          />
         </div>
       )}
 
