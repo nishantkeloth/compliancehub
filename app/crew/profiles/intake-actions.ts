@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { ModelMessage } from "ai";
+import sharp from "sharp";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { loadAiContext, runStructured, resolveChain } from "@/lib/ai/router";
@@ -80,6 +81,7 @@ export type MappedIntakeProposal = {
   home_country: string | null;
   job_role: Mapping | null;
   documents: MappedIntakeDocument[];
+  photoUrl: string | null;
   name_mismatch_warning: string | null;
   assumptions: string[];
   duplicates: DuplicateCandidate[];
@@ -115,7 +117,8 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const textParts = [pasted, ...extracted.filter((e) => e.text).map((e) => `## ${e.filename}\n${e.text}`)].filter(Boolean);
   const documentText = textParts.length ? textParts.join("\n\n") : null;
 
-  const prompt = intakePrompt({ masterData: { documentTypeNames: documentTypes.map((d) => d.name), jobRoleNames: jobRoles.map((j) => j.name) }, documentText, hasAttachedFiles: needsDocuments });
+  const attachedImageFilenames = extracted.filter((e) => e.mediaType.startsWith("image/")).map((e) => e.filename);
+  const prompt = intakePrompt({ masterData: { documentTypeNames: documentTypes.map((d) => d.name), jobRoleNames: jobRoles.map((j) => j.name) }, documentText, hasAttachedFiles: needsDocuments, attachedImageFilenames });
   const fileParts = extracted
     .filter((e) => e.needsModelVision)
     .map((e) => ({ type: "file" as const, data: e.bytes, mediaType: e.mediaType, filename: e.filename }));
@@ -151,6 +154,44 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       if (!upErr) paths.push(path);
     }
     if (paths.length) await supabase.from("crew_intake_generations").update({ source_document_paths: paths }).eq("id", generationId);
+  }
+
+  // Auto-crop the headshot the model located in one of the attached
+  // IMAGE files (a PDF page isn't raster bytes we can crop with sharp —
+  // if the model pointed at a PDF, or at no file at all, we just don't
+  // propose a photo; that's a normal outcome, not an error). Failure
+  // anywhere in this block is non-fatal — a bad crop shouldn't sink the
+  // whole intake, it just means no photo gets proposed.
+  let photoUrl: string | null = null;
+  const photoProposal = result.object.photo;
+  if (photoProposal) {
+    const source = extracted.find((e) => e.filename === photoProposal.source_filename && e.mediaType.startsWith("image/"));
+    if (source) {
+      try {
+        const meta = await sharp(Buffer.from(source.bytes)).metadata();
+        const w = meta.width ?? 0;
+        const h = meta.height ?? 0;
+        if (w > 0 && h > 0) {
+          const left = Math.min(w - 1, Math.max(0, Math.round(photoProposal.x * w)));
+          const top = Math.min(h - 1, Math.max(0, Math.round(photoProposal.y * h)));
+          const cropW = Math.max(1, Math.min(w - left, Math.round(photoProposal.width * w)));
+          const cropH = Math.max(1, Math.min(h - top, Math.round(photoProposal.height * h)));
+          const cropped = await sharp(Buffer.from(source.bytes))
+            .extract({ left, top, width: cropW, height: cropH })
+            .resize(480, 480, { fit: "inside", withoutEnlargement: true })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+          const photoPath = `${orgId}/${generationId}/photo.jpg`;
+          const { error: photoUpErr } = await supabase.storage.from("crew-photos").upload(photoPath, cropped, { contentType: "image/jpeg", upsert: true });
+          if (!photoUpErr) {
+            const { data: pub } = supabase.storage.from("crew-photos").getPublicUrl(photoPath);
+            photoUrl = pub.publicUrl;
+          }
+        }
+      } catch {
+        // Leave photoUrl null — see comment above.
+      }
+    }
   }
 
   // Duplicate check — plain name-similarity against existing profiles in
@@ -189,6 +230,7 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       home_country: result.object.home_country,
       job_role: jobRoleMapping,
       documents,
+      photoUrl,
       name_mismatch_warning: result.object.name_mismatch_warning,
       assumptions: result.object.assumptions,
       duplicates,
@@ -214,6 +256,7 @@ type SaveIntakePayload = {
   phone: string | null;
   email: string | null;
   homeCountry: string | null;
+  photoUrl: string | null;
   documents: { documentTypeId: string | null; newName: string | null; alias: string | null; documentNumber: string | null; issueDate: string | null; expiryDate: string | null }[];
 };
 
@@ -261,6 +304,7 @@ export async function saveCrewIntake(generationId: string, payloadJson: string) 
         org_id: orgId,
         full_name: payload.fullName.trim(),
         employee_code: payload.employeeCode,
+        photo_url: payload.photoUrl,
         primary_job_role_id: jobRoleId,
         nationality: payload.nationality,
         date_of_birth: payload.dateOfBirth,

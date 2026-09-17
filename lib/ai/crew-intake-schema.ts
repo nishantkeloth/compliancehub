@@ -24,6 +24,20 @@ export const crewIntakeDocumentSchema = z.object({
   source_excerpt: z.string().nullable().default(null),
 });
 
+// Where the person's headshot sits within one of the attached IMAGE files
+// (not a PDF — we only have raster bytes to crop from for a real image
+// upload; see the app-side handling in intake-actions.ts). Coordinates
+// are fractions (0-1) of that image's own width/height, top-left origin,
+// so the app can convert to pixels once it knows the image's real size.
+export const crewIntakePhotoSchema = z.object({
+  source_filename: z.string().min(1),
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+export type CrewIntakePhotoProposal = z.infer<typeof crewIntakePhotoSchema>;
+
 export const crewIntakeSchema = z.object({
   full_name: z.string().nullable().default(null),
   date_of_birth: z.string().nullable().default(null),
@@ -34,6 +48,7 @@ export const crewIntakeSchema = z.object({
   home_country: z.string().nullable().default(null),
   job_role_name: z.string().nullable().default(null),
   documents: z.array(crewIntakeDocumentSchema).default([]),
+  photo: crewIntakePhotoSchema.nullable().default(null),
   name_mismatch_warning: z.string().nullable().default(null),
   assumptions: z.array(z.string()).default([]),
 });
@@ -48,15 +63,17 @@ Rules:
 - Every entry in documents must carry source_excerpt = the text/label in the source that justifies it.
 - document_type_name should use the clearest industry-standard name for the certificate/ID (e.g. "Passport", "Seaman's Book", "STCW Basic Safety Training", "Medical Certificate", "Yellow Fever Vaccination Certificate").
 - If the documents show more than one name for the same person (e.g. CV vs passport spelling, or a different name entirely), set name_mismatch_warning describing the discrepancy in one sentence; otherwise leave it null.
-- job_role_name is the person's rank/position as stated on the CV (e.g. "Camp Boss", "Chief Steward") — leave null if not stated.`;
+- job_role_name is the person's rank/position as stated on the CV (e.g. "Camp Boss", "Chief Steward") — leave null if not stated.
+- If one of the attached IMAGE files (not a PDF) shows the person's passport-style photo (headshot), set "photo" to source_filename = that exact attached image's filename, plus a bounding box (x, y, width, height — each a fraction from 0 to 1 of that image's own width/height, measured from its top-left corner) tightly cropped around just the face and shoulders, not the whole passport page or ID card. If no such photo is visible, or it only appears in a PDF, leave "photo" null — do not guess coordinates.`;
 
-export function intakePrompt(args: { masterData: { documentTypeNames: string[]; jobRoleNames: string[] }; documentText: string | null; hasAttachedFiles: boolean }) {
-  const { masterData, documentText, hasAttachedFiles } = args;
+export function intakePrompt(args: { masterData: { documentTypeNames: string[]; jobRoleNames: string[] }; documentText: string | null; hasAttachedFiles: boolean; attachedImageFilenames: string[] }) {
+  const { masterData, documentText, hasAttachedFiles, attachedImageFilenames } = args;
   return [
     "TASK: Extract this person's identity details and every certificate/ID shown into the crew intake schema.",
     "",
     `Document/certificate types already configured in this company (prefer these exact names when they fit): ${masterData.documentTypeNames.join("; ") || "(none)"}`,
     `Job roles configured in this company (prefer these exact names when they fit): ${masterData.jobRoleNames.join("; ") || "(none)"}`,
+    attachedImageFilenames.length ? `Attached image files (use these exact filenames for "photo".source_filename): ${attachedImageFilenames.join(", ")}` : "",
     "",
     hasAttachedFiles ? "The source document(s) are attached as file(s)." : "",
     documentText ? `SOURCE DOCUMENT TEXT:\n"""\n${documentText}\n"""` : "",

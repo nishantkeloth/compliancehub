@@ -419,7 +419,13 @@ function GeneralForm({
           <option value="terminated">Terminated</option>
         </select>
       </div>
-      <input className={`${inputCls} w-full mb-4`} style={inputStyle} placeholder="Photo URL (optional)" value={photoUrl} onChange={(e) => { setPhotoUrl(e.target.value); setSaved(false); }} disabled={disabled} />
+      <div className="flex items-center gap-3 mb-4">
+        {photoUrl.trim() ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={photoUrl.trim()} alt="Profile photo" className="w-12 h-12 rounded-lg object-cover border flex-shrink-0" style={{ borderColor: "var(--ch-line)" }} />
+        ) : null}
+        <input className={`${inputCls} w-full`} style={inputStyle} placeholder="Photo URL (optional)" value={photoUrl} onChange={(e) => { setPhotoUrl(e.target.value); setSaved(false); }} disabled={disabled} />
+      </div>
 
       <div className={labelCls} style={labelStyle}>Personal</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">

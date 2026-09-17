@@ -72,6 +72,7 @@ export default function IntakePanel() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [homeCountry, setHomeCountry] = useState("");
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [documents, setDocuments] = useState<EditDocument[]>([]);
   const [resolved, setResolved] = useState<Record<string, boolean>>({});
   const [duplicatesAck, setDuplicatesAck] = useState(false);
@@ -113,6 +114,7 @@ export default function IntakePanel() {
       setPhone(p.phone ?? "");
       setEmail(p.email ?? "");
       setHomeCountry(p.home_country ?? "");
+      setPhotoUrl(p.photoUrl ?? null);
       setDocuments(toEditDocuments(p));
       setResolved({});
       setDuplicatesAck(false);
@@ -142,6 +144,7 @@ export default function IntakePanel() {
       phone: phone.trim() || null,
       email: email.trim() || null,
       homeCountry: homeCountry.trim() || null,
+      photoUrl,
       documents: documents.map((d) => ({
         documentTypeId: d.create ? null : d.id,
         newName: d.create ? d.name : null,
@@ -168,6 +171,7 @@ export default function IntakePanel() {
     setDocuments([]);
     setFiles([]);
     setPasted("");
+    setPhotoUrl(null);
   };
 
   const close = () => {
@@ -211,26 +215,6 @@ export default function IntakePanel() {
               accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg"
               className={`${inputCls} w-full mt-1`}
               style={inputStyle}
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setFiles((fs) => [...fs, ...picked]);
-                e.target.value = "";
-              }}
-            />
-          </label>
-          {/* accept + capture="environment" opens the rear camera directly on a
-              phone/tablet browser instead of the file picker — desktop browsers
-              just ignore `capture` and fall back to their normal file dialog. */}
-          <label
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold border cursor-pointer mb-2"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
-          >
-            📷 Take a photo
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
                 if (picked.length) setFiles((fs) => [...fs, ...picked]);
@@ -314,6 +298,34 @@ export default function IntakePanel() {
               ))}
             </div>
           )}
+
+          <div className="flex items-start gap-3 mb-3">
+            {photoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={photoUrl} alt="Detected profile photo" className="w-20 h-20 rounded-lg object-cover border flex-shrink-0" style={{ borderColor: "var(--ch-line)" }} />
+            ) : (
+              <div className="w-20 h-20 rounded-lg border flex items-center justify-center text-[10px] text-center flex-shrink-0" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
+                No photo detected
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <label className={`${lbl} block`} style={lblStyle}>
+                Profile photo URL
+                <input
+                  className={`${inputCls} w-full mt-1`}
+                  style={inputStyle}
+                  value={photoUrl ?? ""}
+                  onChange={(e) => setPhotoUrl(e.target.value.trim() || null)}
+                  placeholder="Auto-detected from an attached passport/ID photo"
+                />
+              </label>
+              {photoUrl && (
+                <button onClick={() => setPhotoUrl(null)} className="text-xs font-semibold mt-1" style={{ color: "var(--ch-fail)" }}>
+                  Clear photo
+                </button>
+              )}
+            </div>
+          </div>
 
           <div className="grid gap-3 sm:grid-cols-2 mb-3">
             <label className={lbl} style={lblStyle}>

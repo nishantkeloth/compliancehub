@@ -35,7 +35,7 @@ export default async function CrewProfilesPage({
 
   let query = supabase
     .from("crew_profiles")
-    .select("id, employee_code, full_name, employment_status, nationality, availability_date, job_roles(name)")
+    .select("id, employee_code, full_name, employment_status, nationality, availability_date, photo_url, job_roles(name)")
     .eq("org_id", access.orgId)
     .order("full_name");
 
@@ -113,14 +113,20 @@ export default async function CrewProfilesPage({
               style={{ borderColor: "var(--ch-line)" }}
             >
               <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <div className="font-semibold text-sm" style={{ color: "var(--ch-ink)" }}>
-                    {c.full_name}
-                    {c.employee_code && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{c.employee_code}</span>}
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: "var(--ch-sub)" }}>
-                    {role?.name ?? "No role set"} {c.nationality ? `· ${c.nationality}` : ""}
-                    {c.availability_date ? ` · Available ${c.availability_date}` : ""}
+                <div className="flex items-center gap-3">
+                  {c.photo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={c.photo_url} alt="" className="w-9 h-9 rounded-full object-cover border flex-shrink-0" style={{ borderColor: "var(--ch-line)" }} />
+                  ) : null}
+                  <div>
+                    <div className="font-semibold text-sm" style={{ color: "var(--ch-ink)" }}>
+                      {c.full_name}
+                      {c.employee_code && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{c.employee_code}</span>}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: "var(--ch-sub)" }}>
+                      {role?.name ?? "No role set"} {c.nationality ? `· ${c.nationality}` : ""}
+                      {c.availability_date ? ` · Available ${c.availability_date}` : ""}
+                    </div>
                   </div>
                 </div>
                 <span
