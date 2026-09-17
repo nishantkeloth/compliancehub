@@ -1,5 +1,5 @@
 import "server-only";
-import { generateObject, type LanguageModel, type ModelMessage } from "ai";
+import { generateObject, generateText, stepCountIs, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -26,7 +26,12 @@ import { decryptSecret } from "./crypto";
 // ai_usage_log.
 
 export type Provider = "anthropic" | "openai" | "google" | "groq" | "openrouter" | "ollama";
-export type AiTask = "matrix_from_document" | "matrix_from_context" | "matrix_review";
+// "crew_assistant" (Phase 11 — conversational side panel) intentionally has no
+// row in ai_task_settings: that table's `task` column is check-constrained to
+// the three matrix tasks above, so this task always falls back to the
+// company's default routing_mode. It logs to ai_usage_log fine (that table's
+// `task` column is plain text, unconstrained).
+export type AiTask = "matrix_from_document" | "matrix_from_context" | "matrix_review" | "crew_assistant";
 
 export type AiModelRow = {
   id: string;
@@ -261,4 +266,86 @@ export async function runStructured<S extends z.ZodTypeAny>(
 
 export function modelLabel(m: AiModelRow) {
   return `${m.display_name} · ${m.cost_tier}`;
+}
+
+export type RunAgentResult = {
+  text: string;
+  model: AiModelRow;
+  attempts: { model: string; outcome: string }[];
+  usage: { inputTokens: number; outputTokens: number; estimatedCost: number };
+};
+
+// Phase 11 — conversational crew/compliance assistant. Same chain-walking,
+// fallback and usage-logging shell as runStructured() above, but calls
+// generateText() with a tool set instead of generateObject() with a schema:
+// this task is open-ended chat with live data lookups (tool calls), not a
+// single structured extraction, so it can't reuse runStructured() directly.
+// There's no schema-retry branch here — a tool-calling turn either produces
+// text or it doesn't — but the quota/auth fallback-to-next-model behaviour
+// is identical.
+export async function runAgent(
+  supabase: Supa,
+  ctx: AiContext,
+  args: { task: AiTask; system: string; messages: ModelMessage[]; tools: ToolSet; userId: string; maxSteps?: number }
+): Promise<RunAgentResult | { error: string; attempts: { model: string; outcome: string }[] }> {
+  if (!ctx.settings.ai_enabled) return { error: "AI features are disabled for this company (Settings → AI).", attempts: [] };
+  const { chain, skipped, mode } = resolveChain(ctx, args.task, false);
+  const attempts: { model: string; outcome: string }[] = skipped.map((s) => ({ model: s.model.display_name, outcome: `skipped — ${s.skipReason}` }));
+  if (chain.length === 0) {
+    const why = skipped.length ? skipped.map((s) => `${s.model.display_name}: ${s.skipReason}`).join("; ") : "no enabled models configured";
+    const hint = mode === "free_only" && skipped.some((s) => s.skipReason?.includes("allowance")) ? " Free quota is used up — an admin can switch routing to free-then-paid under Settings → AI." : "";
+    return { error: `No AI model is available for this task (${why}).${hint}`, attempts };
+  }
+
+  for (const m of chain) {
+    const started = Date.now();
+    try {
+      const model = buildModel(ctx, m);
+      const result = await generateText({
+        model,
+        system: args.system,
+        messages: args.messages,
+        tools: args.tools,
+        stopWhen: stepCountIs(args.maxSteps ?? 6),
+        abortSignal: AbortSignal.timeout(120_000),
+      });
+      const inputTokens = result.usage?.inputTokens ?? 0;
+      const outputTokens = result.usage?.outputTokens ?? 0;
+      const estimatedCost = m.cost_tier === "paid" ? (inputTokens / 1000) * m.input_cost_per_1k + (outputTokens / 1000) * m.output_cost_per_1k : 0;
+      await supabase.from("ai_usage_log").insert({
+        org_id: ctx.orgId,
+        task: args.task,
+        provider: m.provider,
+        model_id: m.model_id,
+        cost_tier: m.cost_tier,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        estimated_cost: estimatedCost,
+        duration_ms: Date.now() - started,
+        status: "ok",
+        fallback_reason: attempts.length ? attempts.map((a) => `${a.model}: ${a.outcome}`).join(" | ").slice(0, 900) : null,
+        user_id: args.userId,
+      });
+      attempts.push({ model: m.display_name, outcome: "ok" });
+      const text = result.text?.trim() || "I looked into that but didn't get a clear answer back — could you rephrase the question?";
+      return { text, model: m, attempts, usage: { inputTokens, outputTokens, estimatedCost } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await supabase.from("ai_usage_log").insert({
+        org_id: ctx.orgId,
+        task: args.task,
+        provider: m.provider,
+        model_id: m.model_id,
+        cost_tier: m.cost_tier,
+        duration_ms: Date.now() - started,
+        status: "error",
+        error_message: message.slice(0, 900),
+        user_id: args.userId,
+      });
+      const reason = isQuotaError(err) ? "quota / rate limit reached" : isAuthOrModelError(err) ? "provider rejected the key or model" : `error: ${message.slice(0, 120)}`;
+      attempts.push({ model: m.display_name, outcome: reason });
+      // next model
+    }
+  }
+  return { error: `All configured models failed: ${attempts.map((a) => `${a.model} (${a.outcome})`).join("; ")}.`, attempts };
 }

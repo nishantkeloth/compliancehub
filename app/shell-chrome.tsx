@@ -11,6 +11,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSyncExternalStore } from "react";
+import AssistantPanel from "./assistant-panel";
 
 export type NavItem = { href: string; key: string; label: string };
 export type NavSection = { title: string; items: NavItem[] };
@@ -225,6 +226,7 @@ export default function ShellChrome({
         </div>
         <div className="px-8 py-6 pb-16">{children}</div>
       </main>
+      <AssistantPanel />
     </div>
   );
 }
