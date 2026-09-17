@@ -217,7 +217,8 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
             const { data: pub } = supabase.storage.from("crew-photos").getPublicUrl(photoPath);
             photoUrl = pub.publicUrl;
           } else {
-            photoNote = `Photo auto-detect: cropped the photo but the upload to storage failed: ${photoUpErr.message}`;
+            const errDetail = "statusCode" in photoUpErr ? ` [status ${(photoUpErr as { status?: number }).status ?? "?"} / ${(photoUpErr as { statusCode?: string }).statusCode ?? "?"}]` : "";
+            photoNote = `Photo auto-detect: cropped the photo but the upload to storage failed: ${photoUpErr.message}${errDetail} (path "${photoPath}")`;
           }
         } else {
           photoNote = `Photo auto-detect: rendered "${source.filename}"${photoProposal.source_page ? ` page ${photoProposal.source_page}` : ""} but got no usable image dimensions (${w}x${h}).`;
