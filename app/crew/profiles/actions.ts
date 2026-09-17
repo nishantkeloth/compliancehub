@@ -422,11 +422,133 @@ export async function updateCrewDocument(id: string, crewId: string, formData: F
   return {};
 }
 
-export async function deleteCrewDocument(id: string, crewId: string) {
-  const { supabase } = await requireDocumentsManage();
-  const { error } = await supabase.from("crew_documents").delete().eq("id", id);
+// "Remove" no longer hard-deletes once a document can carry real files and
+// version history behind it (Phase 13) — a hard delete would destroy the
+// audit trail (crew_document_versions rows survive via ON DELETE CASCADE,
+// which is exactly what we don't want). Deactivating keeps the row and its
+// full history; the documents list/readiness engine just stop counting it.
+export async function deactivateCrewDocument(id: string, crewId: string) {
+  const { supabase, userId } = await requireDocumentsManage();
+  const { error } = await supabase.from("crew_documents").update({ is_active: false, updated_by: userId }).eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(crewId);
   revalidateMatrix();
   return {};
+}
+
+/* ---------------- Document file uploads & versions (Phase 13) ---------------- */
+
+const MAX_DOCUMENT_FILE_BYTES = 20 * 1024 * 1024; // matches the 20 MB cap used elsewhere for uploaded documents
+
+function sanitizeFileName(name: string) {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return cleaned.slice(-120) || "file";
+}
+
+// Every upload is a NEW version, never an overwrite — crew_document_versions
+// is insert-only (see 0014_crew_document_versions.sql), so a renewed
+// certificate's old file and old number/expiry stay exactly as they were on
+// the day they were uploaded, for audit. The parent crew_documents row's
+// document_number/issue_date/expiry_date get synced to whatever this new
+// version carries, so every existing screen that reads crew_documents
+// directly (readiness engine, documents matrix, the badges on this page)
+// keeps working unchanged and always reflects the current version.
+export async function uploadCrewDocumentVersion(documentId: string, crewId: string, formData: FormData) {
+  const { supabase, access, userId } = await requireDocumentsManage();
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file to upload." };
+  if (file.size > MAX_DOCUMENT_FILE_BYTES) {
+    return { error: `File is too large (max ${Math.round(MAX_DOCUMENT_FILE_BYTES / 1024 / 1024)} MB).` };
+  }
+
+  const { data: latest, error: latestErr } = await supabase
+    .from("crew_document_versions")
+    .select("version_number")
+    .eq("crew_document_id", documentId)
+    .order("version_number", { ascending: false })
+    .limit(1);
+  if (latestErr) return { error: latestErr.message };
+  const nextVersion = (latest?.[0]?.version_number ?? 0) + 1;
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const filePath = `${access.orgId}/${crewId}/${documentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
+
+  const { error: upErr } = await supabase.storage
+    .from("crew-documents")
+    .upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
+  if (upErr) return { error: `Upload failed: ${upErr.message}` };
+
+  const documentNumber = optStr(formData, "documentNumber");
+  const issueDate = optStr(formData, "issueDate");
+  const expiryDate = optStr(formData, "expiryDate");
+  const source = optStr(formData, "source") || "manual";
+
+  const { error: versionErr } = await supabase.from("crew_document_versions").insert({
+    org_id: access.orgId,
+    crew_document_id: documentId,
+    crew_id: crewId,
+    version_number: nextVersion,
+    file_path: filePath,
+    file_name: file.name,
+    content_type: file.type || null,
+    file_size_bytes: file.size,
+    document_number: documentNumber || null,
+    issue_date: issueDate || null,
+    expiry_date: expiryDate || null,
+    source,
+    uploaded_by: userId,
+  });
+  if (versionErr) return { error: versionErr.message };
+
+  const syncUpdate: Record<string, unknown> = { updated_by: userId };
+  if (documentNumber) syncUpdate.document_number = documentNumber;
+  if (issueDate) syncUpdate.issue_date = issueDate;
+  if (expiryDate) syncUpdate.expiry_date = expiryDate;
+  const { error: syncErr } = await supabase.from("crew_documents").update(syncUpdate).eq("id", documentId);
+  if (syncErr) return { error: syncErr.message };
+
+  revalidateDetail(crewId);
+  revalidateMatrix();
+  return { versionNumber: nextVersion };
+}
+
+async function requireDocumentsView() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in.");
+  const access = await getEffectiveAccess(supabase, user.id);
+  if (!can(access, "crew.documents.view") && !can(access, "crew.documents.manage")) {
+    throw new Error("You don't have permission to view crew documents.");
+  }
+  return { supabase, access };
+}
+
+export async function getCrewDocumentVersions(documentId: string) {
+  const { supabase } = await requireDocumentsView();
+  const { data, error } = await supabase
+    .from("crew_document_versions")
+    .select("id, version_number, file_name, file_size_bytes, document_number, issue_date, expiry_date, source, uploaded_by, created_at")
+    .eq("crew_document_id", documentId)
+    .order("version_number", { ascending: false });
+  if (error) return { error: error.message };
+  return { versions: data ?? [] };
+}
+
+// Files live in a private bucket, so viewing/downloading one goes through a
+// short-lived signed URL generated on demand rather than a stored public
+// link — these are passports and medical certificates, not profile photos.
+export async function getCrewDocumentFileUrl(versionId: string) {
+  const { supabase } = await requireDocumentsView();
+  const { data: version, error } = await supabase
+    .from("crew_document_versions")
+    .select("file_path")
+    .eq("id", versionId)
+    .single();
+  if (error || !version) return { error: "Version not found." };
+  const { data: signed, error: signErr } = await supabase.storage.from("crew-documents").createSignedUrl(version.file_path, 60);
+  if (signErr || !signed) return { error: signErr?.message ?? "Could not generate a link." };
+  return { url: signed.signedUrl };
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useState, useTransition } from "react";
+import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   updateCrewProfile,
@@ -18,7 +18,10 @@ import {
   deleteCrewAssignment,
   createCrewDocument,
   updateCrewDocument,
-  deleteCrewDocument,
+  deactivateCrewDocument,
+  uploadCrewDocumentVersion,
+  getCrewDocumentVersions,
+  getCrewDocumentFileUrl,
 } from "../actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
@@ -208,6 +211,7 @@ export default function CrewEditor({
   crewDocuments,
   crewList,
   customFieldDefinitions,
+  documentVersionCounts,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -228,6 +232,7 @@ export default function CrewEditor({
   crewDocuments: CrewDocument[];
   crewList: Ref[];
   customFieldDefinitions: CustomFieldDefinition[];
+  documentVersionCounts: Record<string, number>;
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -300,6 +305,7 @@ export default function CrewEditor({
           crewDocuments={crewDocuments}
           crewList={crewList}
           customFieldDefinitions={customFieldDefinitions}
+          documentVersionCounts={documentVersionCounts}
           canManage={canManageDocuments}
           onChanged={refresh}
         />
@@ -865,6 +871,7 @@ function DocumentsSection({
   crewDocuments,
   crewList,
   customFieldDefinitions,
+  documentVersionCounts,
   canManage,
   onChanged,
 }: {
@@ -873,6 +880,7 @@ function DocumentsSection({
   crewDocuments: CrewDocument[];
   crewList: Ref[];
   customFieldDefinitions: CustomFieldDefinition[];
+  documentVersionCounts: Record<string, number>;
   canManage: boolean;
   onChanged: () => void;
 }) {
@@ -880,6 +888,9 @@ function DocumentsSection({
   const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
+  const [versionCounts, setVersionCounts] = useState(documentVersionCounts);
   const [bgError, setBgError] = useState<string | null>(null);
 
   const typeById = (id: string) => documentTypes.find((d) => d.id === id);
@@ -918,11 +929,11 @@ function DocumentsSection({
     });
   };
 
-  const submitDelete = (doc: CrewDocument, index: number) => {
+  const submitDeactivate = (doc: CrewDocument, index: number) => {
     setBgError(null);
     removeOptimistic(doc.id);
     startTransition(async () => {
-      const res = await deleteCrewDocument(doc.id, crewId);
+      const res = await deactivateCrewDocument(doc.id, crewId);
       if (res?.error) {
         restoreOptimistic(doc, index);
         setBgError(res.error);
@@ -930,6 +941,12 @@ function DocumentsSection({
       }
       onChanged();
     });
+  };
+
+  const onUploaded = (documentId: string) => {
+    setUploadingId(null);
+    setVersionCounts((prev) => ({ ...prev, [documentId]: (prev[documentId] ?? 0) + 1 }));
+    onChanged();
   };
 
   return (
@@ -955,6 +972,18 @@ function DocumentsSection({
               />
             );
           }
+          if (uploadingId === d.id) {
+            return (
+              <UploadPanel
+                key={d.id}
+                crewId={crewId}
+                crewDocument={d}
+                typeName={type?.name ?? "document"}
+                onDone={() => onUploaded(d.id)}
+                onCancel={() => setUploadingId(null)}
+              />
+            );
+          }
           const { status, daysRemaining } = computeDocumentStatus(d.expiry_date, type?.warning_threshold_days ?? null, type?.category ?? null);
           const colors = DOCUMENT_STATUS_COLORS[status];
           const index = items.findIndex((x) => x.id === d.id);
@@ -965,30 +994,46 @@ function DocumentsSection({
               return v !== undefined && v !== null && v !== "" ? `${f.label}: ${v}` : null;
             })
             .filter(Boolean);
+          const versionCount = versionCounts[d.id] ?? 0;
           return (
-            <div key={d.id} className="flex items-center gap-3 flex-wrap rounded-lg border px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
-              <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ background: colors.bg, color: colors.fg }}>
-                {DOCUMENT_STATUS_LABELS[status]}
-              </span>
-              <div className="flex-1 min-w-[160px]">
-                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{type?.name ?? "Unknown type"}</span>
-                {d.document_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>#{d.document_number}</span>}
-                {d.expiry_date && (
-                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
-                    expires {d.expiry_date}{daysRemaining != null ? ` (${daysRemaining}d)` : ""}
-                  </span>
+            <div key={d.id}>
+              <div className="flex items-center gap-3 flex-wrap rounded-lg border px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
+                <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ background: colors.bg, color: colors.fg }}>
+                  {DOCUMENT_STATUS_LABELS[status]}
+                </span>
+                <div className="flex-1 min-w-[160px]">
+                  <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{type?.name ?? "Unknown type"}</span>
+                  {d.document_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>#{d.document_number}</span>}
+                  {d.expiry_date && (
+                    <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
+                      expires {d.expiry_date}{daysRemaining != null ? ` (${daysRemaining}d)` : ""}
+                    </span>
+                  )}
+                  {customValues.length > 0 && (
+                    <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>· {customValues.join(" · ")}</span>
+                  )}
+                  {versionCount > 0 && (
+                    <button
+                      onClick={() => setHistoryId(historyId === d.id ? null : d.id)}
+                      className="text-xs ml-2 underline"
+                      style={{ color: "var(--ch-sub)" }}
+                    >
+                      v{versionCount} · {historyId === d.id ? "hide history" : "view history"}
+                    </button>
+                  )}
+                  {isTempId(d.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
+                </div>
+                {canManage && !isTempId(d.id) && (
+                  <>
+                    <button onClick={() => setUploadingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>
+                      {versionCount > 0 ? "Upload new version" : "Upload"}
+                    </button>
+                    <button onClick={() => setEditingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
+                    <button onClick={() => submitDeactivate(d, index)} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Remove</button>
+                  </>
                 )}
-                {customValues.length > 0 && (
-                  <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>· {customValues.join(" · ")}</span>
-                )}
-                {isTempId(d.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
               </div>
-              {canManage && !isTempId(d.id) && (
-                <>
-                  <button onClick={() => setEditingId(d.id)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Edit</button>
-                  <button onClick={() => submitDelete(d, index)} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Remove</button>
-                </>
-              )}
+              {historyId === d.id && <VersionHistoryPanel documentId={d.id} />}
             </div>
           );
         })}
@@ -1034,6 +1079,152 @@ function DocumentsSection({
           Add document types first in Crew Setup → Document Types.
         </div>
       )}
+    </div>
+  );
+}
+
+// One file per submit, uploaded as a new version (never an overwrite — see
+// uploadCrewDocumentVersion). Document number / issue / expiry are prefilled
+// from the current record and editable, so a straightforward renewal is
+// just "pick the new file, adjust the expiry date, submit" without retyping
+// everything. Left blank, the current values are kept as-is on the parent
+// record (only the file itself changes).
+function UploadPanel({
+  crewId,
+  crewDocument,
+  typeName,
+  onDone,
+  onCancel,
+}: {
+  crewId: string;
+  crewDocument: CrewDocument;
+  typeName: string;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [documentNumber, setDocumentNumber] = useState(crewDocument.document_number ?? "");
+  const [issueDate, setIssueDate] = useState(crewDocument.issue_date ?? "");
+  const [expiryDate, setExpiryDate] = useState(crewDocument.expiry_date ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!file) {
+      setError("Choose a file to upload.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const fd = new FormData();
+    fd.set("file", file);
+    fd.set("documentNumber", documentNumber);
+    fd.set("issueDate", issueDate);
+    fd.set("expiryDate", expiryDate);
+    fd.set("source", "manual");
+    const res = await uploadCrewDocumentVersion(crewDocument.id, crewId, fd);
+    setBusy(false);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    onDone();
+  };
+
+  return (
+    <div className="rounded-lg border px-3 py-3 space-y-2" style={{ borderColor: "var(--ch-line)" }}>
+      <div className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>Upload {typeName}</div>
+      {error && (
+        <div className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>
+      )}
+      <input
+        type="file"
+        accept="application/pdf,image/*"
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        className="text-sm"
+      />
+      <div className="flex gap-2 flex-wrap">
+        <input
+          className={inputCls}
+          style={inputStyle}
+          placeholder="Document number"
+          value={documentNumber}
+          onChange={(e) => setDocumentNumber(e.target.value)}
+        />
+        <input type="date" className={inputCls} style={inputStyle} value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+        <input type="date" className={inputCls} style={inputStyle} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+      </div>
+      <div className="flex gap-2">
+        <button onClick={submit} disabled={busy} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          {busy ? "Uploading…" : "Upload"}
+        </button>
+        <button onClick={onCancel} disabled={busy} className="text-sm font-semibold" style={{ color: "var(--ch-sub)" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+type CrewDocumentVersion = {
+  id: string;
+  version_number: number;
+  file_name: string | null;
+  file_size_bytes: number | null;
+  document_number: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  source: string;
+  uploaded_by: string | null;
+  created_at: string;
+};
+
+// Loaded on demand (not with the rest of the page) since most documents on
+// a long list are never opened for history — see getCrewDocumentVersions.
+function VersionHistoryPanel({ documentId }: { documentId: string }) {
+  const [versions, setVersions] = useState<CrewDocumentVersion[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCrewDocumentVersions(documentId).then((res) => {
+      if (cancelled) return;
+      if (res?.error) setError(res.error);
+      else setVersions((res.versions as CrewDocumentVersion[]) ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId]);
+
+  const openFile = async (versionId: string) => {
+    setOpeningId(versionId);
+    const res = await getCrewDocumentFileUrl(versionId);
+    setOpeningId(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    if (res.url) window.open(res.url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <div className="ml-3 mt-1 mb-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: "var(--ch-line)", background: "var(--ch-bg)" }}>
+      {error && <div style={{ color: "var(--ch-fail)" }}>{error}</div>}
+      {!versions && !error && <div style={{ color: "var(--ch-sub)" }}>Loading history…</div>}
+      {versions && versions.length === 0 && <div style={{ color: "var(--ch-sub)" }}>No file versions yet.</div>}
+      {versions?.map((v) => (
+        <div key={v.id} className="flex items-center gap-2 flex-wrap py-0.5">
+          <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>v{v.version_number}</span>
+          <span style={{ color: "var(--ch-sub)" }}>{new Date(v.created_at).toLocaleDateString()}</span>
+          {v.document_number && <span style={{ color: "var(--ch-sub)" }}>#{v.document_number}</span>}
+          {v.expiry_date && <span style={{ color: "var(--ch-sub)" }}>expires {v.expiry_date}</span>}
+          {v.file_name && (
+            <button onClick={() => openFile(v.id)} disabled={openingId === v.id} className="underline" style={{ color: "var(--ch-navy)" }}>
+              {openingId === v.id ? "Opening…" : v.file_name}
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

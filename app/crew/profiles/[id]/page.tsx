@@ -39,6 +39,7 @@ export default async function CrewProfileDetailPage({
     (canViewSensitive ? ", dietary_medical_notes" : "");
 
   const { data: crew } = await supabase.from("crew_profiles").select(fields).eq("id", id).single();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pre-existing loose typing on the untyped supabase select result, outside this change's scope
   if (!crew || (crew as any).org_id !== access.orgId) notFound();
 
   const [
@@ -54,6 +55,7 @@ export default async function CrewProfileDetailPage({
     crewDocumentsRes,
     crewListRes,
     customFieldDefinitionsRes,
+    documentVersionCountsRes,
   ] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -84,6 +86,7 @@ export default async function CrewProfileDetailPage({
             "id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields"
           )
           .eq("crew_id", id)
+          .eq("is_active", true)
       : Promise.resolve({ data: [] }),
     canViewDocuments
       ? supabase.from("crew_profiles").select("id, full_name").eq("org_id", access.orgId).order("full_name")
@@ -96,7 +99,19 @@ export default async function CrewProfileDetailPage({
           .eq("is_active", true)
           .order("sort_order")
       : Promise.resolve({ data: [] }),
+    // Just enough to show a "vN" count per document on the list without
+    // fetching every version's full row (that's loaded on demand when
+    // someone actually opens the history panel — see getCrewDocumentVersions).
+    canViewDocuments
+      ? supabase.from("crew_document_versions").select("crew_document_id").eq("crew_id", id)
+      : Promise.resolve({ data: [] }),
   ]);
+
+  const documentVersionCounts: Record<string, number> = {};
+  for (const row of documentVersionCountsRes.data ?? []) {
+    const key = (row as { crew_document_id: string }).crew_document_id;
+    documentVersionCounts[key] = (documentVersionCounts[key] ?? 0) + 1;
+  }
 
   return (
     <>
@@ -108,10 +123,12 @@ export default async function CrewProfileDetailPage({
           section title (derived from the URL), so the specific crew
           member's name is shown here instead. */}
       <h2 className="text-lg font-bold mt-2 mb-4" style={{ color: "var(--ch-ink)" }}>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- pre-existing loose typing, outside this change's scope */}
         {(crew as any).full_name}
       </h2>
 
       <CrewEditor
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pre-existing loose typing on the untyped supabase select result, outside this change's scope
         crew={crew as any}
         canManage={canManage}
         canEmergencyAssign={canEmergencyAssign}
@@ -122,6 +139,7 @@ export default async function CrewProfileDetailPage({
         skills={skillsRes.data ?? []}
         crewSkills={crewSkillsRes.data ?? []}
         secondaryRoles={secondaryRolesRes.data ?? []}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pre-existing loose typing on the untyped supabase select result, outside this change's scope
         profiles={(profilesRes.data ?? []).map((p: any) => ({ id: p.id, name: p.full_name }))}
         offshoreSites={offshoreSitesRes.data ?? []}
         assignments={assignmentsRes.data ?? []}
@@ -129,8 +147,10 @@ export default async function CrewProfileDetailPage({
         canManageDocuments={canManageDocuments}
         documentTypes={documentTypesRes.data ?? []}
         crewDocuments={crewDocumentsRes.data ?? []}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pre-existing loose typing on the untyped supabase select result, outside this change's scope
         crewList={(crewListRes.data ?? []).map((c: any) => ({ id: c.id, name: c.full_name }))}
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
+        documentVersionCounts={documentVersionCounts}
       />
     </>
   );
