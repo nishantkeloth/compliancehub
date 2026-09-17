@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import NewCrewForm from "./new-crew-form";
+import IntakePanel from "./intake-panel";
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
   candidate: { bg: "#f3f4f6", fg: "#6b7280" },
@@ -27,6 +28,10 @@ export default async function CrewProfilesPage({
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "crew.view")) redirect("/");
   const canManage = can(access, "crew.manage");
+  // "Fill from documents" additionally needs crew.matrix.manage — the AI
+  // infrastructure's RLS policies are gated on that permission, not
+  // crew.manage (see supabase/migrations/0010_ai_crew_intake.sql).
+  const canIntake = canManage && can(access, "crew.matrix.manage");
 
   let query = supabase
     .from("crew_profiles")
@@ -54,7 +59,12 @@ export default async function CrewProfilesPage({
         on this and come next.
       </p>
 
-      {canManage && <NewCrewForm jobRoles={jobRolesRes.data ?? []} />}
+      {canManage && (
+        <div className="flex items-start gap-2 flex-wrap">
+          <NewCrewForm jobRoles={jobRolesRes.data ?? []} />
+          {canIntake && <IntakePanel />}
+        </div>
+      )}
 
       <form method="get" className="flex items-center gap-2 flex-wrap mt-5 mb-4">
         <input

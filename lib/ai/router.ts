@@ -26,12 +26,14 @@ import { decryptSecret } from "./crypto";
 // ai_usage_log.
 
 export type Provider = "anthropic" | "openai" | "google" | "groq" | "openrouter" | "ollama";
-// "crew_assistant" (Phase 11 — conversational side panel) intentionally has no
-// row in ai_task_settings: that table's `task` column is check-constrained to
-// the three matrix tasks above, so this task always falls back to the
-// company's default routing_mode. It logs to ai_usage_log fine (that table's
-// `task` column is plain text, unconstrained).
-export type AiTask = "matrix_from_document" | "matrix_from_context" | "matrix_review" | "crew_assistant";
+// "crew_assistant" (Phase 11 — conversational side panel) and
+// "crew_intake" (Phase 12 — CV/ID scan onboarding intake) intentionally
+// have no row in ai_task_settings: that table's `task` column is
+// check-constrained to the three matrix tasks above, so these tasks
+// always fall back to the company's default routing_mode. They log to
+// ai_usage_log fine (that table's `task` column is plain text,
+// unconstrained).
+export type AiTask = "matrix_from_document" | "matrix_from_context" | "matrix_review" | "crew_assistant" | "crew_intake";
 
 export type AiModelRow = {
   id: string;
