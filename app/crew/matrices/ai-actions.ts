@@ -238,6 +238,7 @@ export async function generateMatrixDraft(formData: FormData): Promise<{ proposa
       if (file.size > ctx.settings.max_upload_mb * 1024 * 1024) return { error: `File is larger than the ${ctx.settings.max_upload_mb} MB limit.` };
       extracted = await extractDocument(file);
       sourceFilename = extracted.filename;
+      if (extracted.unreadable) return { error: `"${extracted.filename}" doesn't look like a valid file of its type — check it opens correctly on your computer and re-upload it.` };
     }
     if (!extracted && !pasted) return { error: "Upload a document or paste the requirement text." };
     const documentText = [pasted, extracted?.text].filter(Boolean).join("\n\n") || null;

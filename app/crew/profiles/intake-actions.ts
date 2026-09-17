@@ -109,6 +109,8 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
 
   const extracted: Awaited<ReturnType<typeof extractDocument>>[] = [];
   for (const f of files) extracted.push(await extractDocument(f));
+  const unreadable = extracted.filter((e) => e.unreadable);
+  if (unreadable.length) return { error: `"${unreadable.map((e) => e.filename).join('", "')}" doesn't look like a valid file of its type — check it opens correctly on your computer and re-upload it.` };
   const needsDocuments = extracted.some((e) => e.needsModelVision);
   const textParts = [pasted, ...extracted.filter((e) => e.text).map((e) => `## ${e.filename}\n${e.text}`)].filter(Boolean);
   const documentText = textParts.length ? textParts.join("\n\n") : null;
