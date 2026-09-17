@@ -87,6 +87,7 @@ export default function DocumentsMatrix({
 
   const [search, setSearch] = useState("");
   const [siteFilter, setSiteFilter] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
   const [docTypeFilter, setDocTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "expiring" | "expired">("all");
   const [popover, setPopover] = useState<{ crewId: string; crewName: string; documentTypeId: string } | null>(null);
@@ -105,6 +106,13 @@ export default function DocumentsMatrix({
 
   const columns = docTypeFilter ? documentTypes.filter((t) => t.id === docTypeFilter) : documentTypes;
 
+  // Roles derived from the crew already on this page (rather than a
+  // separate job_roles query) — this stays in sync with whatever's
+  // actually shown and needs no extra server-side plumbing.
+  const roles = useMemo(() => {
+    return Array.from(new Set(crew.map((c) => c.roleName).filter((r): r is string => !!r))).sort((a, b) => a.localeCompare(b));
+  }, [crew]);
+
   const statusFor = (crewId: string, docTypeId: string) => {
     const type = documentTypes.find((t) => t.id === docTypeId);
     const cell = localCellMap[crewId]?.[docTypeId];
@@ -115,6 +123,7 @@ export default function DocumentsMatrix({
     return crew.filter((c) => {
       if (search && !c.fullName.toLowerCase().includes(search.toLowerCase())) return false;
       if (siteFilter && c.siteId !== siteFilter) return false;
+      if (roleFilter && c.roleName !== roleFilter) return false;
       if (statusFilter !== "all") {
         const matches = columns.some((col) => {
           const s = statusFor(c.id, col.id);
@@ -125,7 +134,7 @@ export default function DocumentsMatrix({
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crew, search, siteFilter, statusFilter, columns, localCellMap, documentTypes]);
+  }, [crew, search, siteFilter, roleFilter, statusFilter, columns, localCellMap, documentTypes]);
 
   const exportCsv = () => {
     const header = ["Crew member", "Role", "Vessel", ...columns.map((c) => c.name)];
@@ -203,6 +212,12 @@ export default function DocumentsMatrix({
           <option value="">All vessels</option>
           {offshoreSites.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+        <select className={inputCls} style={inputStyle} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+          <option value="">All roles</option>
+          {roles.map((r) => (
+            <option key={r} value={r}>{r}</option>
           ))}
         </select>
         <select className={inputCls} style={inputStyle} value={docTypeFilter} onChange={(e) => setDocTypeFilter(e.target.value)}>
