@@ -2,10 +2,11 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
-  // Phase 12: crew-intake photo auto-crop uses `sharp` (native module) in a
-  // server action. Without this, Vercel's serverless bundler can fail to
-  // trace/package sharp's platform binary correctly.
-  serverExternalPackages: ["sharp"],
+  // Phase 12: crew-intake photo auto-crop uses `sharp` and `@napi-rs/canvas`
+  // (both native modules with prebuilt platform binaries) in a server
+  // action. Without this, Vercel's serverless bundler can fail to
+  // trace/package their binaries correctly.
+  serverExternalPackages: ["sharp", "@napi-rs/canvas"],
   // Pin the Turbopack project root to this folder. Without this, Turbopack
   // auto-detects the root by scanning upward for lockfiles and picks up the
   // stray package-lock.json/node_modules sitting in the Windows user profile

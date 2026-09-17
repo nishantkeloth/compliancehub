@@ -117,8 +117,13 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const textParts = [pasted, ...extracted.filter((e) => e.text).map((e) => `## ${e.filename}\n${e.text}`)].filter(Boolean);
   const documentText = textParts.length ? textParts.join("\n\n") : null;
 
-  const attachedImageFilenames = extracted.filter((e) => e.mediaType.startsWith("image/")).map((e) => e.filename);
-  const prompt = intakePrompt({ masterData: { documentTypeNames: documentTypes.map((d) => d.name), jobRoleNames: jobRoles.map((j) => j.name) }, documentText, hasAttachedFiles: needsDocuments, attachedImageFilenames });
+  // Filenames of everything the model actually sees as a visual page —
+  // images, plus any PDF forwarded to vision because it has little/no
+  // text layer (see extractDocument). A PDF the model can't see (real
+  // text extracted instead) is left out — the model can't locate a
+  // photo on a page it was never shown.
+  const attachedVisualFilenames = extracted.filter((e) => e.needsModelVision).map((e) => e.filename);
+  const prompt = intakePrompt({ masterData: { documentTypeNames: documentTypes.map((d) => d.name), jobRoleNames: jobRoles.map((j) => j.name) }, documentText, hasAttachedFiles: needsDocuments, attachedVisualFilenames });
   const fileParts = extracted
     .filter((e) => e.needsModelVision)
     .map((e) => ({ type: "file" as const, data: e.bytes, mediaType: e.mediaType, filename: e.filename }));
@@ -157,18 +162,34 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   }
 
   // Auto-crop the headshot the model located in one of the attached
-  // IMAGE files (a PDF page isn't raster bytes we can crop with sharp —
-  // if the model pointed at a PDF, or at no file at all, we just don't
-  // propose a photo; that's a normal outcome, not an error). Failure
-  // anywhere in this block is non-fatal — a bad crop shouldn't sink the
+  // files. For an image file we crop directly with sharp. For a PDF
+  // page — the common case, since most passport/ID scans are uploaded
+  // as PDFs — sharp itself has no PDF input support in this build (no
+  // bundled PDFium), so we first rasterize just that page to a PNG
+  // using unpdf's pdf.js-based renderer (backed by @napi-rs/canvas, a
+  // prebuilt-binary canvas implementation safe for serverless), then
+  // crop that PNG with sharp exactly like an image. Failure anywhere in
+  // this block is non-fatal — a bad render/crop shouldn't sink the
   // whole intake, it just means no photo gets proposed.
   let photoUrl: string | null = null;
   const photoProposal = result.object.photo;
   if (photoProposal) {
-    const source = extracted.find((e) => e.filename === photoProposal.source_filename && e.mediaType.startsWith("image/"));
+    const source = extracted.find((e) => e.filename === photoProposal.source_filename && e.needsModelVision);
     if (source) {
       try {
-        const meta = await sharp(Buffer.from(source.bytes)).metadata();
+        let raster: Buffer;
+        if (source.mediaType === "application/pdf") {
+          const { renderPageAsImage } = await import("unpdf");
+          const pageNum = Math.max(1, photoProposal.source_page ?? 1);
+          // width: 1600 normalizes render resolution regardless of the
+          // scanned page's actual size, so memory/time stay predictable
+          // for an oversized or unusually-shaped scan.
+          const png = await renderPageAsImage(source.bytes.slice(), pageNum, { canvasImport: () => import("@napi-rs/canvas"), width: 1600 });
+          raster = Buffer.from(png);
+        } else {
+          raster = Buffer.from(source.bytes);
+        }
+        const meta = await sharp(raster).metadata();
         const w = meta.width ?? 0;
         const h = meta.height ?? 0;
         if (w > 0 && h > 0) {
@@ -176,7 +197,7 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
           const top = Math.min(h - 1, Math.max(0, Math.round(photoProposal.y * h)));
           const cropW = Math.max(1, Math.min(w - left, Math.round(photoProposal.width * w)));
           const cropH = Math.max(1, Math.min(h - top, Math.round(photoProposal.height * h)));
-          const cropped = await sharp(Buffer.from(source.bytes))
+          const cropped = await sharp(raster)
             .extract({ left, top, width: cropW, height: cropH })
             .resize(480, 480, { fit: "inside", withoutEnlargement: true })
             .jpeg({ quality: 85 })
