@@ -218,7 +218,25 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
             photoUrl = pub.publicUrl;
           } else {
             const errDetail = "statusCode" in photoUpErr ? ` [status ${(photoUpErr as { status?: number }).status ?? "?"} / ${(photoUpErr as { statusCode?: string }).statusCode ?? "?"}]` : "";
-            photoNote = `Photo auto-detect: cropped the photo but the upload to storage failed: ${photoUpErr.message}${errDetail} (path "${photoPath}")`;
+            // The org id, bucket and policy all check out in Postgres directly,
+            // so the remaining unknown is what JWT (if any) actually reached
+            // this specific request. Decode the session token's payload
+            // (no signature check needed -- we're just reading claims we
+            // already trust, not authenticating with them) to see the role
+            // and subject Postgres would have seen for this call.
+            let jwtInfo = "no session";
+            try {
+              const { data: sessionData } = await supabase.auth.getSession();
+              const token = sessionData.session?.access_token;
+              if (token) {
+                const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+                const expInSec = typeof payload.exp === "number" ? Math.round(payload.exp - Date.now() / 1000) : "?";
+                jwtInfo = `role=${payload.role ?? "?"} sub=${(payload.sub ?? "?").toString().slice(0, 8)}... expIn=${expInSec}s`;
+              }
+            } catch (jwtErr) {
+              jwtInfo = `jwt decode failed: ${jwtErr instanceof Error ? jwtErr.message : String(jwtErr)}`;
+            }
+            photoNote = `Photo auto-detect: cropped the photo but the upload to storage failed: ${photoUpErr.message}${errDetail} (path "${photoPath}"; ${jwtInfo})`;
           }
         } else {
           photoNote = `Photo auto-detect: rendered "${source.filename}"${photoProposal.source_page ? ` page ${photoProposal.source_page}` : ""} but got no usable image dimensions (${w}x${h}).`;
