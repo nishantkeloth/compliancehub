@@ -95,6 +95,11 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   const pasted = String(formData.get("pastedText") ?? "").trim();
   if (files.length === 0 && !pasted) return { error: "Upload at least one document (CV, passport, ID, or certificate) or paste the text." };
+  // Checkbox on the intake form: when off, scans/images are OCR'd
+  // in-process instead of sent to a vision-capable AI model — works with
+  // any text-only model, but skips photo auto-detect entirely for this
+  // upload (there's no image for the model to see and locate a photo on).
+  const extractAsImage = String(formData.get("extractAsImage") ?? "true") !== "false";
 
   const ctx = await loadAiContext(supabase, orgId);
   const maxBytes = ctx.settings.max_upload_mb * 1024 * 1024;
@@ -110,7 +115,7 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const aliases = (al.data ?? []) as Alias[];
 
   const extracted: Awaited<ReturnType<typeof extractDocument>>[] = [];
-  for (const f of files) extracted.push(await extractDocument(f));
+  for (const f of files) extracted.push(await extractDocument(f, { ocrInsteadOfVision: !extractAsImage }));
   const unreadable = extracted.filter((e) => e.unreadable);
   if (unreadable.length) return { error: `"${unreadable.map((e) => e.filename).join('", "')}" doesn't look like a valid file of its type — check it opens correctly on your computer and re-upload it.` };
   const needsDocuments = extracted.some((e) => e.needsModelVision);
@@ -260,6 +265,12 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       .slice(0, 5);
   }
 
+  // Text-only mode was on and at least one attachment was actually OCR'd
+  // (as opposed to already having a real text layer, which needs no OCR
+  // and no explanation) -- tell the reviewer why no photo shows up rather
+  // than leaving "No photo detected" looking like a missed detection.
+  const ocrNote = !extractAsImage && extracted.some((e) => e.ocrUsed) ? "Text-only mode was selected: scanned attachments were read with OCR instead of sent to a vision-capable AI model, so no profile photo was detected or cropped." : null;
+
   const jobRoleMapping = result.object.job_role_name ? mapName(result.object.job_role_name, "job_role", jobRoles, aliases) : null;
   const documents: MappedIntakeDocument[] = result.object.documents.map((d) => ({
     name: d.document_type_name,
@@ -285,7 +296,7 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       documents,
       photoUrl,
       name_mismatch_warning: result.object.name_mismatch_warning,
-      assumptions: photoNote ? [...result.object.assumptions, photoNote] : result.object.assumptions,
+      assumptions: [result.object.assumptions, photoNote, ocrNote].flat().filter((a): a is string => !!a),
       duplicates,
       modelLabel: `${result.model.display_name} (${result.model.cost_tier})`,
       attempts: result.attempts,

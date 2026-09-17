@@ -54,6 +54,7 @@ export default function IntakePanel() {
   const [availability, setAvailability] = useState<{ enabled: boolean; reason: string | null; maxUploadMb: number; documentCapable: boolean } | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [pasted, setPasted] = useState("");
+  const [extractAsImage, setExtractAsImage] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<{ model: string; outcome: string }[]>([]);
@@ -91,6 +92,7 @@ export default function IntakePanel() {
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
     fd.set("pastedText", pasted);
+    fd.set("extractAsImage", String(extractAsImage));
     startTransition(async () => {
       const res = await extractCrewIntake(fd);
       setBusy(false);
@@ -232,8 +234,15 @@ export default function IntakePanel() {
               ))}
             </ul>
           )}
-          {availability && !availability.documentCapable && files.some((f) => /\.(png|jpe?g)$/i.test(f.name)) && (
-            <div className="text-xs mb-2" style={{ color: "#b45309" }}>No configured model accepts images — a scanned document will fail; paste the text instead or enable a document-capable model.</div>
+          <label className="flex items-start gap-2 text-xs mb-3" style={{ color: "var(--ch-ink)" }}>
+            <input type="checkbox" checked={extractAsImage} onChange={(e) => setExtractAsImage(e.target.checked)} />
+            <span>
+              Read scanned documents as images (needed to auto-detect &amp; crop a profile photo). Uncheck to extract text only via OCR instead —
+              works with any text-only AI model, including free ones that reject images/PDFs, but no photo will be captured.
+            </span>
+          </label>
+          {extractAsImage && availability && !availability.documentCapable && files.some((f) => /\.(png|jpe?g)$/i.test(f.name)) && (
+            <div className="text-xs mb-2" style={{ color: "#b45309" }}>No configured model accepts images — a scanned document will fail; uncheck &ldquo;Read scanned documents as images&rdquo; above to extract text via OCR instead, or enable a document-capable model.</div>
           )}
           <label className={`${lbl} block mb-3`} style={lblStyle}>
             …or paste CV / ID text

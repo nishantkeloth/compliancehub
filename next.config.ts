@@ -5,8 +5,13 @@ const nextConfig: NextConfig = {
   // Phase 12: crew-intake photo auto-crop uses `sharp` and `@napi-rs/canvas`
   // (both native modules with prebuilt platform binaries) in a server
   // action. Without this, Vercel's serverless bundler can fail to
-  // trace/package their binaries correctly.
-  serverExternalPackages: ["sharp", "@napi-rs/canvas"],
+  // trace/package their binaries correctly. `tesseract.js` (the
+  // text-only-mode OCR fallback, lib/ai/ocr.ts) spawns a worker_threads
+  // Worker pointed at one of its own files on disk and loads its WASM
+  // core + bundled language data by path at runtime -- same class of
+  // problem, needs the same treatment so the bundler doesn't rewrite
+  // those paths.
+  serverExternalPackages: ["sharp", "@napi-rs/canvas", "tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng"],
   // Pin the Turbopack project root to this folder. Without this, Turbopack
   // auto-detects the root by scanning upward for lockfiles and picks up the
   // stray package-lock.json/node_modules sitting in the Windows user profile
