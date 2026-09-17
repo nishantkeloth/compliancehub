@@ -12,7 +12,12 @@
 import { useRef, useState, useTransition, type FormEvent } from "react";
 import { askAssistant, type AssistantMessage } from "./assistant/actions";
 
-const SUGGESTIONS = ["How many Stewards do I have?", "Which crew have expired documents?", "Which crew matrices are still in draft?"];
+const SUGGESTIONS = [
+  "How many Stewards do I have, and where are they assigned?",
+  "Which crew have expired documents?",
+  "List our offshore sites",
+  "How many corrective actions are overdue?",
+];
 
 export default function AssistantPanel() {
   const [open, setOpen] = useState(false);
@@ -81,7 +86,7 @@ export default function AssistantPanel() {
                 Ask ComplianceHub
               </div>
               <div className="text-[11px]" style={{ color: "var(--ch-sub)" }}>
-                Crew, documents, matrices & mobilizations
+                Contracts, crew, documents, sites & more
               </div>
             </div>
           </div>

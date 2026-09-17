@@ -2,6 +2,7 @@ import "server-only";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { computeDocumentStatus } from "@/lib/document-status";
+import { can, type EffectiveAccess } from "@/lib/rbac";
 
 // Phase 11 — tool set for the conversational crew/compliance assistant
 // (side panel). Every tool is scoped to the caller's own org_id (never
@@ -19,9 +20,12 @@ const LIST_CAP = 25;
 // generated Supabase schema types (this app doesn't generate/use one; see
 // the loosely-typed Supa client type above).
 type NameRel = { name: string } | { name: string }[] | null;
+function unwrap<T>(rel: T | T[] | null | undefined): T | null {
+  if (rel == null) return null;
+  return Array.isArray(rel) ? (rel[0] ?? null) : rel;
+}
 function relName(rel: NameRel): string | null {
-  const row = Array.isArray(rel) ? rel[0] : rel;
-  return row?.name ?? null;
+  return unwrap(rel)?.name ?? null;
 }
 type CrewListRow = {
   id: string;
@@ -50,6 +54,57 @@ type MobilizationRow = {
   required_onboard_date: string;
   offshore_sites: NameRel;
 };
+type ProjectNameRel = { project_name: string } | { project_name: string }[] | null;
+type SiteWithProjectRel = ({ name: string; projects: ProjectNameRel } | { name: string; projects: ProjectNameRel }[]) | null;
+type CrewAssignmentSiteRow = { crew_id: string; offshore_sites: SiteWithProjectRel };
+type OffshoreSiteRow = { id: string; name: string; code: string | null; site_type: string | null; country: string | null; status: string | null; projects: ProjectNameRel };
+type ProjectRow = {
+  project_name: string;
+  project_code: string | null;
+  status: string;
+  planned_start_date: string | null;
+  planned_end_date: string | null;
+  expected_pob: number | null;
+  contracts: ({ contract_title: string; clients: NameRel } | { contract_title: string; clients: NameRel }[]) | null;
+};
+type ContractRow = {
+  contract_code: string | null;
+  contract_title: string;
+  status: string;
+  planned_start_date: string | null;
+  planned_end_date: string | null;
+  estimated_contract_value: number | null;
+  currency: string | null;
+  clients: NameRel;
+};
+type CorrectiveActionRow = {
+  title: string;
+  owner_name: string | null;
+  due_date: string | null;
+  status: string;
+  closed_at: string | null;
+  sites: NameRel;
+};
+
+// Who's currently assigned to which site (and that site's project), for the
+// crew ids given — used to enrich list_crew answers so "which project are
+// they on" doesn't need a separate question.
+async function crewSiteProjectMap(supabase: Supa, orgId: string, crewIds: string[]): Promise<Map<string, { site: string | null; project: string | null }>> {
+  const map = new Map<string, { site: string | null; project: string | null }>();
+  if (!crewIds.length) return map;
+  const { data } = await supabase
+    .from("crew_assignments")
+    .select("crew_id, offshore_sites(name, projects(project_name))")
+    .eq("org_id", orgId)
+    .is("end_date", null)
+    .in("crew_id", crewIds);
+  for (const row of (data ?? []) as CrewAssignmentSiteRow[]) {
+    const site = unwrap(row.offshore_sites);
+    const project = site ? unwrap(site.projects) : null;
+    map.set(row.crew_id, { site: site?.name ?? null, project: project?.project_name ?? null });
+  }
+  return map;
+}
 
 function ilikeTerm(name: string) {
   return `%${name.trim()}%`;
@@ -74,9 +129,18 @@ async function assignedCrewIdSet(supabase: Supa, orgId: string, siteIds: string[
   return new Set((data ?? []).map((r: { crew_id: string }) => r.crew_id));
 }
 
-export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
-  return {
-    count_crew: tool({
+// Every tool is gated behind the same permission the equivalent nav item /
+// page already requires (see app/app-shell.tsx) — the assistant only ever
+// surfaces data this particular user could already reach by clicking
+// around the app, never more. Corrective actions has no gate below because
+// its own nav entry (Corrective Actions) is likewise ungated — visible to
+// every company member.
+export function buildAssistantTools(supabase: Supa, access: EffectiveAccess): ToolSet {
+  const orgId = access.orgId as string;
+  const tools: ToolSet = {};
+
+  if (can(access, "crew.view")) {
+    tools.count_crew = tool({
       description:
         "Count crew profiles, optionally filtered by job role/rank, employment status, employment type, deployment status, and/or offshore site (only counts crew currently assigned there). Use for questions like 'how many Stewards do I have' or 'how many crew are onboard at QATAR Test'. Returns a total plus a breakdown by employment status.",
       inputSchema: z.object({
@@ -113,11 +177,11 @@ export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
         for (const r of rows as { employment_status: string }[]) byStatus[r.employment_status] = (byStatus[r.employment_status] ?? 0) + 1;
         return { total, by_employment_status: byStatus };
       },
-    }),
+    });
 
-    list_crew: tool({
+    tools.list_crew = tool({
       description:
-        `List individual crew members matching filters (job role/rank, employment status, employment type, deployment status, offshore site). Returns at most ${LIST_CAP} — if more match, say so and suggest narrowing the question rather than assuming you've seen everyone.`,
+        `List individual crew members matching filters (job role/rank, employment status, employment type, deployment status, offshore site), including which site and project each is currently assigned to (null if not currently assigned anywhere). Use this — not count_crew — whenever the question needs names, or to answer a follow-up like "which project/site are they on". Returns at most ${LIST_CAP} — if more match, say so and suggest narrowing the question rather than assuming you've seen everyone.`,
       inputSchema: z.object({
         job_role_name: z.string().optional(),
         employment_status: z.enum(["active", "candidate", "inactive", "suspended", "terminated"]).optional(),
@@ -148,7 +212,9 @@ export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
           rows = rows.filter((r: { id: string }) => assigned.has(r.id));
         }
         const matched = siteIds ? rows.length : (count ?? rows.length);
-        const crew = (rows as CrewListRow[]).slice(0, LIST_CAP).map((r) => ({
+        const page = (rows as CrewListRow[]).slice(0, LIST_CAP);
+        const siteProject = await crewSiteProjectMap(supabase, orgId, page.map((r) => r.id));
+        const crew = page.map((r) => ({
           name: r.full_name,
           employee_code: r.employee_code,
           role: relName(r.job_roles),
@@ -156,12 +222,16 @@ export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
           employment_type: r.employment_type,
           deployment_status: r.deployment_status,
           nationality: r.nationality,
+          site: siteProject.get(r.id)?.site ?? null,
+          project: siteProject.get(r.id)?.project ?? null,
         }));
         return { crew, matched_total: matched, truncated: matched > crew.length };
       },
-    }),
+    });
+  }
 
-    document_compliance_status: tool({
+  if (can(access, "crew.documents.view")) {
+    tools.document_compliance_status = tool({
       description:
         "Look up crew document/certificate compliance — expired, expiring soon (critical/warning), or missing mandatory documents. Optionally filter by job role/rank and/or document type name (e.g. 'STCW', 'Passport', 'Medical'). Use for questions like 'which crew have expired medical certificates' or 'who is missing mandatory documents'.",
       inputSchema: z.object({
@@ -238,9 +308,11 @@ export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
         }
         return { counts, examples, truncated_examples: examples.length >= LIST_CAP };
       },
-    }),
+    });
+  }
 
-    matrix_status: tool({
+  if (can(access, "crew.matrix.view")) {
+    tools.matrix_status = tool({
       description:
         "List Crew Matrices (staffing plans per contract/site) with their approval status and staffing (required vs. currently assigned headcount at that site). Use for questions like 'which matrices are still draft' or 'what's the staffing gap on QATAR Test'.",
       inputSchema: z.object({
@@ -282,9 +354,11 @@ export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
         }));
         return { matrices, matched_total: rows.length, truncated: rows.length > matrices.length };
       },
-    }),
+    });
+  }
 
-    mobilization_status: tool({
+  if (can(access, "mobilization.view")) {
+    tools.mobilization_status = tool({
       description:
         "List Mobilization Requests (crew change / boarding cycles) with their status, priority and required onboard date, plus a breakdown of their positions' readiness (open/selected/ready/boarded etc). Use for questions like 'which mobilizations are pending boarding' or 'what's still open on the next mobilization'.",
       inputSchema: z.object({
@@ -329,6 +403,178 @@ export function buildAssistantTools(supabase: Supa, orgId: string): ToolSet {
         }));
         return { mobilizations, matched_total: rows.length, truncated: rows.length > mobilizations.length };
       },
+    });
+  }
+
+  if (can(access, "crew.manage")) {
+    tools.list_offshore_sites = tool({
+      description:
+        "List offshore sites (vessels, rigs, platforms, camps) with their project, status and how many crew are currently assigned there. Use for questions like 'list our sites', 'what sites are on this project', or as a first step before asking about crew/matrices/mobilizations at a specific site.",
+      inputSchema: z.object({
+        status: z.string().optional().describe("Site status filter, e.g. 'active'. Omit to list all statuses."),
+        project_name: z.string().optional().describe("Partial, case-insensitive match against the project name."),
+      }),
+      execute: async (input) => {
+        let q = supabase
+          .from("offshore_sites")
+          .select("id, name, code, site_type, country, status, projects(project_name)")
+          .eq("org_id", orgId)
+          .order("name")
+          .limit(50);
+        if (input.status) q = q.eq("status", input.status);
+        const { data } = await q;
+        let rows = (data ?? []) as OffshoreSiteRow[];
+        if (input.project_name) {
+          const term = input.project_name.toLowerCase();
+          rows = rows.filter((r) => unwrap(r.projects)?.project_name?.toLowerCase().includes(term));
+        }
+
+        const siteIds = rows.map((r) => r.id);
+        const assignedCountBySite = new Map<string, number>();
+        if (siteIds.length) {
+          const { data: assignments } = await supabase.from("crew_assignments").select("offshore_site_id").eq("org_id", orgId).is("end_date", null).in("offshore_site_id", siteIds);
+          for (const a of (assignments ?? []) as { offshore_site_id: string }[])
+            assignedCountBySite.set(a.offshore_site_id, (assignedCountBySite.get(a.offshore_site_id) ?? 0) + 1);
+        }
+
+        const sites = rows.slice(0, LIST_CAP).map((r) => ({
+          name: r.name,
+          code: r.code,
+          site_type: r.site_type,
+          country: r.country,
+          status: r.status,
+          project: unwrap(r.projects)?.project_name ?? "—",
+          currently_assigned_crew: assignedCountBySite.get(r.id) ?? 0,
+        }));
+        return { sites, matched_total: rows.length, truncated: rows.length > sites.length };
+      },
+    });
+  }
+
+  if (can(access, "projects.view")) {
+    tools.list_projects = tool({
+      description:
+        "List projects with their contract, client, status, planned dates and expected POB (persons on board). Use for questions like 'which projects are active' or 'what's the expected POB on this project'.",
+      inputSchema: z.object({
+        status: z.enum(["planned", "mobilizing", "active", "demobilizing", "completed", "cancelled"]).optional(),
+        name_contains: z.string().optional().describe("Partial, case-insensitive match against the project name."),
+      }),
+      execute: async (input) => {
+        let q = supabase
+          .from("projects")
+          .select("project_name, project_code, status, planned_start_date, planned_end_date, expected_pob, contracts(contract_title, clients(name))")
+          .eq("org_id", orgId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (input.status) q = q.eq("status", input.status);
+        const { data } = await q;
+        let rows = (data ?? []) as ProjectRow[];
+        if (input.name_contains) {
+          const term = input.name_contains.toLowerCase();
+          rows = rows.filter((r) => r.project_name?.toLowerCase().includes(term));
+        }
+
+        const projects = rows.slice(0, LIST_CAP).map((r) => {
+          const contract = unwrap(r.contracts);
+          return {
+            project_name: r.project_name,
+            project_code: r.project_code,
+            status: r.status,
+            planned_start_date: r.planned_start_date,
+            planned_end_date: r.planned_end_date,
+            expected_pob: r.expected_pob,
+            contract_title: contract?.contract_title ?? "—",
+            client: contract ? (unwrap(contract.clients)?.name ?? "—") : "—",
+          };
+        });
+        return { projects, matched_total: rows.length, truncated: rows.length > projects.length };
+      },
+    });
+  }
+
+  if (can(access, "contracts.view")) {
+    tools.list_contracts = tool({
+      description:
+        "List contracts with their client, status, planned dates and estimated value. Use for questions like 'which contracts are active' or 'what contracts do we have with <client>'.",
+      inputSchema: z.object({
+        status: z.enum(["draft", "awarded", "mobilizing", "active", "suspended", "completed", "cancelled"]).optional(),
+        client_name: z.string().optional().describe("Partial, case-insensitive match against the client name."),
+      }),
+      execute: async (input) => {
+        let q = supabase
+          .from("contracts")
+          .select("contract_code, contract_title, status, planned_start_date, planned_end_date, estimated_contract_value, currency, clients(name)")
+          .eq("org_id", orgId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (input.status) q = q.eq("status", input.status);
+        const { data } = await q;
+        let rows = (data ?? []) as ContractRow[];
+        if (input.client_name) {
+          const term = input.client_name.toLowerCase();
+          rows = rows.filter((r) => unwrap(r.clients)?.name?.toLowerCase().includes(term));
+        }
+
+        const contracts = rows.slice(0, LIST_CAP).map((r) => ({
+          contract_code: r.contract_code,
+          contract_title: r.contract_title,
+          status: r.status,
+          client: unwrap(r.clients)?.name ?? "—",
+          planned_start_date: r.planned_start_date,
+          planned_end_date: r.planned_end_date,
+          estimated_value: r.estimated_contract_value,
+          currency: r.currency,
+        }));
+        return { contracts, matched_total: rows.length, truncated: rows.length > contracts.length };
+      },
+    });
+  }
+
+  // Corrective Actions has no permission gate — its nav entry is visible to
+  // every company member (see complianceItems in app/app-shell.tsx), so
+  // there's no narrower view permission to check here.
+  tools.corrective_actions_status = tool({
+    description:
+      "List HSE corrective actions (tracked failures from inspection checklists) with status, due date, owner and site. Use for questions like 'how many open corrective actions do we have' or 'which actions are overdue'.",
+    inputSchema: z.object({
+      status: z.enum(["open", "in_progress", "closed"]).optional(),
+      overdue_only: z.boolean().optional().describe("Only actions past their due date that are not yet closed."),
+      site_name: z.string().optional().describe("Partial, case-insensitive match against the site name."),
     }),
-  };
+    execute: async (input) => {
+      let q = supabase
+        .from("corrective_actions")
+        .select("title, owner_name, due_date, status, closed_at, sites(name)")
+        .eq("org_id", orgId)
+        .order("due_date", { ascending: true })
+        .limit(50);
+      if (input.status) q = q.eq("status", input.status);
+      const { data } = await q;
+      let rows = (data ?? []) as CorrectiveActionRow[];
+      if (input.site_name) {
+        const term = input.site_name.toLowerCase();
+        rows = rows.filter((r) => relName(r.sites)?.toLowerCase().includes(term));
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const isOverdue = (r: CorrectiveActionRow) => r.status !== "closed" && !!r.due_date && r.due_date < today;
+      if (input.overdue_only) rows = rows.filter(isOverdue);
+
+      const counts = { open: 0, in_progress: 0, closed: 0, overdue: 0 };
+      for (const r of rows) {
+        if (r.status in counts) counts[r.status as "open" | "in_progress" | "closed"] += 1;
+        if (isOverdue(r)) counts.overdue += 1;
+      }
+      const actions = rows.slice(0, LIST_CAP).map((r) => ({
+        title: r.title,
+        owner: r.owner_name,
+        status: r.status,
+        due_date: r.due_date,
+        site: relName(r.sites) ?? "—",
+        overdue: isOverdue(r),
+      }));
+      return { counts, actions, matched_total: rows.length, truncated: rows.length > actions.length };
+    },
+  });
+
+  return tools;
 }
