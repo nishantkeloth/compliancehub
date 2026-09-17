@@ -211,7 +211,31 @@ export default function IntakePanel() {
               accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg"
               className={`${inputCls} w-full mt-1`}
               style={inputStyle}
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setFiles((fs) => [...fs, ...picked]);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {/* accept + capture="environment" opens the rear camera directly on a
+              phone/tablet browser instead of the file picker — desktop browsers
+              just ignore `capture` and fall back to their normal file dialog. */}
+          <label
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold border cursor-pointer mb-2"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+          >
+            📷 Take a photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setFiles((fs) => [...fs, ...picked]);
+                e.target.value = "";
+              }}
             />
           </label>
           {files.length > 0 && (
