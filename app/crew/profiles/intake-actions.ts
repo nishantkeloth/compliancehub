@@ -172,10 +172,19 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   // this block is non-fatal — a bad render/crop shouldn't sink the
   // whole intake, it just means no photo gets proposed.
   let photoUrl: string | null = null;
+  // Surfaced back to the reviewer via `assumptions` (rather than swallowed)
+  // whenever the AI DID propose a photo but the crop/upload didn't end up
+  // producing a usable photoUrl — a silent failure here just looks like
+  // "AI missed the photo" to whoever's using the intake screen, when it's
+  // actually a rendering/upload problem worth knowing about.
+  let photoNote: string | null = null;
   const photoProposal = result.object.photo;
   if (photoProposal) {
     const source = extracted.find((e) => e.filename === photoProposal.source_filename && e.needsModelVision);
-    if (source) {
+    if (!source) {
+      const sentFilenames = extracted.filter((e) => e.needsModelVision).map((e) => e.filename).join(", ") || "none";
+      photoNote = `Photo auto-detect: the AI named "${photoProposal.source_filename}" for the photo, but that filename wasn't among the files sent to it as an image (sent: ${sentFilenames}).`;
+    } else {
       try {
         let raster: Buffer;
         if (source.mediaType === "application/pdf") {
@@ -207,10 +216,14 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
           if (!photoUpErr) {
             const { data: pub } = supabase.storage.from("crew-photos").getPublicUrl(photoPath);
             photoUrl = pub.publicUrl;
+          } else {
+            photoNote = `Photo auto-detect: cropped the photo but the upload to storage failed: ${photoUpErr.message}`;
           }
+        } else {
+          photoNote = `Photo auto-detect: rendered "${source.filename}"${photoProposal.source_page ? ` page ${photoProposal.source_page}` : ""} but got no usable image dimensions (${w}x${h}).`;
         }
-      } catch {
-        // Leave photoUrl null — see comment above.
+      } catch (e) {
+        photoNote = `Photo auto-detect: failed while rendering/cropping "${source.filename}"${photoProposal.source_page ? ` page ${photoProposal.source_page}` : ""} — ${e instanceof Error ? e.message : String(e)}`;
       }
     }
   }
@@ -253,7 +266,7 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       documents,
       photoUrl,
       name_mismatch_warning: result.object.name_mismatch_warning,
-      assumptions: result.object.assumptions,
+      assumptions: photoNote ? [...result.object.assumptions, photoNote] : result.object.assumptions,
       duplicates,
       modelLabel: `${result.model.display_name} (${result.model.cost_tier})`,
       attempts: result.attempts,
