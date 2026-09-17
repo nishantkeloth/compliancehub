@@ -404,6 +404,115 @@ export async function listCandidates(positionId: string): Promise<{ candidates: 
   return { candidates };
 }
 
+export type StaffingProposal = {
+  positionId: string;
+  positionSequence: number;
+  jobRoleId: string;
+  jobRoleName: string;
+  crewId: string | null;
+  crewName: string | null;
+  employeeCode: string | null;
+  tier: CandidateTier | null;
+  reasons: string[];
+  note: string | null;
+};
+
+// "Propose staffing" — runs the exact same Phase 3/4 candidate + readiness
+// engine used by "Select candidate" (listCandidates) on every open
+// position at once, and greedily proposes one name per slot: eligible
+// tier preferred over partial, ties broken by whoever has been free
+// longest (earliest availability_date) for a fairer rotation spread, and
+// the same person is never proposed twice in one batch — the DB
+// reservation lock only prevents that once a proposal is actually
+// applied via selectCandidate, so this dedupes ahead of time rather than
+// proposing something that would fail on apply. No model call happens
+// here — "propose" is the same deterministic engine, just batched and
+// ranked — and nothing is written until the caller confirms specific
+// proposals via applyStaffingProposals, matching the "AI proposes,
+// people approve" principle already used for AI-assisted crew matrices
+// (Phase 9).
+export async function proposeStaffing(requestId: string): Promise<{ proposals: StaffingProposal[] } | { error: string }> {
+  const { supabase } = await requireManage();
+  await assertNotTerminal(supabase, requestId);
+
+  const { data: positions, error } = await supabase
+    .from("mobilization_positions")
+    .select("id, position_sequence, job_role_id, job_roles(name)")
+    .eq("mobilization_request_id", requestId)
+    .eq("final_status", "pending")
+    .is("selected_crew_id", null)
+    .order("position_sequence", { ascending: true });
+  if (error) return { error: error.message };
+  if (!positions || positions.length === 0) return { proposals: [] };
+
+  const usedCrewIds = new Set<string>();
+  const proposals: StaffingProposal[] = [];
+  const byAvailability = (a: Candidate, b: Candidate) => (a.availability_date ?? "").localeCompare(b.availability_date ?? "") || a.full_name.localeCompare(b.full_name);
+
+  for (const p of positions) {
+    const roleRel = Array.isArray(p.job_roles) ? p.job_roles[0] : p.job_roles;
+    const jobRoleName = (roleRel as { name?: string } | null)?.name ?? "—";
+    const base = { positionId: p.id as string, positionSequence: p.position_sequence as number, jobRoleId: p.job_role_id as string, jobRoleName };
+
+    const result = await listCandidates(p.id as string);
+    if ("error" in result) {
+      proposals.push({ ...base, crewId: null, crewName: null, employeeCode: null, tier: null, reasons: [], note: result.error });
+      continue;
+    }
+
+    const pool = result.candidates.filter((c) => !usedCrewIds.has(c.id) && c.tier !== "ineligible");
+    const eligible = pool.filter((c) => c.tier === "eligible").sort(byAvailability);
+    const partial = pool.filter((c) => c.tier === "partial").sort(byAvailability);
+    const pick = eligible[0] ?? partial[0];
+
+    if (!pick) {
+      proposals.push({
+        ...base,
+        crewId: null,
+        crewName: null,
+        employeeCode: null,
+        tier: null,
+        reasons: [],
+        note: "No eligible or partial candidate available — every match is either ineligible or already proposed for another slot.",
+      });
+      continue;
+    }
+
+    usedCrewIds.add(pick.id);
+    proposals.push({
+      ...base,
+      crewId: pick.id,
+      crewName: pick.full_name,
+      employeeCode: pick.employee_code,
+      tier: pick.tier,
+      reasons: pick.reasons,
+      note: pick.tier === "partial" ? "Best available match has warnings below — review before confirming." : null,
+    });
+  }
+
+  return { proposals };
+}
+
+// Confirms a subset of the proposals from proposeStaffing by reserving
+// each one through the normal selectCandidate path — same reservation
+// lock, same audit trail, nothing bypassed. Applied one at a time so an
+// early failure (e.g. someone else reserved the same person in the
+// meantime) doesn't abort the rest of the batch.
+export async function applyStaffingProposals(
+  requestId: string,
+  selections: { positionId: string; crewId: string }[]
+): Promise<{ applied: string[]; failed: { positionId: string; error: string }[] }> {
+  const applied: string[] = [];
+  const failed: { positionId: string; error: string }[] = [];
+  for (const sel of selections) {
+    const res = await selectCandidate(sel.positionId, requestId, sel.crewId);
+    if (res?.error) failed.push({ positionId: sel.positionId, error: res.error });
+    else applied.push(sel.positionId);
+  }
+  revalidateMobilization(requestId);
+  return { applied, failed };
+}
+
 // Live per-check readiness for the position's currently selected
 // candidate — what the position detail UI uses to explain exactly why
 // a person is/isn't ready (Phase 4 acceptance criteria), and what

@@ -15,7 +15,10 @@ import {
   confirmBoarding,
   getPositionReadiness,
   listWaiversForPosition,
+  proposeStaffing,
+  applyStaffingProposals,
   type Candidate,
+  type StaffingProposal,
 } from "../actions";
 import { requestWaiver, decideWaiver, cancelWaiver } from "../waivers-actions";
 import { CHECK_DESCRIPTIONS, type CheckCode, type ReadinessCheck, type OverallOutcome } from "@/lib/readiness";
@@ -115,6 +118,10 @@ export default function PositionsBoard({
   const [, startTransition] = useTransition();
   const [addingRole, setAddingRole] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [proposing, setProposing] = useState(false);
+  const [proposals, setProposals] = useState<StaffingProposal[] | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyOutcome, setApplyOutcome] = useState<{ applied: number; failed: { positionId: string; error: string }[] } | null>(null);
 
   const groups = new Map<string, Position[]>();
   for (const p of positions) {
@@ -122,6 +129,8 @@ export default function PositionsBoard({
     list.push(p);
     groups.set(p.job_role_id, list);
   }
+
+  const openPositionCount = positions.filter((p) => p.final_status === "pending" && !p.selected_crew_id).length;
 
   const run = (fn: () => Promise<{ error?: string } | undefined>) => {
     setError(null);
@@ -132,6 +141,21 @@ export default function PositionsBoard({
         return;
       }
       router.refresh();
+    });
+  };
+
+  const runPropose = () => {
+    setError(null);
+    setApplyOutcome(null);
+    setProposing(true);
+    setProposals(null);
+    proposeStaffing(requestId).then((res) => {
+      setProposing(false);
+      if ("error" in res) {
+        setError(res.error);
+        return;
+      }
+      setProposals(res.proposals);
     });
   };
 
@@ -158,11 +182,49 @@ export default function PositionsBoard({
               onCancel={() => setAddingRole(false)}
             />
           ) : (
-            <button onClick={() => setAddingRole(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">
-              + Add position outside the matrix
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => setAddingRole(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">
+                + Add position outside the matrix
+              </button>
+              {openPositionCount > 0 && (
+                <button
+                  onClick={runPropose}
+                  disabled={proposing}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+                  title="Propose a candidate for every open position using the same eligibility engine as Select candidate"
+                >
+                  {proposing ? "Proposing…" : `✦ Propose staffing (${openPositionCount} open)`}
+                </button>
+              )}
+            </div>
           )}
         </div>
+      )}
+
+      {proposals && (
+        <ProposeStaffingPanel
+          proposals={proposals}
+          applying={applying}
+          applyOutcome={applyOutcome}
+          onCancel={() => {
+            setProposals(null);
+            setApplyOutcome(null);
+          }}
+          onConfirm={(selections) => {
+            setApplying(true);
+            setApplyOutcome(null);
+            applyStaffingProposals(requestId, selections).then((res) => {
+              setApplying(false);
+              setApplyOutcome({ applied: res.applied.length, failed: res.failed });
+              if (res.applied.length > 0) router.refresh();
+              // Drop applied proposals from the review list; keep failed ones
+              // (with their error) so the user can see what still needs
+              // manual attention without losing context.
+              setProposals((cur) => (cur ? cur.filter((p) => !res.applied.includes(p.positionId)) : cur));
+            });
+          }}
+        />
       )}
 
       {positions.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No positions yet — generate them from the crew matrix.</div>}
@@ -248,6 +310,143 @@ function AddPositionForm({
         <button onClick={save} disabled={!jobRoleId || !reason.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Add position</button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+function ProposeStaffingPanel({
+  proposals,
+  applying,
+  applyOutcome,
+  onCancel,
+  onConfirm,
+}: {
+  proposals: StaffingProposal[];
+  applying: boolean;
+  applyOutcome: { applied: number; failed: { positionId: string; error: string }[] } | null;
+  onCancel: () => void;
+  onConfirm: (selections: { positionId: string; crewId: string }[]) => void;
+}) {
+  const [checked, setChecked] = useState<Set<string>>(new Set(proposals.filter((p) => p.crewId).map((p) => p.positionId)));
+
+  const toggle = (positionId: string) => {
+    setChecked((cur) => {
+      const next = new Set(cur);
+      if (next.has(positionId)) next.delete(positionId);
+      else next.add(positionId);
+      return next;
+    });
+  };
+
+  const matched = proposals.filter((p) => p.crewId);
+  const unmatched = proposals.filter((p) => !p.crewId);
+  const selectedCount = matched.filter((p) => checked.has(p.positionId)).length;
+
+  const failedByPosition = new Map((applyOutcome?.failed ?? []).map((f) => [f.positionId, f.error]));
+
+  return (
+    <div className={`${cardCls} p-4 mb-4`} style={{ ...cardStyle, background: "var(--ch-navy-soft)" }}>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+        <div className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>✦ Proposed staffing</div>
+        <button onClick={onCancel} className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>Close</button>
+      </div>
+      <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        Same eligibility check as &quot;Select candidate&quot;, run for every open position at once — nothing is reserved until you confirm below.
+      </div>
+
+      {applyOutcome && (
+        <div
+          className="text-xs rounded-lg px-3 py-2 mb-3"
+          style={
+            applyOutcome.failed.length === 0
+              ? { background: "var(--ch-pass-bg)", color: "var(--ch-pass)" }
+              : { background: "#fef3e2", color: "#b45309" }
+          }
+        >
+          Confirmed {applyOutcome.applied} selection{applyOutcome.applied === 1 ? "" : "s"}.
+          {applyOutcome.failed.length > 0 && ` ${applyOutcome.failed.length} couldn't be applied — see below.`}
+        </div>
+      )}
+
+      {matched.length === 0 && unmatched.length === 0 && (
+        <div className="text-sm" style={{ color: "var(--ch-sub)" }}>All open positions already have a candidate selected.</div>
+      )}
+
+      {matched.length > 0 && (
+        <div className="bg-white rounded-xl overflow-hidden mb-3" style={{ border: "1px solid var(--ch-line)" }}>
+          {matched.map((p) => {
+            const failReason = failedByPosition.get(p.positionId);
+            return (
+              <div key={p.positionId} className="p-3 flex items-start gap-3 border-t first:border-t-0" style={{ borderColor: "var(--ch-line)" }}>
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={checked.has(p.positionId)}
+                  onChange={() => toggle(p.positionId)}
+                  disabled={applying}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+                      #{p.positionSequence}
+                    </span>
+                    <span className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>{p.jobRoleName}</span>
+                    <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>
+                      {p.crewName} {p.employeeCode ? `(${p.employeeCode})` : ""}
+                    </span>
+                    {p.tier && pill(p.tier, TIER_COLORS[p.tier].bg, TIER_COLORS[p.tier].fg)}
+                  </div>
+                  {p.note && <div className="text-xs mt-1" style={{ color: "#b45309" }}>{p.note}</div>}
+                  {p.reasons.length > 0 && (
+                    <ul className="text-xs mt-1 list-disc pl-4" style={{ color: "var(--ch-sub)" }}>
+                      {p.reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {failReason && <div className="text-xs mt-1 font-semibold" style={{ color: "var(--ch-fail)" }}>Couldn&apos;t apply: {failReason}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {unmatched.length > 0 && (
+        <div className="bg-white rounded-xl overflow-hidden mb-3" style={{ border: "1px solid var(--ch-line)" }}>
+          {unmatched.map((p) => (
+            <div key={p.positionId} className="p-3 flex items-start gap-3 border-t first:border-t-0" style={{ borderColor: "var(--ch-line)" }}>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
+                    #{p.positionSequence}
+                  </span>
+                  <span className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>{p.jobRoleName}</span>
+                  <span className="text-xs italic" style={{ color: "var(--ch-sub)" }}>No candidate proposed</span>
+                </div>
+                {p.note && <div className="text-xs mt-1" style={{ color: "var(--ch-fail)" }}>{p.note}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {matched.length > 0 && (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() =>
+              onConfirm(matched.filter((p) => checked.has(p.positionId) && p.crewId).map((p) => ({ positionId: p.positionId, crewId: p.crewId as string })))
+            }
+            disabled={applying || selectedCount === 0}
+            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          >
+            {applying ? "Confirming…" : `Confirm ${selectedCount} selection${selectedCount === 1 ? "" : "s"}`}
+          </button>
+          <button onClick={onCancel} disabled={applying} className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50" style={{ borderColor: "var(--ch-line)" }}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </div>
   );
 }
