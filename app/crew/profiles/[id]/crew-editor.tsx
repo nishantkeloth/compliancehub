@@ -23,6 +23,7 @@ import {
   getCrewDocumentVersions,
   getCrewDocumentFileUrl,
 } from "../actions";
+import { extractCrewDocumentFields } from "../document-ai-actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
@@ -1108,6 +1109,36 @@ function UploadPanel({
   const [expiryDate, setExpiryDate] = useState(crewDocument.expiry_date ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [readNote, setReadNote] = useState<string | null>(null);
+  const [usedAiRead, setUsedAiRead] = useState(false);
+
+  const autoRead = async () => {
+    if (!file) {
+      setError("Choose a file first, then Auto-read.");
+      return;
+    }
+    setReading(true);
+    setError(null);
+    setReadNote(null);
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await extractCrewDocumentFields(typeName, fd);
+    setReading(false);
+    if ("error" in res) {
+      setError(res.error);
+      return;
+    }
+    const { result } = res;
+    if (result.document_number) setDocumentNumber(result.document_number);
+    if (result.issue_date) setIssueDate(result.issue_date);
+    if (result.expiry_date) setExpiryDate(result.expiry_date);
+    setUsedAiRead(true);
+    const notes: string[] = [`Read by ${result.modelLabel} — check the values before uploading.`];
+    if (result.typeMismatch) notes.push(`This looks like it might be "${result.document_type_name}", not "${typeName}" — double check you're uploading the right document.`);
+    if (result.confidence < 0.5) notes.push("Low confidence — the document may be unclear or partly unreadable.");
+    setReadNote(notes.join(" "));
+  };
 
   const submit = async () => {
     if (!file) {
@@ -1121,7 +1152,7 @@ function UploadPanel({
     fd.set("documentNumber", documentNumber);
     fd.set("issueDate", issueDate);
     fd.set("expiryDate", expiryDate);
-    fd.set("source", "manual");
+    fd.set("source", usedAiRead ? "ai_upload" : "manual");
     const res = await uploadCrewDocumentVersion(crewDocument.id, crewId, fd);
     setBusy(false);
     if (res?.error) {
@@ -1137,22 +1168,60 @@ function UploadPanel({
       {error && (
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>
       )}
+      {readNote && !error && (
+        <div className="text-sm rounded-lg px-3 py-2" style={{ background: "#fff6e0", color: "#9a6b00" }}>{readNote}</div>
+      )}
       <input
         type="file"
         accept="application/pdf,image/*"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => {
+          setFile(e.target.files?.[0] ?? null);
+          setUsedAiRead(false);
+          setReadNote(null);
+        }}
         className="text-sm"
       />
+      <div>
+        <button
+          onClick={autoRead}
+          disabled={!file || reading}
+          className="text-xs font-semibold rounded-lg border px-3 py-1.5 disabled:opacity-50"
+          style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+        >
+          {reading ? "Reading…" : "Auto-read number & expiry"}
+        </button>
+      </div>
       <div className="flex gap-2 flex-wrap">
         <input
           className={inputCls}
           style={inputStyle}
           placeholder="Document number"
           value={documentNumber}
-          onChange={(e) => setDocumentNumber(e.target.value)}
+          onChange={(e) => {
+            setDocumentNumber(e.target.value);
+            setUsedAiRead(false);
+          }}
         />
-        <input type="date" className={inputCls} style={inputStyle} value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
-        <input type="date" className={inputCls} style={inputStyle} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+        <input
+          type="date"
+          className={inputCls}
+          style={inputStyle}
+          value={issueDate}
+          onChange={(e) => {
+            setIssueDate(e.target.value);
+            setUsedAiRead(false);
+          }}
+        />
+        <input
+          type="date"
+          className={inputCls}
+          style={inputStyle}
+          value={expiryDate}
+          onChange={(e) => {
+            setExpiryDate(e.target.value);
+            setUsedAiRead(false);
+          }}
+        />
       </div>
       <div className="flex gap-2">
         <button onClick={submit} disabled={busy} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
