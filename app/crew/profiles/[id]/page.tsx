@@ -101,10 +101,10 @@ export default async function CrewProfileDetailPage({
   return (
     <>
       <Link href="/crew/profiles" className="text-sm hover:underline" style={{ color: "var(--ch-navy)" }}>
-        ‹ All crew profiles
+        ‹ All crew
       </Link>
 
-      {/* The shared header above now shows the static "Crew Profiles"
+      {/* The shared header above now shows the static "Crew Register"
           section title (derived from the URL), so the specific crew
           member's name is shown here instead. */}
       <h2 className="text-lg font-bold mt-2 mb-4" style={{ color: "var(--ch-ink)" }}>
