@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { submitSelfUploadDocument, extractSelfUploadDocumentFields } from "@/app/crew/profiles/upload-link-actions";
 import type { DocumentReadResult } from "@/app/crew/profiles/document-ai-actions";
@@ -86,6 +86,7 @@ function DocumentUploadItem({
   const [pendingRead, setPendingRead] = useState<DocumentReadResult | null>(null);
   const [confirmedByAi, setConfirmedByAi] = useState(false);
   const [aiNote, setAiNote] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const autoRead = async (targetFile?: File) => {
     const f = targetFile ?? file;
@@ -185,6 +186,7 @@ function DocumentUploadItem({
       ) : (
         <>
           <input
+            ref={fileInputRef}
             type="file"
             disabled={busy}
             onChange={(e) => {
@@ -194,8 +196,24 @@ function DocumentUploadItem({
               setAiNote(null);
               if (f) autoRead(f);
             }}
-            className="text-sm mt-2 block disabled:opacity-50"
+            className="hidden"
           />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+              className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+            >
+              + Choose file
+            </button>
+            {file && (
+              <span className="text-xs truncate" style={{ color: "var(--ch-sub)" }}>
+                {file.name}
+              </span>
+            )}
+          </div>
           <div className="mt-2">
             <button
               onClick={() => autoRead()}

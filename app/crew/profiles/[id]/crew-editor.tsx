@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   updateCrewProfile,
@@ -1142,6 +1142,7 @@ function UploadPanel({
   const [saved, setSaved] = useState(false);
   const [savedFileName, setSavedFileName] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const autoRead = async (targetFile?: File) => {
     const f = targetFile ?? file;
@@ -1228,6 +1229,7 @@ function UploadPanel({
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "#e6f4ea", color: "#1e7a34" }}>AI-read values confirmed below — edit anything before uploading if needed.</div>
       )}
       <input
+        ref={fileInputRef}
         type="file"
         accept="application/pdf,image/*"
         disabled={busy}
@@ -1237,8 +1239,24 @@ function UploadPanel({
           setUsedAiRead(false);
           if (f) autoRead(f);
         }}
-        className="text-sm disabled:opacity-50"
+        className="hidden"
       />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={busy}
+          className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+        >
+          + Choose file
+        </button>
+        {file && (
+          <span className="text-xs truncate" style={{ color: "var(--ch-sub)" }}>
+            {file.name}
+          </span>
+        )}
+      </div>
       <div>
         <button
           onClick={() => autoRead()}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { aiAvailability, generateMatrixDraft, saveGeneratedMatrix, discardGeneration, type MappedProposal, type MappedLine } from "../ai-actions";
@@ -99,6 +99,7 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
   const [notes, setNotes] = useState("");
   const [resolved, setResolved] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     aiAvailability().then(setAvailability).catch((e) => setAvailability({ enabled: false, reason: e instanceof Error ? e.message : String(e), maxUploadMb: 20, documentCapable: false }));
@@ -209,10 +210,31 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
         </div>
         {mode === "document" && (
           <div className="space-y-2 mb-3">
-            <label className={lbl} style={lblStyle}>
+            <div className={lbl} style={lblStyle}>
               Upload document (PDF, Word, Excel, image or text{availability ? `, up to ${availability.maxUploadMb} MB` : ""})
-              <input type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg" className={`${inputCls} w-full mt-1`} style={inputStyle} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg"
+                className="hidden"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+              <div className="mt-1 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-lg border px-4 py-2 text-sm font-semibold"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+                >
+                  + Choose file
+                </button>
+                {file && (
+                  <span className="text-xs truncate" style={{ color: "var(--ch-sub)" }}>
+                    {file.name}
+                  </span>
+                )}
+              </div>
+            </div>
             {availability && !availability.documentCapable && file && /\.(png|jpe?g)$/i.test(file.name) && (
               <div className="text-xs" style={{ color: "#b45309" }}>No configured model accepts images — a scanned document will fail; paste the text instead or enable a document-capable model.</div>
             )}
