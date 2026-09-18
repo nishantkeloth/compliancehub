@@ -538,7 +538,7 @@ export async function getCrewDocumentVersions(documentId: string) {
   const { data, error } = await supabase
     .from("crew_document_versions")
     .select(
-      "id, version_number, file_name, file_size_bytes, document_number, issue_date, expiry_date, source, uploaded_by, created_at, crew_document_version_reviews(decision, note, reviewed_by, created_at)"
+      "id, version_number, file_name, file_size_bytes, document_number, issue_date, expiry_date, source, notes, uploaded_by, created_at, crew_document_version_reviews(decision, note, reviewed_by, created_at)"
     )
     .eq("crew_document_id", documentId)
     .order("version_number", { ascending: false });

@@ -71,15 +71,24 @@ Rules:
 
 export type DocumentReadResult = CrewIntakeDocumentProposal & { typeMismatch: boolean; modelLabel: string };
 
-export async function extractCrewDocumentFields(
+// Factored out so both the staff live-upload panel (extractCrewDocumentFields
+// below, permission-checked + authenticated supabase client) and two later
+// callers can share it: extractCrewDocumentVersionFields (staff reviewing an
+// already-stored self-upload — reads it back off storage) and
+// upload-link-actions.ts's extractSelfUploadDocumentFields (the crew
+// member's own page, token-checked instead of permission-checked, admin
+// client since there's no session). None of those checks belong in here —
+// callers do their own authorization first and pass in whichever client and
+// userId are appropriate for how they got there; this function only knows
+// how to turn a file + expected type name into a reading.
+export async function readDocumentFields(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supa in lib/ai/router.ts is itself `any`; both the authenticated and admin (service-role) clients are valid here
+  supabase: any,
+  orgId: string,
+  userId: string,
   typeName: string,
-  formData: FormData
+  file: File
 ): Promise<{ result: DocumentReadResult } | { error: string }> {
-  const { supabase, orgId, userId } = await requireDocumentsManage();
-
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file first." };
-
   const ctx = await loadAiContext(supabase, orgId);
   if (!ctx.settings.ai_enabled) return { error: "AI reading isn't enabled for this company (Administration → AI Settings) — enter the number and expiry manually." };
   const maxBytes = ctx.settings.max_upload_mb * 1024 * 1024;
@@ -115,4 +124,45 @@ export async function extractCrewDocumentFields(
       modelLabel: result.model.display_name,
     },
   };
+}
+
+export async function extractCrewDocumentFields(
+  typeName: string,
+  formData: FormData
+): Promise<{ result: DocumentReadResult } | { error: string }> {
+  const { supabase, orgId, userId } = await requireDocumentsManage();
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file first." };
+  return readDocumentFields(supabase, orgId, userId, typeName, file);
+}
+
+// Staff reviewing a pending self-upload — reads the file already sitting in
+// storage rather than one freshly picked in the browser, so the review
+// screen can offer the same Auto-read the crew member had, in case they
+// skipped it or the reviewer just wants a second read. Only ever reaches a
+// version whose crew_document belongs to this org, same as every other
+// crew.documents.manage action.
+export async function extractCrewDocumentVersionFields(
+  versionId: string
+): Promise<{ result: DocumentReadResult } | { error: string }> {
+  const { supabase, orgId, userId } = await requireDocumentsManage();
+
+  const { data: version, error: versionErr } = await supabase
+    .from("crew_document_versions")
+    .select("file_path, file_name, content_type, crew_document_id, crew_documents(document_type_id, document_types(name))")
+    .eq("id", versionId)
+    .eq("org_id", orgId)
+    .single();
+  if (versionErr || !version) return { error: "Version not found." };
+
+  const typeRow = Array.isArray(version.crew_documents) ? version.crew_documents[0] : version.crew_documents;
+  const dtRow = typeRow ? (Array.isArray(typeRow.document_types) ? typeRow.document_types[0] : typeRow.document_types) : null;
+  const typeName = dtRow?.name ?? "document";
+
+  const { data: blob, error: dlErr } = await supabase.storage.from("crew-documents").download(version.file_path);
+  if (dlErr || !blob) return { error: `Could not read the stored file: ${dlErr?.message ?? "not found"}` };
+  const arrayBuffer = await blob.arrayBuffer();
+  const file = new File([arrayBuffer], version.file_name ?? "document", { type: version.content_type ?? blob.type });
+
+  return readDocumentFields(supabase, orgId, userId, typeName, file);
 }

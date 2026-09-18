@@ -29,6 +29,7 @@ import {
   listDocumentUploadLinks,
   revokeDocumentUploadLink,
   reviewCrewDocumentVersion,
+  extractCrewDocumentVersionFields,
 } from "../upload-link-actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
@@ -1262,6 +1263,7 @@ type CrewDocumentVersion = {
   issue_date: string | null;
   expiry_date: string | null;
   source: string;
+  notes: string | null;
   uploaded_by: string | null;
   created_at: string;
   crew_document_version_reviews?: { decision: string; note: string | null; reviewed_by: string | null; created_at: string }[];
@@ -1308,10 +1310,14 @@ function VersionHistoryPanel({ documentId, crewId, canManage }: { documentId: st
     if (res.url) window.open(res.url, "_blank", "noopener,noreferrer");
   };
 
-  const review = async (versionId: string, decision: "approved" | "rejected") => {
+  const review = async (
+    versionId: string,
+    decision: "approved" | "rejected",
+    overrides?: { documentNumber?: string; issueDate?: string; expiryDate?: string }
+  ) => {
     if (decision === "rejected" && !window.confirm("Reject this self-uploaded document? It stays on file, but won't update the crew member's record.")) return;
     setReviewingId(versionId);
-    const res = await reviewCrewDocumentVersion(versionId, crewId, decision);
+    const res = await reviewCrewDocumentVersion(versionId, crewId, decision, overrides);
     setReviewingId(null);
     if (res?.error) {
       setError(res.error);
@@ -1355,29 +1361,115 @@ function VersionHistoryPanel({ documentId, crewId, canManage }: { documentId: st
                 </span>
               )}
             </div>
+            {v.notes && <div className="mt-0.5" style={{ color: "var(--ch-sub)" }}>{v.notes}</div>}
             {isPending && canManage && (
-              <div className="flex gap-2 mt-1">
-                <button
-                  onClick={() => review(v.id, "approved")}
-                  disabled={reviewingId === v.id}
-                  className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "#1e7a34" }}
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => review(v.id, "rejected")}
-                  disabled={reviewingId === v.id}
-                  className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
-                >
-                  Reject
-                </button>
-              </div>
+              <PendingReviewRow
+                version={v}
+                busy={reviewingId === v.id}
+                onApprove={(overrides) => review(v.id, "approved", overrides)}
+                onReject={() => review(v.id, "rejected")}
+              />
             )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// The crew member's own submitted number/dates (if any) are editable
+// here before approving — Approve applies whatever's in these fields at
+// that moment, not what was originally typed, so a reviewer can correct
+// a mistake or run Auto-read without ever touching the version row
+// itself (see reviewCrewDocumentVersion's overrides param).
+function PendingReviewRow({
+  version,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  version: CrewDocumentVersion;
+  busy: boolean;
+  onApprove: (overrides: { documentNumber?: string; issueDate?: string; expiryDate?: string }) => void;
+  onReject: () => void;
+}) {
+  const [documentNumber, setDocumentNumber] = useState(version.document_number ?? "");
+  const [issueDate, setIssueDate] = useState(version.issue_date ?? "");
+  const [expiryDate, setExpiryDate] = useState(version.expiry_date ?? "");
+  const [reading, setReading] = useState(false);
+  const [readNote, setReadNote] = useState<string | null>(null);
+
+  const autoRead = async () => {
+    setReading(true);
+    setReadNote(null);
+    const res = await extractCrewDocumentVersionFields(version.id);
+    setReading(false);
+    if ("error" in res) {
+      setReadNote(res.error);
+      return;
+    }
+    const { result } = res;
+    if (result.document_number) setDocumentNumber(result.document_number);
+    if (result.issue_date) setIssueDate(result.issue_date);
+    if (result.expiry_date) setExpiryDate(result.expiry_date);
+    const notes: string[] = [`Read by ${result.modelLabel} — check before approving.`];
+    if (result.typeMismatch) notes.push(`This may be "${result.document_type_name}", not the requested type.`);
+    if (result.confidence < 0.5) notes.push("Low confidence.");
+    setReadNote(notes.join(" "));
+  };
+
+  return (
+    <div className="mt-1 space-y-1">
+      {readNote && <div className="rounded-lg px-2 py-1" style={{ background: "#fff6e0", color: "#9a6b00" }}>{readNote}</div>}
+      <div className="flex gap-2 flex-wrap">
+        <input
+          className="border rounded-lg px-2 py-1 text-xs"
+          style={{ borderColor: "var(--ch-line)" }}
+          placeholder="Document number"
+          value={documentNumber}
+          onChange={(e) => setDocumentNumber(e.target.value)}
+        />
+        <input
+          type="date"
+          className="border rounded-lg px-2 py-1 text-xs"
+          style={{ borderColor: "var(--ch-line)" }}
+          value={issueDate}
+          onChange={(e) => setIssueDate(e.target.value)}
+        />
+        <input
+          type="date"
+          className="border rounded-lg px-2 py-1 text-xs"
+          style={{ borderColor: "var(--ch-line)" }}
+          value={expiryDate}
+          onChange={(e) => setExpiryDate(e.target.value)}
+        />
+        <button
+          onClick={autoRead}
+          disabled={reading || busy}
+          className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
+          style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+        >
+          {reading ? "Reading…" : "Auto-read"}
+        </button>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onApprove({ documentNumber, issueDate, expiryDate })}
+          disabled={busy}
+          className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
+          style={{ borderColor: "var(--ch-line)", color: "#1e7a34" }}
+        >
+          Approve
+        </button>
+        <button
+          onClick={onReject}
+          disabled={busy}
+          className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
+          style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
+        >
+          Reject
+        </button>
+      </div>
     </div>
   );
 }

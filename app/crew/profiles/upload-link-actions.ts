@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { sendEmail, companyFromAddress } from "@/lib/email";
+import { readDocumentFields, type DocumentReadResult } from "./document-ai-actions";
 
 // Phase 13 follow-up — self-upload link for crew members who don't have
 // a ComplianceHub account. Same random-token pattern already used for
@@ -168,11 +169,18 @@ export async function revokeDocumentUploadLink(linkId: string, crewId: string) {
 // a unique index on crew_document_version_id, so a second review
 // attempt on the same version fails here with a clear message rather
 // than silently overwriting the first decision.
+//
+// `overrides` lets the reviewer correct the number/dates before they're
+// applied — e.g. after running extractCrewDocumentVersionFields on the
+// stored file — WITHOUT ever editing the version row itself (that stays
+// insert-only, exactly as originally submitted, for audit). When
+// omitted, whatever the crew member themselves typed on the version is
+// used, same as before.
 export async function reviewCrewDocumentVersion(
   versionId: string,
   crewId: string,
   decision: "approved" | "rejected",
-  note?: string
+  opts?: { note?: string; documentNumber?: string; issueDate?: string; expiryDate?: string }
 ) {
   const { supabase, access, userId } = await requireDocumentsManage();
 
@@ -187,7 +195,7 @@ export async function reviewCrewDocumentVersion(
     org_id: access.orgId,
     crew_document_version_id: versionId,
     decision,
-    note: note?.trim() || null,
+    note: opts?.note?.trim() || null,
     reviewed_by: userId,
   });
   if (reviewErr) {
@@ -197,10 +205,13 @@ export async function reviewCrewDocumentVersion(
   }
 
   if (decision === "approved") {
+    const documentNumber = opts?.documentNumber?.trim() || version.document_number;
+    const issueDate = opts?.issueDate?.trim() || version.issue_date;
+    const expiryDate = opts?.expiryDate?.trim() || version.expiry_date;
     const syncUpdate: Record<string, unknown> = { updated_by: userId };
-    if (version.document_number) syncUpdate.document_number = version.document_number;
-    if (version.issue_date) syncUpdate.issue_date = version.issue_date;
-    if (version.expiry_date) syncUpdate.expiry_date = version.expiry_date;
+    if (documentNumber) syncUpdate.document_number = documentNumber;
+    if (issueDate) syncUpdate.issue_date = issueDate;
+    if (expiryDate) syncUpdate.expiry_date = expiryDate;
     const { error: syncErr } = await supabase.from("crew_documents").update(syncUpdate).eq("id", version.crew_document_id);
     if (syncErr) return { error: syncErr.message };
   }
@@ -208,6 +219,56 @@ export async function reviewCrewDocumentVersion(
   revalidateDetail(crewId);
   revalidateMatrix();
   return {};
+}
+
+// Same reading extractCrewDocumentFields offers a signed-in staff member
+// mid-upload, but for a version already sitting in storage — used from
+// the review screen so a reviewer can Auto-read a self-uploaded file
+// without re-downloading and re-uploading it themselves.
+export { extractCrewDocumentVersionFields } from "./document-ai-actions";
+
+/* ================= Crew side: auto-read before submitting ================= */
+
+// Same trust boundary as submitSelfUploadDocument: re-validates the
+// token and that this document type was actually requested before
+// spending an AI call on it, and bills the read to the staff member who
+// created the link (runStructured requires a real user id for its usage
+// log) rather than leaving it unattributed. loadAiContext/runStructured
+// only need a Postgres client, so the admin client works here exactly
+// as it does for the actual write — there's still no session to speak
+// of on this page.
+export async function extractSelfUploadDocumentFields(
+  token: string,
+  documentTypeId: string,
+  formData: FormData
+): Promise<{ result: DocumentReadResult } | { error: string }> {
+  const admin = createAdminClient();
+
+  const { data: link, error: linkErr } = await admin
+    .from("crew_document_upload_links")
+    .select("id, org_id, expires_at, revoked_at, created_by")
+    .eq("token", token)
+    .single();
+  if (linkErr || !link) return { error: "This upload link is not valid." };
+  if (link.revoked_at || new Date(link.expires_at) < new Date()) {
+    return { error: "This upload link has expired or been revoked." };
+  }
+
+  const { data: item, error: itemErr } = await admin
+    .from("crew_document_upload_link_items")
+    .select("document_type_id, document_types(name)")
+    .eq("link_id", link.id)
+    .eq("document_type_id", documentTypeId)
+    .maybeSingle();
+  if (itemErr || !item) return { error: "That document type wasn't requested on this link." };
+  const dtRow = Array.isArray(item.document_types) ? item.document_types[0] : item.document_types;
+  const typeName = dtRow?.name ?? "document";
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file first." };
+  if (!link.created_by) return { error: "This link has no owner on record — ask your company to re-send it." };
+
+  return readDocumentFields(admin, link.org_id, link.created_by, typeName, file);
 }
 
 /* ================= Crew side: the public, unauthenticated upload ================= */
@@ -286,6 +347,10 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
   const documentNumber = (formData.get("documentNumber") as string | null)?.trim() || null;
   const issueDate = (formData.get("issueDate") as string | null)?.trim() || null;
   const expiryDate = (formData.get("expiryDate") as string | null)?.trim() || null;
+  // Set only when the crew member used Auto-read before submitting — carries
+  // the model's own note (confidence/type-mismatch warnings) into the
+  // version's notes column so a reviewer sees it without re-running the read.
+  const aiNote = (formData.get("aiNote") as string | null)?.trim() || null;
 
   const { error: versionErr } = await admin.from("crew_document_versions").insert({
     org_id: link.org_id,
@@ -301,6 +366,7 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
     expiry_date: expiryDate,
     source: "self_upload",
     upload_link_id: link.id,
+    notes: aiNote,
   });
   if (versionErr) return { error: versionErr.message };
 

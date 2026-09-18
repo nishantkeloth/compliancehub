@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { submitSelfUploadDocument } from "@/app/crew/profiles/upload-link-actions";
+import { submitSelfUploadDocument, extractSelfUploadDocumentFields } from "@/app/crew/profiles/upload-link-actions";
 
 type PreviewItem = { document_type_id: string; name: string; category: string | null; has_current_file: boolean };
 type Preview =
@@ -80,6 +80,34 @@ function DocumentUploadItem({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [readNote, setReadNote] = useState<string | null>(null);
+
+  const autoRead = async () => {
+    if (!file) {
+      setError("Choose a file first, then Auto-read.");
+      return;
+    }
+    setReading(true);
+    setError(null);
+    setReadNote(null);
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await extractSelfUploadDocumentFields(token, item.document_type_id, fd);
+    setReading(false);
+    if ("error" in res) {
+      setError(res.error);
+      return;
+    }
+    const { result } = res;
+    if (result.document_number) setDocumentNumber(result.document_number);
+    if (result.issue_date) setIssueDate(result.issue_date);
+    if (result.expiry_date) setExpiryDate(result.expiry_date);
+    const notes: string[] = [`Read by ${result.modelLabel} — check the values before submitting.`];
+    if (result.typeMismatch) notes.push(`This looks like it might be "${result.document_type_name}", not "${item.name}" — double check you picked the right file.`);
+    if (result.confidence < 0.5) notes.push("Low confidence — the document may be unclear or partly unreadable.");
+    setReadNote(notes.join(" "));
+  };
 
   const submit = async () => {
     setError(null);
@@ -93,6 +121,7 @@ function DocumentUploadItem({
     if (documentNumber.trim()) fd.set("documentNumber", documentNumber.trim());
     if (issueDate) fd.set("issueDate", issueDate);
     if (expiryDate) fd.set("expiryDate", expiryDate);
+    if (readNote) fd.set("aiNote", readNote);
     const res = await submitSelfUploadDocument(token, item.document_type_id, fd);
     setBusy(false);
     if (res?.error) {
@@ -133,9 +162,27 @@ function DocumentUploadItem({
         <>
           <input
             type="file"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              setReadNote(null);
+            }}
             className="text-sm mt-2 block"
           />
+          <div className="mt-2">
+            <button
+              onClick={autoRead}
+              disabled={!file || reading}
+              className="text-xs font-semibold rounded-lg border px-3 py-1.5 disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+            >
+              {reading ? "Reading…" : "Auto-read number & expiry"}
+            </button>
+          </div>
+          {readNote && (
+            <div className="text-xs rounded-lg px-2 py-1.5 mt-2" style={{ background: "#fff6e0", color: "#9a6b00" }}>
+              {readNote}
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-2 mt-2">
             <input
               className="border rounded-lg px-2 py-1.5 text-xs"
