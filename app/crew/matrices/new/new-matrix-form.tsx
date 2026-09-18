@@ -181,7 +181,9 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
             </label>
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
-            You&rsquo;ll add roles, headcounts, and requirements on the matrix page after saving.
+            If the selected site already has manning requirements, its roles and headcounts are
+            copied in as starting lines — otherwise you&rsquo;ll add lines on the matrix page after
+            saving. Either way, you can add, edit, or remove lines afterward.
           </p>
           <button
             onClick={submitBlank}

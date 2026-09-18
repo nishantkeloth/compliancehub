@@ -91,8 +91,34 @@ export async function createCrewMatrix(formData: FormData) {
     .select("id")
     .single();
   if (error) return { error: error.message };
+  const newId = matrix?.id as string | undefined;
+
+  // Start the matrix off with whatever roles this site already has
+  // standing manning requirements for — the person can still add,
+  // edit, or remove lines afterward. If the site has none, the matrix
+  // just starts empty, same as before.
+  if (newId) {
+    const { data: requirements } = await supabase
+      .from("site_manning_requirements")
+      .select("job_role_id, minimum_headcount")
+      .eq("offshore_site_id", offshoreSiteId);
+    if (requirements && requirements.length > 0) {
+      const lines = requirements.map((r, i) => ({
+        org_id: access.orgId,
+        crew_matrix_id: newId,
+        line_number: i + 1,
+        job_role_id: r.job_role_id,
+        required_headcount: r.minimum_headcount ?? 1,
+        sort_order: i,
+        created_by: userId,
+        updated_by: userId,
+      }));
+      await supabase.from("crew_matrix_lines").insert(lines);
+    }
+  }
+
   revalidateMatrix();
-  return { id: matrix?.id };
+  return { id: newId };
 }
 
 export async function updateCrewMatrixHeader(id: string, formData: FormData) {
