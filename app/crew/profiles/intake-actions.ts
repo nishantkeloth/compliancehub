@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import type { ModelMessage } from "ai";
-import sharp from "sharp";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { loadAiContext, runStructured, resolveChain } from "@/lib/ai/router";
@@ -81,7 +80,6 @@ export type MappedIntakeProposal = {
   home_country: string | null;
   job_role: Mapping | null;
   documents: MappedIntakeDocument[];
-  photoUrl: string | null;
   name_mismatch_warning: string | null;
   assumptions: string[];
   duplicates: DuplicateCandidate[];
@@ -96,9 +94,13 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const pasted = String(formData.get("pastedText") ?? "").trim();
   if (files.length === 0 && !pasted) return { error: "Upload at least one document (CV, passport, ID, or certificate) or paste the text." };
   // Checkbox on the intake form: when off, scans/images are OCR'd
-  // in-process instead of sent to a vision-capable AI model — works with
-  // any text-only model, but skips photo auto-detect entirely for this
-  // upload (there's no image for the model to see and locate a photo on).
+  // in-process instead of sent to a vision-capable AI model. OCR itself
+  // is free/local either way — this only decides whether the *document
+  // image* also goes to the model (generally more accurate, but needs a
+  // vision-capable one) or just the OCR'd/extracted text does (works
+  // with any text-only model, including more free-tier ones). Turning
+  // that raw text into structured fields below is always an AI model
+  // call regardless of this setting — there's no path that skips it.
   const extractAsImage = String(formData.get("extractAsImage") ?? "true") !== "false";
 
   const ctx = await loadAiContext(supabase, orgId);
@@ -122,13 +124,7 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const textParts = [pasted, ...extracted.filter((e) => e.text).map((e) => `## ${e.filename}\n${e.text}`)].filter(Boolean);
   const documentText = textParts.length ? textParts.join("\n\n") : null;
 
-  // Filenames of everything the model actually sees as a visual page —
-  // images, plus any PDF forwarded to vision because it has little/no
-  // text layer (see extractDocument). A PDF the model can't see (real
-  // text extracted instead) is left out — the model can't locate a
-  // photo on a page it was never shown.
-  const attachedVisualFilenames = extracted.filter((e) => e.needsModelVision).map((e) => e.filename);
-  const prompt = intakePrompt({ masterData: { documentTypeNames: documentTypes.map((d) => d.name), jobRoleNames: jobRoles.map((j) => j.name) }, documentText, hasAttachedFiles: needsDocuments, attachedVisualFilenames });
+  const prompt = intakePrompt({ masterData: { documentTypeNames: documentTypes.map((d) => d.name), jobRoleNames: jobRoles.map((j) => j.name) }, documentText, hasAttachedFiles: needsDocuments });
   const fileParts = extracted
     .filter((e) => e.needsModelVision)
     .map((e) => ({ type: "file" as const, data: e.bytes, mediaType: e.mediaType, filename: e.filename }));
@@ -166,92 +162,6 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
     if (paths.length) await supabase.from("crew_intake_generations").update({ source_document_paths: paths }).eq("id", generationId);
   }
 
-  // Auto-crop the headshot the model located in one of the attached
-  // files. For an image file we crop directly with sharp. For a PDF
-  // page — the common case, since most passport/ID scans are uploaded
-  // as PDFs — sharp itself has no PDF input support in this build (no
-  // bundled PDFium), so we first rasterize just that page to a PNG
-  // using unpdf's pdf.js-based renderer (backed by @napi-rs/canvas, a
-  // prebuilt-binary canvas implementation safe for serverless), then
-  // crop that PNG with sharp exactly like an image. Failure anywhere in
-  // this block is non-fatal — a bad render/crop shouldn't sink the
-  // whole intake, it just means no photo gets proposed.
-  let photoUrl: string | null = null;
-  // Surfaced back to the reviewer via `assumptions` (rather than swallowed)
-  // whenever the AI DID propose a photo but the crop/upload didn't end up
-  // producing a usable photoUrl — a silent failure here just looks like
-  // "AI missed the photo" to whoever's using the intake screen, when it's
-  // actually a rendering/upload problem worth knowing about.
-  let photoNote: string | null = null;
-  const photoProposal = result.object.photo;
-  if (photoProposal) {
-    const source = extracted.find((e) => e.filename === photoProposal.source_filename && e.needsModelVision);
-    if (!source) {
-      const sentFilenames = extracted.filter((e) => e.needsModelVision).map((e) => e.filename).join(", ") || "none";
-      photoNote = `Photo auto-detect: the AI named "${photoProposal.source_filename}" for the photo, but that filename wasn't among the files sent to it as an image (sent: ${sentFilenames}).`;
-    } else {
-      try {
-        let raster: Buffer;
-        if (source.mediaType === "application/pdf") {
-          const { renderPageAsImage } = await import("unpdf");
-          const pageNum = Math.max(1, photoProposal.source_page ?? 1);
-          // width: 1600 normalizes render resolution regardless of the
-          // scanned page's actual size, so memory/time stay predictable
-          // for an oversized or unusually-shaped scan.
-          const png = await renderPageAsImage(source.bytes.slice(), pageNum, { canvasImport: () => import("@napi-rs/canvas"), width: 1600 });
-          raster = Buffer.from(png);
-        } else {
-          raster = Buffer.from(source.bytes);
-        }
-        const meta = await sharp(raster).metadata();
-        const w = meta.width ?? 0;
-        const h = meta.height ?? 0;
-        if (w > 0 && h > 0) {
-          const left = Math.min(w - 1, Math.max(0, Math.round(photoProposal.x * w)));
-          const top = Math.min(h - 1, Math.max(0, Math.round(photoProposal.y * h)));
-          const cropW = Math.max(1, Math.min(w - left, Math.round(photoProposal.width * w)));
-          const cropH = Math.max(1, Math.min(h - top, Math.round(photoProposal.height * h)));
-          const cropped = await sharp(raster)
-            .extract({ left, top, width: cropW, height: cropH })
-            .resize(480, 480, { fit: "inside", withoutEnlargement: true })
-            .jpeg({ quality: 85 })
-            .toBuffer();
-          const photoPath = `${orgId}/${generationId}/photo.jpg`;
-          const { error: photoUpErr } = await supabase.storage.from("crew-photos").upload(photoPath, cropped, { contentType: "image/jpeg", upsert: true });
-          if (!photoUpErr) {
-            const { data: pub } = supabase.storage.from("crew-photos").getPublicUrl(photoPath);
-            photoUrl = pub.publicUrl;
-          } else {
-            const errDetail = "statusCode" in photoUpErr ? ` [status ${(photoUpErr as { status?: number }).status ?? "?"} / ${(photoUpErr as { statusCode?: string }).statusCode ?? "?"}]` : "";
-            // The org id, bucket and policy all check out in Postgres directly,
-            // so the remaining unknown is what JWT (if any) actually reached
-            // this specific request. Decode the session token's payload
-            // (no signature check needed -- we're just reading claims we
-            // already trust, not authenticating with them) to see the role
-            // and subject Postgres would have seen for this call.
-            let jwtInfo = "no session";
-            try {
-              const { data: sessionData } = await supabase.auth.getSession();
-              const token = sessionData.session?.access_token;
-              if (token) {
-                const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-                const expInSec = typeof payload.exp === "number" ? Math.round(payload.exp - Date.now() / 1000) : "?";
-                jwtInfo = `role=${payload.role ?? "?"} sub=${(payload.sub ?? "?").toString().slice(0, 8)}... expIn=${expInSec}s`;
-              }
-            } catch (jwtErr) {
-              jwtInfo = `jwt decode failed: ${jwtErr instanceof Error ? jwtErr.message : String(jwtErr)}`;
-            }
-            photoNote = `Photo auto-detect: cropped the photo but the upload to storage failed: ${photoUpErr.message}${errDetail} (path "${photoPath}"; ${jwtInfo})`;
-          }
-        } else {
-          photoNote = `Photo auto-detect: rendered "${source.filename}"${photoProposal.source_page ? ` page ${photoProposal.source_page}` : ""} but got no usable image dimensions (${w}x${h}).`;
-        }
-      } catch (e) {
-        photoNote = `Photo auto-detect: failed while rendering/cropping "${source.filename}"${photoProposal.source_page ? ` page ${photoProposal.source_page}` : ""} — ${e instanceof Error ? e.message : String(e)}`;
-      }
-    }
-  }
-
   // Duplicate check — plain name-similarity against existing profiles in
   // this company, no extra AI call (per the user's confirmed scope).
   let duplicates: DuplicateCandidate[] = [];
@@ -264,12 +174,6 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
   }
-
-  // Text-only mode was on and at least one attachment was actually OCR'd
-  // (as opposed to already having a real text layer, which needs no OCR
-  // and no explanation) -- tell the reviewer why no photo shows up rather
-  // than leaving "No photo detected" looking like a missed detection.
-  const ocrNote = !extractAsImage && extracted.some((e) => e.ocrUsed) ? "Text-only mode was selected: scanned attachments were read with OCR instead of sent to a vision-capable AI model, so no profile photo was detected or cropped." : null;
 
   const jobRoleMapping = result.object.job_role_name ? mapName(result.object.job_role_name, "job_role", jobRoles, aliases) : null;
   const documents: MappedIntakeDocument[] = result.object.documents.map((d) => ({
@@ -294,9 +198,8 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
       home_country: result.object.home_country,
       job_role: jobRoleMapping,
       documents,
-      photoUrl,
       name_mismatch_warning: result.object.name_mismatch_warning,
-      assumptions: [result.object.assumptions, photoNote, ocrNote].flat().filter((a): a is string => !!a),
+      assumptions: result.object.assumptions,
       duplicates,
       modelLabel: `${result.model.display_name} (${result.model.cost_tier})`,
       attempts: result.attempts,
@@ -320,7 +223,6 @@ type SaveIntakePayload = {
   phone: string | null;
   email: string | null;
   homeCountry: string | null;
-  photoUrl: string | null;
   documents: { documentTypeId: string | null; newName: string | null; alias: string | null; documentNumber: string | null; issueDate: string | null; expiryDate: string | null }[];
 };
 
@@ -368,7 +270,6 @@ export async function saveCrewIntake(generationId: string, payloadJson: string) 
         org_id: orgId,
         full_name: payload.fullName.trim(),
         employee_code: payload.employeeCode,
-        photo_url: payload.photoUrl,
         primary_job_role_id: jobRoleId,
         nationality: payload.nationality,
         date_of_birth: payload.dateOfBirth,

@@ -74,7 +74,6 @@ export default function IntakePanel() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [homeCountry, setHomeCountry] = useState("");
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [documents, setDocuments] = useState<EditDocument[]>([]);
   const [resolved, setResolved] = useState<Record<string, boolean>>({});
   const [duplicatesAck, setDuplicatesAck] = useState(false);
@@ -117,7 +116,6 @@ export default function IntakePanel() {
       setPhone(p.phone ?? "");
       setEmail(p.email ?? "");
       setHomeCountry(p.home_country ?? "");
-      setPhotoUrl(p.photoUrl ?? null);
       setDocuments(toEditDocuments(p));
       setResolved({});
       setDuplicatesAck(false);
@@ -147,7 +145,6 @@ export default function IntakePanel() {
       phone: phone.trim() || null,
       email: email.trim() || null,
       homeCountry: homeCountry.trim() || null,
-      photoUrl,
       documents: documents.map((d) => ({
         documentTypeId: d.create ? null : d.id,
         newName: d.create ? d.name : null,
@@ -174,7 +171,6 @@ export default function IntakePanel() {
     setDocuments([]);
     setFiles([]);
     setPasted("");
-    setPhotoUrl(null);
   };
 
   const close = () => {
@@ -251,8 +247,10 @@ export default function IntakePanel() {
           <label className="flex items-start gap-2 text-xs mb-3" style={{ color: "var(--ch-ink)" }}>
             <input type="checkbox" checked={extractAsImage} onChange={(e) => setExtractAsImage(e.target.checked)} />
             <span>
-              Read scanned documents as images (needed to auto-detect &amp; crop a profile photo). Uncheck to extract text only via OCR instead —
-              works with any text-only AI model, including free ones that reject images/PDFs, but no photo will be captured.
+              Read scanned documents as images (usually more accurate for scans, but needs a vision-capable AI
+              model). Uncheck to extract text via OCR first instead — works with any text-only AI model, including
+              free ones that reject images/PDFs. Either way, an AI model still reads the extracted text to fill in
+              the fields below — OCR only gets the raw text out of the scan, it doesn&apos;t structure it.
             </span>
           </label>
           {extractAsImage && availability && !availability.documentCapable && files.some((f) => /\.(png|jpe?g)$/i.test(f.name)) && (
@@ -321,34 +319,6 @@ export default function IntakePanel() {
               ))}
             </div>
           )}
-
-          <div className="flex items-start gap-3 mb-3">
-            {photoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={photoUrl} alt="Detected profile photo" className="w-20 h-20 rounded-lg object-cover border flex-shrink-0" style={{ borderColor: "var(--ch-line)" }} />
-            ) : (
-              <div className="w-20 h-20 rounded-lg border flex items-center justify-center text-[10px] text-center flex-shrink-0" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
-                No photo detected
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <label className={`${lbl} block`} style={lblStyle}>
-                Profile photo URL
-                <input
-                  className={`${inputCls} w-full mt-1`}
-                  style={inputStyle}
-                  value={photoUrl ?? ""}
-                  onChange={(e) => setPhotoUrl(e.target.value.trim() || null)}
-                  placeholder="Auto-detected from an attached passport/ID photo"
-                />
-              </label>
-              {photoUrl && (
-                <button onClick={() => setPhotoUrl(null)} className="text-xs font-semibold mt-1" style={{ color: "var(--ch-fail)" }}>
-                  Clear photo
-                </button>
-              )}
-            </div>
-          </div>
 
           <div className="grid gap-3 sm:grid-cols-2 mb-3">
             <label className={lbl} style={lblStyle}>

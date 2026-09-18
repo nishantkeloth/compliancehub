@@ -24,25 +24,6 @@ export const crewIntakeDocumentSchema = z.object({
   source_excerpt: z.string().nullable().default(null),
 });
 
-// Where the person's headshot sits within one of the attached files sent
-// to the model as vision input (an image, or a PDF the model can see
-// page-by-page). Coordinates are fractions (0-1) of that image/page's
-// own width/height, top-left origin, so the app can convert to pixels
-// once it renders that image or PDF page and knows its real size (see
-// the app-side handling in intake-actions.ts, which rasterizes the PDF
-// page with unpdf before cropping with sharp).
-export const crewIntakePhotoSchema = z.object({
-  source_filename: z.string().min(1),
-  // 1-indexed page number when source_filename is a PDF; null when it's
-  // an image file (a plain JPG/PNG has no "page").
-  source_page: z.number().int().min(1).nullable().default(null),
-  x: z.number().min(0).max(1),
-  y: z.number().min(0).max(1),
-  width: z.number().min(0).max(1),
-  height: z.number().min(0).max(1),
-});
-export type CrewIntakePhotoProposal = z.infer<typeof crewIntakePhotoSchema>;
-
 export const crewIntakeSchema = z.object({
   full_name: z.string().nullable().default(null),
   date_of_birth: z.string().nullable().default(null),
@@ -53,7 +34,6 @@ export const crewIntakeSchema = z.object({
   home_country: z.string().nullable().default(null),
   job_role_name: z.string().nullable().default(null),
   documents: z.array(crewIntakeDocumentSchema).default([]),
-  photo: crewIntakePhotoSchema.nullable().default(null),
   name_mismatch_warning: z.string().nullable().default(null),
   assumptions: z.array(z.string()).default([]),
 });
@@ -68,17 +48,15 @@ Rules:
 - Every entry in documents must carry source_excerpt = the text/label in the source that justifies it.
 - document_type_name should use the clearest industry-standard name for the certificate/ID (e.g. "Passport", "Seaman's Book", "STCW Basic Safety Training", "Medical Certificate", "Yellow Fever Vaccination Certificate").
 - If the documents show more than one name for the same person (e.g. CV vs passport spelling, or a different name entirely), set name_mismatch_warning describing the discrepancy in one sentence; otherwise leave it null.
-- job_role_name is the person's rank/position as stated on the CV (e.g. "Camp Boss", "Chief Steward") — leave null if not stated.
-- If one of the attached files shows the person's passport-style photo (headshot) — an image file, or a page of an attached PDF you can see — set "photo": source_filename = that exact attached file's filename; if it's a PDF, also set source_page = the 1-indexed page number the photo appears on (leave source_page null for a plain image file); plus a bounding box (x, y, width, height — each a fraction from 0 to 1 of that image/page's own width/height, measured from its top-left corner) tightly cropped around just the face and shoulders, not the whole passport page or ID card. If no such photo is visible anywhere, leave "photo" null — do not guess coordinates or a page number.`;
+- job_role_name is the person's rank/position as stated on the CV (e.g. "Camp Boss", "Chief Steward") — leave null if not stated.`;
 
-export function intakePrompt(args: { masterData: { documentTypeNames: string[]; jobRoleNames: string[] }; documentText: string | null; hasAttachedFiles: boolean; attachedVisualFilenames: string[] }) {
-  const { masterData, documentText, hasAttachedFiles, attachedVisualFilenames } = args;
+export function intakePrompt(args: { masterData: { documentTypeNames: string[]; jobRoleNames: string[] }; documentText: string | null; hasAttachedFiles: boolean }) {
+  const { masterData, documentText, hasAttachedFiles } = args;
   return [
     "TASK: Extract this person's identity details and every certificate/ID shown into the crew intake schema.",
     "",
     `Document/certificate types already configured in this company (prefer these exact names when they fit): ${masterData.documentTypeNames.join("; ") || "(none)"}`,
     `Job roles configured in this company (prefer these exact names when they fit): ${masterData.jobRoleNames.join("; ") || "(none)"}`,
-    attachedVisualFilenames.length ? `Attached files you can see as images (use these exact filenames for "photo".source_filename — include source_page if the file is a PDF): ${attachedVisualFilenames.join(", ")}` : "",
     "",
     hasAttachedFiles ? "The source document(s) are attached as file(s)." : "",
     documentText ? `SOURCE DOCUMENT TEXT:\n"""\n${documentText}\n"""` : "",
