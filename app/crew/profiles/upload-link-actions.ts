@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { sendEmail, companyFromAddress } from "@/lib/email";
-import { readDocumentFields, type DocumentReadResult } from "./document-ai-actions";
+import { readDocumentFields, extractCrewDocumentVersionFields as _extractCrewDocumentVersionFields, type DocumentReadResult } from "./document-ai-actions";
 
 // Phase 13 follow-up — self-upload link for crew members who don't have
 // a ComplianceHub account. Same random-token pattern already used for
@@ -225,7 +225,19 @@ export async function reviewCrewDocumentVersion(
 // mid-upload, but for a version already sitting in storage — used from
 // the review screen so a reviewer can Auto-read a self-uploaded file
 // without re-downloading and re-uploading it themselves.
-export { extractCrewDocumentVersionFields } from "./document-ai-actions";
+//
+// A plain `export { x } from "./other"` re-export here (as this used to
+// be written) builds fine locally but breaks the production build: a
+// "use server" file's action manifest is only generated for async
+// functions declared directly in the file, so Next silently produced an
+// empty manifest for this ENTIRE module — not just this one re-export —
+// which is why every action here (including submitSelfUploadDocument)
+// came back "not found in module ... module has no exports at all" on
+// Vercel. A thin async wrapper is a real local declaration, so it's
+// picked up correctly.
+export async function extractCrewDocumentVersionFields(versionId: string) {
+  return _extractCrewDocumentVersionFields(versionId);
+}
 
 /* ================= Crew side: auto-read before submitting ================= */
 
