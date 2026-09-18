@@ -12,6 +12,11 @@ import type { DocumentReadResult } from "@/app/crew/profiles/document-ai-actions
 // the "AI proposed this" moment impossible to miss, and nothing reaches
 // the actual form until Use these values is clicked — Cancel leaves
 // the form exactly as it was.
+//
+// Deliberately no backdrop-click-to-dismiss: a stray click outside the
+// card (easy to do on a phone, which is how most crew members reach the
+// self-upload page) used to silently discard the read with no
+// confirmation. Only the two explicit buttons below can close this.
 export function DocumentReadModal({
   result,
   expectedTypeName,
@@ -31,12 +36,10 @@ export function DocumentReadModal({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(15, 23, 42, 0.5)" }}
-      onClick={onCancel}
     >
       <div
         className="w-full max-w-sm bg-white rounded-xl border p-5 shadow-lg"
         style={{ borderColor: "var(--ch-line)" }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-bold" style={{ color: "var(--ch-ink)" }}>
           Confirm what was read
