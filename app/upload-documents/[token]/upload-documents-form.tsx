@@ -226,7 +226,7 @@ function DocumentUploadItem({
           </div>
           {confirmedByAi && (
             <div className="text-xs rounded-lg px-2 py-1.5 mt-2" style={{ background: "#e6f4ea", color: "#1e7a34" }}>
-              AI-read values confirmed below — edit anything before submitting if needed.
+              AI-read values confirmed and locked below — choose a different file to read/change them again.
             </div>
           )}
           {pendingRead && (
@@ -238,7 +238,7 @@ function DocumentUploadItem({
               style={{ borderColor: "var(--ch-line)" }}
               placeholder="Document number (optional)"
               value={documentNumber}
-              disabled={busy}
+              disabled={busy || confirmedByAi}
               onChange={(e) => setDocumentNumber(e.target.value)}
             />
             <input
@@ -246,7 +246,7 @@ function DocumentUploadItem({
               className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)" }}
               value={issueDate}
-              disabled={busy}
+              disabled={busy || confirmedByAi}
               onChange={(e) => setIssueDate(e.target.value)}
               title="Issue date (optional)"
             />
@@ -255,7 +255,7 @@ function DocumentUploadItem({
               className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)" }}
               value={expiryDate}
-              disabled={busy}
+              disabled={busy || confirmedByAi}
               onChange={(e) => setExpiryDate(e.target.value)}
               title="Expiry date (optional)"
             />
