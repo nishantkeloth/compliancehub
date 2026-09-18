@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { createCrewMatrix, generateDraftFromManning } from "../actions";
 import AiGenerate from "./ai-generate";
 
-type Project = { id: string; project_name: string };
+type Project = {
+  id: string;
+  project_name: string;
+  planned_start_date: string | null;
+  planned_end_date: string | null;
+  expected_pob: number | null;
+};
 type Site = { id: string; name: string; project_id: string | null };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -19,12 +25,15 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [mode, setMode] = useState<Mode>("blank");
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const defaultProject = projects[0];
+  const [projectId, setProjectId] = useState(defaultProject?.id ?? "");
   const [offshoreSiteId, setOffshoreSiteId] = useState("");
   const [title, setTitle] = useState("");
-  const [effectiveFrom, setEffectiveFrom] = useState("");
-  const [effectiveTo, setEffectiveTo] = useState("");
-  const [expectedPob, setExpectedPob] = useState("");
+  // Pre-filled from the selected project's own planned dates / expected POB
+  // (see onProjectChange) — still just a starting point, freely editable.
+  const [effectiveFrom, setEffectiveFrom] = useState(defaultProject?.planned_start_date ?? "");
+  const [effectiveTo, setEffectiveTo] = useState(defaultProject?.planned_end_date ?? "");
+  const [expectedPob, setExpectedPob] = useState(defaultProject?.expected_pob?.toString() ?? "");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +43,10 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
   const onProjectChange = (id: string) => {
     setProjectId(id);
     setOffshoreSiteId("");
+    const project = projects.find((p) => p.id === id);
+    setEffectiveFrom(project?.planned_start_date ?? "");
+    setEffectiveTo(project?.planned_end_date ?? "");
+    setExpectedPob(project?.expected_pob?.toString() ?? "");
   };
 
   const submitBlank = () => {
@@ -143,7 +156,7 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
               <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. MV Ocean Guardian — Crew Matrix" value={title} onChange={(e) => setTitle(e.target.value)} />
             </label>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3 mb-3">
+          <div className="grid gap-3 sm:grid-cols-3 mb-1">
             <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
               Effective from
               <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
@@ -157,6 +170,10 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
               <input type="number" min="0" className={`${inputCls} w-full mt-1`} style={inputStyle} value={expectedPob} onChange={(e) => setExpectedPob(e.target.value)} />
             </label>
           </div>
+          <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+            Pre-filled from the selected project&rsquo;s planned dates and expected POB — edit any of
+            these freely.
+          </p>
           <div className="mb-4">
             <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
               Notes
