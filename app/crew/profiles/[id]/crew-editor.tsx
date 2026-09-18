@@ -24,6 +24,12 @@ import {
   getCrewDocumentFileUrl,
 } from "../actions";
 import { extractCrewDocumentFields } from "../document-ai-actions";
+import {
+  createDocumentUploadLink,
+  listDocumentUploadLinks,
+  revokeDocumentUploadLink,
+  reviewCrewDocumentVersion,
+} from "../upload-link-actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
@@ -893,6 +899,7 @@ function DocumentsSection({
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [versionCounts, setVersionCounts] = useState(documentVersionCounts);
   const [bgError, setBgError] = useState<string | null>(null);
+  const [linkPanelOpen, setLinkPanelOpen] = useState(false);
 
   const typeById = (id: string) => documentTypes.find((d) => d.id === id);
   const sorted = [...items].sort((a, b) => (typeById(a.document_type_id)?.name ?? "").localeCompare(typeById(b.document_type_id)?.name ?? ""));
@@ -1034,7 +1041,7 @@ function DocumentsSection({
                   </>
                 )}
               </div>
-              {historyId === d.id && <VersionHistoryPanel documentId={d.id} />}
+              {historyId === d.id && <VersionHistoryPanel documentId={d.id} crewId={crewId} canManage={canManage} />}
             </div>
           );
         })}
@@ -1066,19 +1073,32 @@ function DocumentsSection({
             onCancel={() => setAdding(false)}
           />
         ) : (
-          <button
-            onClick={() => setAdding(true)}
-            disabled={documentTypes.length === 0}
-            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-          >
-            + Add document
-          </button>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => setAdding(true)}
+              disabled={documentTypes.length === 0}
+              className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              + Add document
+            </button>
+            <button
+              onClick={() => setLinkPanelOpen(true)}
+              disabled={documentTypes.length === 0}
+              className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+            >
+              Send upload link
+            </button>
+          </div>
         )
       )}
       {documentTypes.length === 0 && (
         <div className="text-xs mt-2" style={{ color: "var(--ch-sub)" }}>
           Add document types first in Crew Setup → Document Types.
         </div>
+      )}
+      {linkPanelOpen && (
+        <UploadLinkPanel crewId={crewId} documentTypes={documentTypes} onClose={() => setLinkPanelOpen(false)} />
       )}
     </div>
   );
@@ -1244,14 +1264,26 @@ type CrewDocumentVersion = {
   source: string;
   uploaded_by: string | null;
   created_at: string;
+  crew_document_version_reviews?: { decision: string; note: string | null; reviewed_by: string | null; created_at: string }[];
 };
 
 // Loaded on demand (not with the rest of the page) since most documents on
 // a long list are never opened for history — see getCrewDocumentVersions.
-function VersionHistoryPanel({ documentId }: { documentId: string }) {
+// A self_upload version with no review row yet is pending — that's the
+// only case canManage sees Approve/Reject for; every other source is
+// already trusted (a signed-in staff member or AI-assisted staff upload).
+function VersionHistoryPanel({ documentId, crewId, canManage }: { documentId: string; crewId: string; canManage: boolean }) {
   const [versions, setVersions] = useState<CrewDocumentVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+
+  const load = () => {
+    getCrewDocumentVersions(documentId).then((res) => {
+      if (res?.error) setError(res.error);
+      else setVersions((res.versions as CrewDocumentVersion[]) ?? []);
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1276,24 +1308,255 @@ function VersionHistoryPanel({ documentId }: { documentId: string }) {
     if (res.url) window.open(res.url, "_blank", "noopener,noreferrer");
   };
 
+  const review = async (versionId: string, decision: "approved" | "rejected") => {
+    if (decision === "rejected" && !window.confirm("Reject this self-uploaded document? It stays on file, but won't update the crew member's record.")) return;
+    setReviewingId(versionId);
+    const res = await reviewCrewDocumentVersion(versionId, crewId, decision);
+    setReviewingId(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    load();
+  };
+
   return (
     <div className="ml-3 mt-1 mb-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: "var(--ch-line)", background: "var(--ch-bg)" }}>
       {error && <div style={{ color: "var(--ch-fail)" }}>{error}</div>}
       {!versions && !error && <div style={{ color: "var(--ch-sub)" }}>Loading history…</div>}
       {versions && versions.length === 0 && <div style={{ color: "var(--ch-sub)" }}>No file versions yet.</div>}
-      {versions?.map((v) => (
-        <div key={v.id} className="flex items-center gap-2 flex-wrap py-0.5">
-          <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>v{v.version_number}</span>
-          <span style={{ color: "var(--ch-sub)" }}>{new Date(v.created_at).toLocaleDateString()}</span>
-          {v.document_number && <span style={{ color: "var(--ch-sub)" }}>#{v.document_number}</span>}
-          {v.expiry_date && <span style={{ color: "var(--ch-sub)" }}>expires {v.expiry_date}</span>}
-          {v.file_name && (
-            <button onClick={() => openFile(v.id)} disabled={openingId === v.id} className="underline" style={{ color: "var(--ch-navy)" }}>
-              {openingId === v.id ? "Opening…" : v.file_name}
-            </button>
-          )}
+      {versions?.map((v) => {
+        const review0 = v.crew_document_version_reviews?.[0] ?? null;
+        const isPending = v.source === "self_upload" && !review0;
+        return (
+          <div key={v.id} className="py-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>v{v.version_number}</span>
+              <span style={{ color: "var(--ch-sub)" }}>{new Date(v.created_at).toLocaleDateString()}</span>
+              {v.document_number && <span style={{ color: "var(--ch-sub)" }}>#{v.document_number}</span>}
+              {v.expiry_date && <span style={{ color: "var(--ch-sub)" }}>expires {v.expiry_date}</span>}
+              {v.file_name && (
+                <button onClick={() => openFile(v.id)} disabled={openingId === v.id} className="underline" style={{ color: "var(--ch-navy)" }}>
+                  {openingId === v.id ? "Opening…" : v.file_name}
+                </button>
+              )}
+              {v.source === "self_upload" && (
+                <span
+                  className="text-xs font-semibold rounded-full px-2 py-0.5"
+                  style={
+                    review0?.decision === "approved"
+                      ? { background: "#e6f4ea", color: "#1e7a34" }
+                      : review0?.decision === "rejected"
+                        ? { background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }
+                        : { background: "#fff6e0", color: "#9a6b00" }
+                  }
+                >
+                  {review0?.decision === "approved" ? "Approved" : review0?.decision === "rejected" ? "Rejected" : "Self-uploaded — pending review"}
+                </span>
+              )}
+            </div>
+            {isPending && canManage && (
+              <div className="flex gap-2 mt-1">
+                <button
+                  onClick={() => review(v.id, "approved")}
+                  disabled={reviewingId === v.id}
+                  className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "#1e7a34" }}
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => review(v.id, "rejected")}
+                  disabled={reviewingId === v.id}
+                  className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
+                >
+                  Reject
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type UploadLink = {
+  id: string;
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+  crew_document_upload_link_items: { document_type_id: string; document_types: { name: string } | { name: string }[] | null }[];
+};
+
+// Generates a token-based link the crew member can open without an
+// account (see app/upload-documents/[token] and upload-link-actions.ts).
+// Staff picks exactly which document types it asks for — nothing is
+// inferred — and everything the crew member submits through it lands as
+// "pending review" (see VersionHistoryPanel) rather than taking effect
+// immediately, since the link itself isn't an authenticated person.
+function UploadLinkPanel({
+  crewId,
+  documentTypes,
+  onClose,
+}: {
+  crewId: string;
+  documentTypes: DocumentType[];
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expiresInDays, setExpiresInDays] = useState(7);
+  const [sendEmail, setSendEmail] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ url: string; emailSent: boolean; emailError: string | null } | null>(null);
+  const [links, setLinks] = useState<UploadLink[] | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const loadLinks = () => {
+    listDocumentUploadLinks(crewId).then((res) => {
+      if (!res?.error) setLinks((res.links as UploadLink[]) ?? []);
+    });
+  };
+  useEffect(loadLinks, [crewId]);
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const generate = async () => {
+    if (selected.size === 0) {
+      setError("Pick at least one document type.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    const res = await createDocumentUploadLink(crewId, Array.from(selected), { expiresInDays, sendEmailToCrew: sendEmail });
+    setBusy(false);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    setResult({ url: res.url!, emailSent: !!res.emailSent, emailError: res.emailError ?? null });
+    setSelected(new Set());
+    loadLinks();
+  };
+
+  const revoke = async (linkId: string) => {
+    setRevokingId(linkId);
+    await revokeDocumentUploadLink(linkId, crewId);
+    setRevokingId(null);
+    loadLinks();
+  };
+
+  const copyLink = (url: string) => {
+    navigator.clipboard?.writeText(url).catch(() => {});
+  };
+
+  return (
+    <div className="rounded-lg border px-3 py-3 space-y-3 mt-2" style={{ borderColor: "var(--ch-line)" }}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>Send upload link</div>
+        <button onClick={onClose} className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>Close</button>
+      </div>
+      <p className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        The crew member opens this link without an account and uploads the document(s) you pick below. Everything
+        they submit is held for your review before it updates their record.
+      </p>
+
+      {error && (
+        <div className="text-xs rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        {documentTypes.map((dt) => (
+          <label
+            key={dt.id}
+            className="text-xs rounded-full border px-3 py-1 cursor-pointer"
+            style={{
+              borderColor: selected.has(dt.id) ? "var(--ch-navy)" : "var(--ch-line)",
+              color: selected.has(dt.id) ? "var(--ch-navy)" : "var(--ch-sub)",
+              fontWeight: selected.has(dt.id) ? 600 : 400,
+            }}
+          >
+            <input type="checkbox" className="hidden" checked={selected.has(dt.id)} onChange={() => toggle(dt.id)} />
+            {dt.name}
+          </label>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap text-xs" style={{ color: "var(--ch-sub)" }}>
+        <span className="flex items-center gap-1">
+          Expires in
+          <input
+            type="number"
+            min={1}
+            max={90}
+            value={expiresInDays}
+            onChange={(e) => setExpiresInDays(Number(e.target.value) || 7)}
+            className="border rounded-lg px-2 py-1 w-14 text-xs"
+            style={{ borderColor: "var(--ch-line)" }}
+          />
+          days
+        </span>
+        <label className="flex items-center gap-1">
+          <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} />
+          Email the link to the crew member
+        </label>
+      </div>
+
+      <button onClick={generate} disabled={busy} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        {busy ? "Generating…" : "Generate link"}
+      </button>
+
+      {result && (
+        <div className="text-xs rounded-lg px-3 py-2 space-y-1" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="break-all">{result.url}</span>
+            <button onClick={() => copyLink(result.url)} className="underline font-semibold shrink-0">Copy</button>
+          </div>
+          {result.emailSent && <div>Emailed to the crew member.</div>}
+          {result.emailError && <div style={{ color: "var(--ch-fail)" }}>{result.emailError}</div>}
         </div>
-      ))}
+      )}
+
+      {links && links.length > 0 && (
+        <div className="pt-2 border-t" style={{ borderColor: "var(--ch-line)" }}>
+          <div className="text-xs font-semibold mb-1" style={{ color: "var(--ch-ink)" }}>Existing links</div>
+          {links.map((l) => {
+            const active = !l.revoked_at && new Date(l.expires_at) > new Date();
+            const typeNames = l.crew_document_upload_link_items
+              .map((it) => (Array.isArray(it.document_types) ? it.document_types[0]?.name : it.document_types?.name))
+              .filter(Boolean)
+              .join(", ");
+            return (
+              <div key={l.id} className="flex items-center gap-2 flex-wrap text-xs py-1">
+                <span style={{ color: active ? "var(--ch-ink)" : "var(--ch-sub)" }}>{typeNames || "—"}</span>
+                <span style={{ color: "var(--ch-sub)" }}>
+                  {active ? `expires ${new Date(l.expires_at).toLocaleDateString()}` : l.revoked_at ? "revoked" : "expired"}
+                </span>
+                {active && (
+                  <button
+                    onClick={() => revoke(l.id)}
+                    disabled={revokingId === l.id}
+                    className="underline font-semibold"
+                    style={{ color: "var(--ch-fail)" }}
+                  >
+                    Revoke
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

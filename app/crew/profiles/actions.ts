@@ -526,11 +526,20 @@ async function requireDocumentsView() {
   return { supabase, access };
 }
 
+// The embedded crew_document_version_reviews comes back as an array
+// (PostgREST's default shape for the reverse side of the relation) even
+// though the unique index on crew_document_version_id guarantees at
+// most one row — callers read reviews[0]. A self_upload version with an
+// empty array is exactly "pending review": nothing is stored for that
+// common case, matching the insert-only, derive-don't-store pattern
+// used everywhere else in this table (see migration 0015's notes).
 export async function getCrewDocumentVersions(documentId: string) {
   const { supabase } = await requireDocumentsView();
   const { data, error } = await supabase
     .from("crew_document_versions")
-    .select("id, version_number, file_name, file_size_bytes, document_number, issue_date, expiry_date, source, uploaded_by, created_at")
+    .select(
+      "id, version_number, file_name, file_size_bytes, document_number, issue_date, expiry_date, source, uploaded_by, created_at, crew_document_version_reviews(decision, note, reviewed_by, created_at)"
+    )
     .eq("crew_document_id", documentId)
     .order("version_number", { ascending: false });
   if (error) return { error: error.message };
