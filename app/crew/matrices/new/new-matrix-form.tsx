@@ -203,8 +203,9 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
         <>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
             Creates a new draft matrix, pre-filled with one line per role currently defined in this
-            site&rsquo;s manning requirements. You can edit, add, or remove lines afterward — nothing
-            here changes the existing manning requirements.
+            site&rsquo;s manning requirements, and with effective dates and expected POB copied from
+            the selected project. You can edit, add, or remove lines afterward — nothing here changes
+            the existing manning requirements.
           </p>
           <button
             onClick={submitGenerate}

@@ -696,7 +696,10 @@ export async function generateDraftFromManning(projectId: string, offshoreSiteId
     return { error: "This site has no existing manning requirements to generate from." };
   }
 
-  const { data: site } = await supabase.from("offshore_sites").select("name").eq("id", offshoreSiteId).single();
+  const [{ data: site }, { data: project }] = await Promise.all([
+    supabase.from("offshore_sites").select("name").eq("id", offshoreSiteId).single(),
+    supabase.from("projects").select("planned_start_date, planned_end_date, expected_pob").eq("id", projectId).single(),
+  ]);
 
   const { data: code, error: codeError } = await supabase.rpc("next_number_range_code", {
     p_org_id: access.orgId,
@@ -704,6 +707,9 @@ export async function generateDraftFromManning(projectId: string, offshoreSiteId
   });
   if (codeError) return { error: `Could not assign a matrix number: ${codeError.message}` };
 
+  // POB and dates come from the project itself, not the manning lines —
+  // the sum of role minimums is only a fallback for when the project
+  // hasn't got an expected POB of its own set yet.
   const totalHeadcount = requirements.reduce((sum, r) => sum + (r.minimum_headcount ?? 0), 0);
 
   const { data: matrix, error } = await supabase
@@ -715,7 +721,9 @@ export async function generateDraftFromManning(projectId: string, offshoreSiteId
       matrix_number: code,
       version_number: 1,
       title: `${site?.name ?? "Site"} — Crew Matrix (generated from manning requirements)`,
-      expected_pob: totalHeadcount,
+      effective_from: project?.planned_start_date ?? null,
+      effective_to: project?.planned_end_date ?? null,
+      expected_pob: project?.expected_pob ?? totalHeadcount,
       status: "draft",
       prepared_by: userId,
       created_by: userId,
