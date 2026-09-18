@@ -23,7 +23,7 @@ import {
   getCrewDocumentVersions,
   getCrewDocumentFileUrl,
 } from "../actions";
-import { extractCrewDocumentFields } from "../document-ai-actions";
+import { extractCrewDocumentFields, type DocumentReadResult } from "../document-ai-actions";
 import {
   createDocumentUploadLink,
   listDocumentUploadLinks,
@@ -31,6 +31,7 @@ import {
   reviewCrewDocumentVersion,
   extractCrewDocumentVersionFields,
 } from "../upload-link-actions";
+import { DocumentReadModal } from "@/components/document-read-modal";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
@@ -1042,7 +1043,9 @@ function DocumentsSection({
                   </>
                 )}
               </div>
-              {historyId === d.id && <VersionHistoryPanel documentId={d.id} crewId={crewId} canManage={canManage} />}
+              {historyId === d.id && (
+                <VersionHistoryPanel documentId={d.id} crewId={crewId} canManage={canManage} typeName={type?.name ?? "document"} />
+              )}
             </div>
           );
         })}
@@ -1131,34 +1134,34 @@ function UploadPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
-  const [readNote, setReadNote] = useState<string | null>(null);
   const [usedAiRead, setUsedAiRead] = useState(false);
+  const [pendingRead, setPendingRead] = useState<DocumentReadResult | null>(null);
 
-  const autoRead = async () => {
-    if (!file) {
+  const autoRead = async (targetFile?: File) => {
+    const f = targetFile ?? file;
+    if (!f) {
       setError("Choose a file first, then Auto-read.");
       return;
     }
     setReading(true);
     setError(null);
-    setReadNote(null);
     const fd = new FormData();
-    fd.set("file", file);
+    fd.set("file", f);
     const res = await extractCrewDocumentFields(typeName, fd);
     setReading(false);
     if ("error" in res) {
       setError(res.error);
       return;
     }
-    const { result } = res;
-    if (result.document_number) setDocumentNumber(result.document_number);
-    if (result.issue_date) setIssueDate(result.issue_date);
-    if (result.expiry_date) setExpiryDate(result.expiry_date);
+    setPendingRead(res.result);
+  };
+
+  const confirmRead = (values: { documentNumber: string; issueDate: string; expiryDate: string }) => {
+    setDocumentNumber(values.documentNumber);
+    setIssueDate(values.issueDate);
+    setExpiryDate(values.expiryDate);
     setUsedAiRead(true);
-    const notes: string[] = [`Read by ${result.modelLabel} — check the values before uploading.`];
-    if (result.typeMismatch) notes.push(`This looks like it might be "${result.document_type_name}", not "${typeName}" — double check you're uploading the right document.`);
-    if (result.confidence < 0.5) notes.push("Low confidence — the document may be unclear or partly unreadable.");
-    setReadNote(notes.join(" "));
+    setPendingRead(null);
   };
 
   const submit = async () => {
@@ -1189,22 +1192,23 @@ function UploadPanel({
       {error && (
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>
       )}
-      {readNote && !error && (
-        <div className="text-sm rounded-lg px-3 py-2" style={{ background: "#fff6e0", color: "#9a6b00" }}>{readNote}</div>
+      {usedAiRead && !error && (
+        <div className="text-sm rounded-lg px-3 py-2" style={{ background: "#e6f4ea", color: "#1e7a34" }}>AI-read values confirmed below — edit anything before uploading if needed.</div>
       )}
       <input
         type="file"
         accept="application/pdf,image/*"
         onChange={(e) => {
-          setFile(e.target.files?.[0] ?? null);
+          const f = e.target.files?.[0] ?? null;
+          setFile(f);
           setUsedAiRead(false);
-          setReadNote(null);
+          if (f) autoRead(f);
         }}
         className="text-sm"
       />
       <div>
         <button
-          onClick={autoRead}
+          onClick={() => autoRead()}
           disabled={!file || reading}
           className="text-xs font-semibold rounded-lg border px-3 py-1.5 disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
@@ -1212,6 +1216,14 @@ function UploadPanel({
           {reading ? "Reading…" : "Auto-read number & expiry"}
         </button>
       </div>
+      {pendingRead && (
+        <DocumentReadModal
+          result={pendingRead}
+          expectedTypeName={typeName}
+          onConfirm={confirmRead}
+          onCancel={() => setPendingRead(null)}
+        />
+      )}
       <div className="flex gap-2 flex-wrap">
         <input
           className={inputCls}
@@ -1274,7 +1286,17 @@ type CrewDocumentVersion = {
 // A self_upload version with no review row yet is pending — that's the
 // only case canManage sees Approve/Reject for; every other source is
 // already trusted (a signed-in staff member or AI-assisted staff upload).
-function VersionHistoryPanel({ documentId, crewId, canManage }: { documentId: string; crewId: string; canManage: boolean }) {
+function VersionHistoryPanel({
+  documentId,
+  crewId,
+  canManage,
+  typeName,
+}: {
+  documentId: string;
+  crewId: string;
+  canManage: boolean;
+  typeName: string;
+}) {
   const [versions, setVersions] = useState<CrewDocumentVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
@@ -1365,6 +1387,7 @@ function VersionHistoryPanel({ documentId, crewId, canManage }: { documentId: st
             {isPending && canManage && (
               <PendingReviewRow
                 version={v}
+                typeName={typeName}
                 busy={reviewingId === v.id}
                 onApprove={(overrides) => review(v.id, "approved", overrides)}
                 onReject={() => review(v.id, "rejected")}
@@ -1384,11 +1407,13 @@ function VersionHistoryPanel({ documentId, crewId, canManage }: { documentId: st
 // itself (see reviewCrewDocumentVersion's overrides param).
 function PendingReviewRow({
   version,
+  typeName,
   busy,
   onApprove,
   onReject,
 }: {
   version: CrewDocumentVersion;
+  typeName: string;
   busy: boolean;
   onApprove: (overrides: { documentNumber?: string; issueDate?: string; expiryDate?: string }) => void;
   onReject: () => void;
@@ -1396,31 +1421,53 @@ function PendingReviewRow({
   const [documentNumber, setDocumentNumber] = useState(version.document_number ?? "");
   const [issueDate, setIssueDate] = useState(version.issue_date ?? "");
   const [expiryDate, setExpiryDate] = useState(version.expiry_date ?? "");
-  const [reading, setReading] = useState(false);
-  const [readNote, setReadNote] = useState<string | null>(null);
+  // Starts true (not set inside the mount effect below) — this row always
+  // reads automatically the moment it appears, so there's nothing to flip
+  // on synchronously from the effect itself; see the effect's own comment.
+  const [reading, setReading] = useState(true);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [pendingRead, setPendingRead] = useState<DocumentReadResult | null>(null);
+  const [confirmedByAi, setConfirmedByAi] = useState(false);
 
-  const autoRead = async () => {
+  // Manual retry only — safe to setState synchronously here since a
+  // click handler isn't an effect.
+  const retryRead = async () => {
     setReading(true);
-    setReadNote(null);
+    setReadError(null);
     const res = await extractCrewDocumentVersionFields(version.id);
     setReading(false);
     if ("error" in res) {
-      setReadNote(res.error);
+      setReadError(res.error);
       return;
     }
-    const { result } = res;
-    if (result.document_number) setDocumentNumber(result.document_number);
-    if (result.issue_date) setIssueDate(result.issue_date);
-    if (result.expiry_date) setExpiryDate(result.expiry_date);
-    const notes: string[] = [`Read by ${result.modelLabel} — check before approving.`];
-    if (result.typeMismatch) notes.push(`This may be "${result.document_type_name}", not the requested type.`);
-    if (result.confidence < 0.5) notes.push("Low confidence.");
-    setReadNote(notes.join(" "));
+    setPendingRead(res.result);
   };
+
+  // Reads automatically as soon as this pending item is shown — a
+  // reviewer opening version history to look at a self-uploaded file is
+  // already the "when it's uploaded" moment from their side. The effect
+  // only starts the fetch; every setState happens in the .then callback
+  // (after the promise settles), never synchronously in the effect body.
+  useEffect(() => {
+    let cancelled = false;
+    extractCrewDocumentVersionFields(version.id).then((res) => {
+      if (cancelled) return;
+      setReading(false);
+      if ("error" in res) setReadError(res.error);
+      else setPendingRead(res.result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [version.id]);
 
   return (
     <div className="mt-1 space-y-1">
-      {readNote && <div className="rounded-lg px-2 py-1" style={{ background: "#fff6e0", color: "#9a6b00" }}>{readNote}</div>}
+      {reading && !pendingRead && <div style={{ color: "var(--ch-sub)" }}>Reading the document…</div>}
+      {readError && <div className="rounded-lg px-2 py-1" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{readError}</div>}
+      {confirmedByAi && !readError && (
+        <div className="rounded-lg px-2 py-1" style={{ background: "#e6f4ea", color: "#1e7a34" }}>AI-read values confirmed below — edit anything before approving if needed.</div>
+      )}
       <div className="flex gap-2 flex-wrap">
         <input
           className="border rounded-lg px-2 py-1 text-xs"
@@ -1444,12 +1491,12 @@ function PendingReviewRow({
           onChange={(e) => setExpiryDate(e.target.value)}
         />
         <button
-          onClick={autoRead}
+          onClick={retryRead}
           disabled={reading || busy}
           className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
         >
-          {reading ? "Reading…" : "Auto-read"}
+          {reading ? "Reading…" : "Auto-read again"}
         </button>
       </div>
       <div className="flex gap-2">
@@ -1470,6 +1517,20 @@ function PendingReviewRow({
           Reject
         </button>
       </div>
+      {pendingRead && (
+        <DocumentReadModal
+          result={pendingRead}
+          expectedTypeName={typeName}
+          onConfirm={(values) => {
+            setDocumentNumber(values.documentNumber);
+            setIssueDate(values.issueDate);
+            setExpiryDate(values.expiryDate);
+            setConfirmedByAi(true);
+            setPendingRead(null);
+          }}
+          onCancel={() => setPendingRead(null)}
+        />
+      )}
     </div>
   );
 }
