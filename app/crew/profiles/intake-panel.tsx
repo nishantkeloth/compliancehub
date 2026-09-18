@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { intakeAvailability, extractCrewIntake, saveCrewIntake, discardCrewIntake, type MappedIntakeProposal } from "./intake-actions";
@@ -50,6 +50,7 @@ function toEditDocuments(p: MappedIntakeProposal): EditDocument[] {
 export default function IntakePanel() {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [availability, setAvailability] = useState<{ enabled: boolean; reason: string | null; maxUploadMb: number; documentCapable: boolean } | null>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -209,21 +210,34 @@ export default function IntakePanel() {
           <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
             Upload a CV, passport, national ID, or certificates for one person. The AI reads them and proposes a crew profile with their documents — you review and edit everything before anything is saved. The scanned documents themselves are sent to the configured AI model.
           </p>
-          <label className={`${lbl} block mb-2`} style={lblStyle}>
+          <div className={`${lbl} block mb-2`} style={lblStyle}>
             Documents (PDF, Word, image, or text{availability ? `, up to ${availability.maxUploadMb} MB each` : ""})
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg"
-              className={`${inputCls} w-full mt-1`}
-              style={inputStyle}
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setFiles((fs) => [...fs, ...picked]);
-                e.target.value = "";
-              }}
-            />
-          </label>
+          </div>
+          {/* A bare <input type="file"> renders as a browser-native
+              "Choose Files / No file chosen" control that reads like a
+              disabled text field rather than something clickable. Hiding
+              it and triggering it from a real button makes the click
+              target obvious. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg"
+            className="hidden"
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length) setFiles((fs) => [...fs, ...picked]);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded-lg border px-4 py-2 text-sm font-semibold mb-2"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+          >
+            + Choose files
+          </button>
           {files.length > 0 && (
             <ul className="text-xs mb-2 space-y-0.5" style={{ color: "var(--ch-ink)" }}>
               {files.map((f, i) => (
