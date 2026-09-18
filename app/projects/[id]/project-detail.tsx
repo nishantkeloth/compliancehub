@@ -27,7 +27,7 @@ type Project = {
   status: string;
   notes: string | null;
   contract_id: string;
-  contractor_id: string;
+  contractor_id: string | null;
   contract_title: string;
   contract_status: string;
   client_name: string;
@@ -225,7 +225,7 @@ function ProjectForm({
 }) {
   const [values, setValues] = useState({
     contractId: project.contract_id,
-    contractorId: project.contractor_id,
+    contractorId: project.contractor_id ?? "",
     projectName: project.project_name,
     clientReference: project.client_reference ?? "",
     purchaseOrderNumber: project.purchase_order_number ?? "",
@@ -249,7 +249,7 @@ function ProjectForm({
     setValues((v) => ({ ...v, [k]: e.target.value }));
 
   const save = () => {
-    if (!values.projectName.trim() || !values.contractId || !values.contractorId || submitted) return;
+    if (!values.projectName.trim() || !values.contractId || submitted) return;
     const fd = new FormData();
     Object.entries(values).forEach(([k, v]) => fd.set(k, v));
     setSubmitted(true);
@@ -277,6 +277,7 @@ function ProjectForm({
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           EPC Contractor
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.contractorId} onChange={set("contractorId")}>
+            <option value="">No EPC contractor</option>
             {contractors.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}

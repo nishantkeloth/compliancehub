@@ -163,7 +163,7 @@ function ProjectForm({
   );
 
   const save = () => {
-    if (!name.trim() || !contractId || !contractorId || submitted) return;
+    if (!name.trim() || !contractId || submitted) return;
     const fd = new FormData();
     fd.set("contractId", contractId);
     fd.set("contractorId", contractorId);
@@ -206,7 +206,7 @@ function ProjectForm({
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           EPC Contractor
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={contractorId} onChange={(e) => setContractorId(e.target.value)}>
-            <option value="">Select…</option>
+            <option value="">No EPC contractor</option>
             {eligibleContractors.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -228,7 +228,7 @@ function ProjectForm({
         You&rsquo;ll fill in dates, POB, locations, and team on the project page after saving.
       </p>
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={submitted || !name.trim() || !contractId || !contractorId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button onClick={save} disabled={submitted || !name.trim() || !contractId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

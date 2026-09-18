@@ -65,22 +65,21 @@ export async function createProject(formData: FormData) {
   const { supabase, access, userId } = await requireProjectsManage();
   const contractId = str(formData, "contractId");
   if (!contractId) return { error: "Contract is required." };
-  const contractorId = str(formData, "contractorId");
-  if (!contractorId) return { error: "EPC Contractor is required." };
+  const contractorId = optStr(formData, "contractorId");
   const name = str(formData, "projectName");
   if (!name) return { error: "Project name is required." };
 
-  const [{ data: contract, error: contractError }, { data: contractor, error: contractorError }] = await Promise.all([
+  const [{ data: contract, error: contractError }, contractorResult] = await Promise.all([
     supabase.from("contracts").select("status, planned_start_date, planned_end_date").eq("id", contractId).single(),
-    supabase.from("contractors").select("is_active").eq("id", contractorId).single(),
+    contractorId ? supabase.from("contractors").select("is_active").eq("id", contractorId).single() : Promise.resolve({ data: null, error: null }),
   ]);
   if (contractError || !contract) return { error: "Could not find that contract." };
-  if (contractorError || !contractor) return { error: "Could not find that EPC contractor." };
+  if (contractorId) {
+    if (contractorResult.error || !contractorResult.data) return { error: "Could not find that EPC contractor." };
+    if (!contractorResult.data.is_active) return { error: "This EPC contractor is inactive and can't be assigned to a new project." };
+  }
   if (CONTRACT_BLOCKING_STATUSES.has(contract.status)) {
     return { error: `This contract is ${contract.status} and can't receive new projects.` };
-  }
-  if (!contractor.is_active) {
-    return { error: "This EPC contractor is inactive and can't be assigned to a new project." };
   }
 
   const status = projectStatus(formData);
@@ -138,24 +137,23 @@ export async function updateProject(id: string, formData: FormData) {
   const { supabase, userId } = await requireProjectsManage();
   const contractId = str(formData, "contractId");
   if (!contractId) return { error: "Contract is required." };
-  const contractorId = str(formData, "contractorId");
-  if (!contractorId) return { error: "EPC Contractor is required." };
+  const contractorId = optStr(formData, "contractorId");
   const name = str(formData, "projectName");
   if (!name) return { error: "Project name is required." };
 
-  const [{ data: contract, error: contractError }, { data: contractor, error: contractorError }] = await Promise.all([
+  const [{ data: contract, error: contractError }, contractorResult] = await Promise.all([
     supabase.from("contracts").select("status, planned_start_date, planned_end_date").eq("id", contractId).single(),
-    supabase.from("contractors").select("is_active").eq("id", contractorId).single(),
+    contractorId ? supabase.from("contractors").select("is_active").eq("id", contractorId).single() : Promise.resolve({ data: null, error: null }),
   ]);
   if (contractError || !contract) return { error: "Could not find that contract." };
-  if (contractorError || !contractor) return { error: "Could not find that EPC contractor." };
+  if (contractorId) {
+    if (contractorResult.error || !contractorResult.data) return { error: "Could not find that EPC contractor." };
+    if (!contractorResult.data.is_active) return { error: "This EPC contractor is inactive and can't be assigned to a project." };
+  }
 
   const status = projectStatus(formData);
   if (status === "active" && !CONTRACT_ACTIVATABLE_STATUSES.has(contract.status)) {
     return { error: `A project can't be activated while its contract is ${contract.status} — the contract must be Awarded or Active first.` };
-  }
-  if (!contractor.is_active) {
-    return { error: "This EPC contractor is inactive and can't be assigned to a project." };
   }
 
   const plannedStart = optStr(formData, "plannedStartDate");

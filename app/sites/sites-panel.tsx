@@ -30,7 +30,7 @@ export type OffshoreSite = {
   standard_rotation_template_id: string | null;
   project_id: string | null;
 };
-type Project = { id: string; project_name: string; contractor_id: string };
+type Project = { id: string; project_name: string; contractor_id: string | null };
 type ManningReq = { id: string; offshore_site_id: string; job_role_id: string; minimum_headcount: number };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -258,9 +258,15 @@ function OffshoreSiteForm({
   const [notes, setNotes] = useState(site?.notes ?? "");
   const [submitted, setSubmitted] = useState(false);
 
-  // Only offer projects that belong to the selected EPC contractor — a
-  // site's project must run under the same contractor it's assigned to.
-  const eligibleProjects = projects.filter((p) => p.contractor_id === contractorId);
+  // Offer projects that belong to the selected EPC contractor, plus any
+  // project that has no contractor of its own (those aren't tied to a
+  // specific contractor, so they're always fair game). When no contractor
+  // is picked for the site yet, only the contractor-less projects show —
+  // a site with a contractor should still get a project under that same
+  // contractor, not an arbitrary one.
+  const eligibleProjects = contractorId
+    ? projects.filter((p) => p.contractor_id === contractorId || p.contractor_id === null)
+    : projects.filter((p) => p.contractor_id === null);
 
   const save = () => {
     if (!name.trim() || submitted) return;
@@ -320,8 +326,8 @@ function OffshoreSiteForm({
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <select className={inputCls} style={inputStyle} value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={!contractorId}>
-          <option value="">{contractorId ? "No project" : "Pick a contractor first"}</option>
+        <select className={inputCls} style={inputStyle} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+          <option value="">{eligibleProjects.length ? "No project" : (contractorId ? "No projects under this contractor" : "No contractor-less projects")}</option>
           {eligibleProjects.map((p) => (
             <option key={p.id} value={p.id}>{p.project_name}</option>
           ))}
