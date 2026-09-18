@@ -154,17 +154,30 @@ function DocumentUploadItem({
       </div>
 
       {done ? (
-        <div
-          className="text-sm rounded-lg px-3 py-2 mt-2"
-          style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
-        >
-          Submitted — {companyName} will review it.{" "}
+        <div className="mt-2 space-y-2">
+          <div
+            className="flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-2"
+            style={{ background: "#e6f4ea", color: "#1e7a34" }}
+          >
+            <span aria-hidden="true">✓</span> Saved — {companyName} will review it
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <ReadOnlyField label="Document number" value={documentNumber} />
+            <ReadOnlyField label="Issue date" value={issueDate} />
+            <ReadOnlyField label="Expiry date" value={expiryDate} />
+          </div>
           <button
             onClick={() => {
               setDone(false);
               setFile(null);
+              setDocumentNumber("");
+              setIssueDate("");
+              setExpiryDate("");
+              setConfirmedByAi(false);
+              setAiNote(null);
             }}
-            className="underline font-semibold"
+            className="underline text-xs font-semibold"
+            style={{ color: "var(--ch-navy)" }}
           >
             Upload a different file
           </button>
@@ -173,6 +186,7 @@ function DocumentUploadItem({
         <>
           <input
             type="file"
+            disabled={busy}
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
               setFile(f);
@@ -180,12 +194,12 @@ function DocumentUploadItem({
               setAiNote(null);
               if (f) autoRead(f);
             }}
-            className="text-sm mt-2 block"
+            className="text-sm mt-2 block disabled:opacity-50"
           />
           <div className="mt-2">
             <button
               onClick={() => autoRead()}
-              disabled={!file || reading}
+              disabled={!file || reading || busy}
               className="text-xs font-semibold rounded-lg border px-3 py-1.5 disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
             >
@@ -202,25 +216,28 @@ function DocumentUploadItem({
           )}
           <div className="grid grid-cols-3 gap-2 mt-2">
             <input
-              className="border rounded-lg px-2 py-1.5 text-xs"
+              className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)" }}
               placeholder="Document number (optional)"
               value={documentNumber}
+              disabled={busy}
               onChange={(e) => setDocumentNumber(e.target.value)}
             />
             <input
               type="date"
-              className="border rounded-lg px-2 py-1.5 text-xs"
+              className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)" }}
               value={issueDate}
+              disabled={busy}
               onChange={(e) => setIssueDate(e.target.value)}
               title="Issue date (optional)"
             />
             <input
               type="date"
-              className="border rounded-lg px-2 py-1.5 text-xs"
+              className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)" }}
               value={expiryDate}
+              disabled={busy}
               onChange={(e) => setExpiryDate(e.target.value)}
               title="Expiry date (optional)"
             />
@@ -239,6 +256,21 @@ function DocumentUploadItem({
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+// Plain read-only display for a field after it's been saved — same
+// visual footprint as the editable input it replaces, so the layout
+// doesn't jump, but nothing here can be typed into.
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="rounded-lg px-2 py-1.5 text-xs"
+      style={{ background: "var(--ch-bg)", border: "1px solid var(--ch-line)" }}
+    >
+      <div style={{ color: "var(--ch-sub)" }}>{label}</div>
+      <div className="font-semibold" style={{ color: "var(--ch-ink)" }}>{value || "—"}</div>
     </div>
   );
 }

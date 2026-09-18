@@ -953,8 +953,11 @@ function DocumentsSection({
     });
   };
 
+  // Deliberately does not close the panel — UploadPanel stays open showing
+  // its own "Saved" confirmation with the fields locked read-only until the
+  // person clicks Close (onCancel), so a successful upload is visibly
+  // confirmed rather than the panel just silently disappearing.
   const onUploaded = (documentId: string) => {
-    setUploadingId(null);
     setVersionCounts((prev) => ({ ...prev, [documentId]: (prev[documentId] ?? 0) + 1 }));
     onChanged();
   };
@@ -1136,6 +1139,9 @@ function UploadPanel({
   const [reading, setReading] = useState(false);
   const [usedAiRead, setUsedAiRead] = useState(false);
   const [pendingRead, setPendingRead] = useState<DocumentReadResult | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [savedFileName, setSavedFileName] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const autoRead = async (targetFile?: File) => {
     const f = targetFile ?? file;
@@ -1183,8 +1189,34 @@ function UploadPanel({
       setError(res.error);
       return;
     }
+    setSavedFileName(file.name);
+    setSavedAt(new Date().toISOString());
+    setSaved(true);
     onDone();
   };
+
+  if (saved) {
+    return (
+      <div className="rounded-lg border px-3 py-3 space-y-2" style={{ borderColor: "var(--ch-line)" }}>
+        <div className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>Upload {typeName}</div>
+        <div
+          className="flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-2"
+          style={{ background: "#e6f4ea", color: "#1e7a34" }}
+        >
+          <span aria-hidden="true">✓</span> Saved{savedAt ? ` — ${new Date(savedAt).toLocaleString()}` : ""}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <ReadOnlyField label="File" value={savedFileName ?? "—"} />
+          <ReadOnlyField label="Document number" value={documentNumber} />
+          <ReadOnlyField label="Issue date" value={issueDate} />
+          <ReadOnlyField label="Expiry date" value={expiryDate} />
+        </div>
+        <button onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}>
+          Close
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border px-3 py-3 space-y-2" style={{ borderColor: "var(--ch-line)" }}>
@@ -1198,18 +1230,19 @@ function UploadPanel({
       <input
         type="file"
         accept="application/pdf,image/*"
+        disabled={busy}
         onChange={(e) => {
           const f = e.target.files?.[0] ?? null;
           setFile(f);
           setUsedAiRead(false);
           if (f) autoRead(f);
         }}
-        className="text-sm"
+        className="text-sm disabled:opacity-50"
       />
       <div>
         <button
           onClick={() => autoRead()}
-          disabled={!file || reading}
+          disabled={!file || reading || busy}
           className="text-xs font-semibold rounded-lg border px-3 py-1.5 disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
         >
@@ -1230,6 +1263,7 @@ function UploadPanel({
           style={inputStyle}
           placeholder="Document number"
           value={documentNumber}
+          disabled={busy}
           onChange={(e) => {
             setDocumentNumber(e.target.value);
             setUsedAiRead(false);
@@ -1240,6 +1274,7 @@ function UploadPanel({
           className={inputCls}
           style={inputStyle}
           value={issueDate}
+          disabled={busy}
           onChange={(e) => {
             setIssueDate(e.target.value);
             setUsedAiRead(false);
@@ -1250,6 +1285,7 @@ function UploadPanel({
           className={inputCls}
           style={inputStyle}
           value={expiryDate}
+          disabled={busy}
           onChange={(e) => {
             setExpiryDate(e.target.value);
             setUsedAiRead(false);
@@ -1262,6 +1298,19 @@ function UploadPanel({
         </button>
         <button onClick={onCancel} disabled={busy} className="text-sm font-semibold" style={{ color: "var(--ch-sub)" }}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+// Plain read-only display for a field after it's been saved — same
+// visual footprint as the editable input it replaces, so the layout
+// doesn't jump, but nothing here can be typed into. Shared by the
+// staff upload panel and the pending-review row below.
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg px-2 py-1.5 text-xs" style={{ background: "var(--ch-bg)", border: "1px solid var(--ch-line)" }}>
+      <div style={{ color: "var(--ch-sub)" }}>{label}</div>
+      <div className="font-semibold" style={{ color: "var(--ch-ink)" }}>{value || "—"}</div>
     </div>
   );
 }
@@ -1470,24 +1519,27 @@ function PendingReviewRow({
       )}
       <div className="flex gap-2 flex-wrap">
         <input
-          className="border rounded-lg px-2 py-1 text-xs"
+          className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)" }}
           placeholder="Document number"
           value={documentNumber}
+          disabled={busy}
           onChange={(e) => setDocumentNumber(e.target.value)}
         />
         <input
           type="date"
-          className="border rounded-lg px-2 py-1 text-xs"
+          className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)" }}
           value={issueDate}
+          disabled={busy}
           onChange={(e) => setIssueDate(e.target.value)}
         />
         <input
           type="date"
-          className="border rounded-lg px-2 py-1 text-xs"
+          className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)" }}
           value={expiryDate}
+          disabled={busy}
           onChange={(e) => setExpiryDate(e.target.value)}
         />
         <button
@@ -1499,6 +1551,12 @@ function PendingReviewRow({
           {reading ? "Reading…" : "Auto-read again"}
         </button>
       </div>
+      {/* Once Approve/Reject succeeds, this whole row is replaced by the
+          version list's own read-only display above — file/number/dates as
+          plain text plus a green "Approved" (or red "Rejected") badge. That
+          badge is this screen's "saved" indicator; while the save is still
+          in flight (busy), the fields above are locked and these buttons
+          say so rather than just going gray. */}
       <div className="flex gap-2">
         <button
           onClick={() => onApprove({ documentNumber, issueDate, expiryDate })}
@@ -1506,7 +1564,7 @@ function PendingReviewRow({
           className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)", color: "#1e7a34" }}
         >
-          Approve
+          {busy ? "Saving…" : "Approve"}
         </button>
         <button
           onClick={onReject}
@@ -1514,7 +1572,7 @@ function PendingReviewRow({
           className="text-xs font-semibold rounded-lg border px-2 py-1 disabled:opacity-50"
           style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
         >
-          Reject
+          {busy ? "Saving…" : "Reject"}
         </button>
       </div>
       {pendingRead && (
