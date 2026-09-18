@@ -252,7 +252,7 @@ function DocumentUploadItem({
             disabled={busy}
             className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold mt-2 disabled:opacity-50"
           >
-            {busy ? "Uploading…" : "Upload"}
+            {busy ? "Uploading…" : "Upload File"}
           </button>
         </>
       )}
