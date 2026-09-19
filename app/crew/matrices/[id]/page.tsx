@@ -22,105 +22,152 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     .single();
   if (!matrix) notFound();
 
-  const [{ data: lines }, { data: history }, { data: versions }, { data: jobRoles }, { data: skills }, { data: rotationTemplates }, { data: documentTypes }] =
-    await Promise.all([
-      supabase
-        .from("crew_matrix_lines")
-        .select("*, job_roles(name), rotation_templates(name)")
-        .eq("crew_matrix_id", id)
-        .order("sort_order", { ascending: true }),
-      supabase
-        .from("crew_matrix_status_history")
-        .select("id, old_status, new_status, changed_at, comment")
-        .eq("crew_matrix_id", id)
-        .order("changed_at", { ascending: false })
-        .limit(30),
-      supabase
-        .from("crew_matrices")
-        .select("id, version_number, status")
-        .eq("matrix_number", matrix.matrix_number ?? "__none__")
-        .order("version_number", { ascending: false }),
-      supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
-      supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
-      supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
-      supabase
-        .from("document_types")
-        .select("id, name, category, warning_threshold_days, tracks_number")
-        .eq("org_id", access.orgId)
-        .eq("is_active", true)
-        .order("name"),
-    ]);
+  // Query plan below is deliberately staged by DEPENDENCY, not by topic, so
+  // each stage runs everything it possibly can in one Promise.all instead
+  // of round-tripping to Supabase one query at a time — this page used to
+  // take ~7 sequential round trips (most of them not actually depending on
+  // each other), which is what made every Assign/Unassign's background
+  // page refresh feel slow. Down to 4 stages now:
+  //   1) matrix (only thing everything else needs id/org_id/site_id from)
+  //   2) everything that only needs matrix/access — lines, history,
+  //      versions, job roles/skills/rotation templates/document types,
+  //      AI settings, this site's assignments, org-wide active
+  //      assignments, and custom field defs
+  //   3) everything that only needs stage 2's results — per-line
+  //      skills/documents/competencies/client requirements, and the two
+  //      crew_profiles lookups (assigned-here matched crew, and the
+  //      org-wide role-matched candidate pool)
+  //   4) the two crew_documents lookups, which need both a crew-id list
+  //      from stage 3 and the required document-type-id list from stage 3
+  const [
+    { data: lines },
+    { data: history },
+    { data: versions },
+    { data: jobRoles },
+    { data: skills },
+    { data: rotationTemplates },
+    { data: documentTypes },
+    { data: aiSettings },
+    { data: siteAssignments },
+    { data: allActiveAssignments },
+    { data: fieldDefs },
+  ] = await Promise.all([
+    supabase
+      .from("crew_matrix_lines")
+      .select("*, job_roles(name), rotation_templates(name)")
+      .eq("crew_matrix_id", id)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("crew_matrix_status_history")
+      .select("id, old_status, new_status, changed_at, comment")
+      .eq("crew_matrix_id", id)
+      .order("changed_at", { ascending: false })
+      .limit(30),
+    supabase
+      .from("crew_matrices")
+      .select("id, version_number, status")
+      .eq("matrix_number", matrix.matrix_number ?? "__none__")
+      .order("version_number", { ascending: false }),
+    supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
+    supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
+    supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
+    supabase
+      .from("document_types")
+      .select("id, name, category, warning_threshold_days, tracks_number")
+      .eq("org_id", access.orgId)
+      .eq("is_active", true)
+      .order("name"),
+    // Phase 9: AI review is offered unless the company has switched AI off.
+    supabase.from("ai_settings").select("ai_enabled").eq("org_id", access.orgId).maybeSingle(),
+    // Staffing Plan "Assigned" view: who's currently assigned to THIS
+    // matrix's site.
+    supabase.from("crew_assignments").select("crew_id").eq("org_id", access.orgId).eq("offshore_site_id", matrix.offshore_site_id).is("end_date", null),
+    // Staffing Plan "Available candidates" view: who holds no active
+    // assignment ANYWHERE in the company (org-wide, not just this site) —
+    // deliberately lighter than the Phase 3/4 candidate + readiness engine
+    // (no skills/experience/nationality/rest-period checks, no
+    // reservation); this exists to answer "do we have enough free people
+    // for this rank" while planning, before a Mobilization Request exists.
+    supabase.from("crew_assignments").select("crew_id").eq("org_id", access.orgId).is("end_date", null),
+    supabase.from("document_custom_field_definitions").select("id, label, field_key, applies_to_document_type_id").eq("org_id", access.orgId).eq("is_active", true),
+  ]);
 
-  // Phase 9: AI review is offered unless the company has switched AI off.
-  const { data: aiSettings } = await supabase.from("ai_settings").select("ai_enabled").eq("org_id", access.orgId).maybeSingle();
   const aiVisible = aiSettings?.ai_enabled ?? true;
 
   const lineIds = (lines ?? []).map((l) => l.id as string);
-  const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }] = await Promise.all([
-    lineIds.length
-      ? supabase.from("crew_matrix_line_skills").select("id, line_id, skill_id, skills(name)").in("line_id", lineIds)
-      : Promise.resolve({ data: [] }),
-    lineIds.length
-      ? supabase
-          .from("crew_matrix_line_documents")
-          .select("id, line_id, document_type_id, minimum_remaining_validity_days, is_mandatory, waiver_permitted, document_types(name)")
-          .in("line_id", lineIds)
-      : Promise.resolve({ data: [] }),
-    lineIds.length
-      ? supabase.from("crew_matrix_line_competencies").select("id, line_id, competency_name, minimum_grade, notes").in("line_id", lineIds)
-      : Promise.resolve({ data: [] }),
-    lineIds.length
-      ? supabase.from("crew_matrix_line_client_requirements").select("id, line_id, requirement_text, is_mandatory").in("line_id", lineIds)
-      : Promise.resolve({ data: [] }),
-  ]);
-
-  // Staffing Plan (real crew, by rank): who's currently assigned to this
-  // matrix's site, matched to a line by primary_job_role_id, with their
-  // actual document values for whichever document types the matrix
-  // actually requires (kept to that set, not every org document type, to
-  // avoid an expensive fetch of irrelevant records).
+  // Staffing Plan (real crew, by rank): matched to a line by
+  // primary_job_role_id. Document columns are kept to whichever document
+  // types the matrix's lines actually require (fetched in stage 4, once
+  // crew_matrix_line_documents below is known), not every org document
+  // type, to avoid an expensive fetch of irrelevant records.
   const lineJobRoleIds = Array.from(new Set((lines ?? []).map((l) => l.job_role_id as string)));
-  const usedDocTypeIds = Array.from(new Set((lineDocuments ?? []).map((d) => d.document_type_id as string)));
-
-  const [{ data: siteAssignments }, { data: fieldDefs }] = await Promise.all([
-    supabase
-      .from("crew_assignments")
-      .select("crew_id")
-      .eq("org_id", access.orgId)
-      .eq("offshore_site_id", matrix.offshore_site_id)
-      .is("end_date", null),
-    supabase
-      .from("document_custom_field_definitions")
-      .select("id, label, field_key, applies_to_document_type_id")
-      .eq("org_id", access.orgId)
-      .eq("is_active", true),
-  ]);
-
   const assignedCrewIds = Array.from(new Set((siteAssignments ?? []).map((a) => a.crew_id as string)));
+  const assignedAnywhereCrewIds = new Set((allActiveAssignments ?? []).map((a) => a.crew_id as string));
 
-  const { data: matchedCrew } =
-    assignedCrewIds.length && lineJobRoleIds.length
-      ? await supabase
-          .from("crew_profiles")
-          .select("id, full_name, nationality, primary_job_role_id")
-          .eq("org_id", access.orgId)
-          .eq("employment_status", "active")
-          .in("id", assignedCrewIds)
-          .in("primary_job_role_id", lineJobRoleIds)
-      : { data: [] };
+  const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }, { data: matchedCrew }, { data: roleMatchedCrew }] =
+    await Promise.all([
+      lineIds.length
+        ? supabase.from("crew_matrix_line_skills").select("id, line_id, skill_id, skills(name)").in("line_id", lineIds)
+        : Promise.resolve({ data: [] }),
+      lineIds.length
+        ? supabase
+            .from("crew_matrix_line_documents")
+            .select("id, line_id, document_type_id, minimum_remaining_validity_days, is_mandatory, waiver_permitted, document_types(name)")
+            .in("line_id", lineIds)
+        : Promise.resolve({ data: [] }),
+      lineIds.length
+        ? supabase.from("crew_matrix_line_competencies").select("id, line_id, competency_name, minimum_grade, notes").in("line_id", lineIds)
+        : Promise.resolve({ data: [] }),
+      lineIds.length
+        ? supabase.from("crew_matrix_line_client_requirements").select("id, line_id, requirement_text, is_mandatory").in("line_id", lineIds)
+        : Promise.resolve({ data: [] }),
+      assignedCrewIds.length && lineJobRoleIds.length
+        ? supabase
+            .from("crew_profiles")
+            .select("id, full_name, nationality, primary_job_role_id")
+            .eq("org_id", access.orgId)
+            .eq("employment_status", "active")
+            .in("id", assignedCrewIds)
+            .in("primary_job_role_id", lineJobRoleIds)
+        : Promise.resolve({ data: [] }),
+      lineJobRoleIds.length
+        ? supabase
+            .from("crew_profiles")
+            .select("id, full_name, nationality, primary_job_role_id, availability_date")
+            .eq("org_id", access.orgId)
+            .eq("employment_status", "active")
+            .in("primary_job_role_id", lineJobRoleIds)
+        : Promise.resolve({ data: [] }),
+    ]);
 
+  const usedDocTypeIds = Array.from(new Set((lineDocuments ?? []).map((d) => d.document_type_id as string)));
   const matchedCrewIds = (matchedCrew ?? []).map((c) => c.id as string);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const candidateCrewProfiles = (roleMatchedCrew ?? []).filter(
+    (c) => !assignedAnywhereCrewIds.has(c.id as string) && (!c.availability_date || (c.availability_date as string) <= todayStr)
+  );
+  const candidateCrewIds = candidateCrewProfiles.map((c) => c.id as string);
 
-  const { data: crewDocs } =
+  const [{ data: crewDocs }, { data: candidateDocs }] = await Promise.all([
     matchedCrewIds.length && usedDocTypeIds.length
-      ? await supabase
+      ? supabase
           .from("crew_documents")
           .select("crew_id, document_type_id, document_number, issue_date, expiry_date, custom_fields, created_at")
           .eq("org_id", access.orgId)
           .in("crew_id", matchedCrewIds)
           .in("document_type_id", usedDocTypeIds)
           .order("created_at", { ascending: false })
-      : { data: [] };
+      : Promise.resolve({ data: [] }),
+    candidateCrewIds.length && usedDocTypeIds.length
+      ? supabase
+          .from("crew_documents")
+          .select("crew_id, document_type_id, document_number, issue_date, expiry_date, custom_fields, created_at")
+          .eq("org_id", access.orgId)
+          .in("crew_id", candidateCrewIds)
+          .in("document_type_id", usedDocTypeIds)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+  ]);
 
   // Keep only the most recent crew_documents row per (crew_id, document_type_id).
   const latestDocByCrewAndType = new Map<
@@ -156,48 +203,6 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       documents,
     };
   });
-
-  // Staffing Plan — "Available candidates" view (pre-mobilization preview):
-  // crew matching one of this matrix's ranks who hold no active assignment
-  // anywhere in the company (org-wide, not just this site) and whose
-  // availability_date is today or earlier. Deliberately lighter than the
-  // Phase 3/4 candidate + readiness engine (no skills/experience/
-  // nationality/rest-period checks, no reservation) — this exists to
-  // answer "do we have enough free people for this rank" while planning,
-  // before a Mobilization Request is ever raised.
-  const { data: allActiveAssignments } = await supabase
-    .from("crew_assignments")
-    .select("crew_id")
-    .eq("org_id", access.orgId)
-    .is("end_date", null);
-  const assignedAnywhereCrewIds = new Set((allActiveAssignments ?? []).map((a) => a.crew_id as string));
-
-  const { data: roleMatchedCrew } =
-    lineJobRoleIds.length
-      ? await supabase
-          .from("crew_profiles")
-          .select("id, full_name, nationality, primary_job_role_id, availability_date")
-          .eq("org_id", access.orgId)
-          .eq("employment_status", "active")
-          .in("primary_job_role_id", lineJobRoleIds)
-      : { data: [] };
-
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const candidateCrewProfiles = (roleMatchedCrew ?? []).filter(
-    (c) => !assignedAnywhereCrewIds.has(c.id as string) && (!c.availability_date || (c.availability_date as string) <= todayStr)
-  );
-  const candidateCrewIds = candidateCrewProfiles.map((c) => c.id as string);
-
-  const { data: candidateDocs } =
-    candidateCrewIds.length && usedDocTypeIds.length
-      ? await supabase
-          .from("crew_documents")
-          .select("crew_id, document_type_id, document_number, issue_date, expiry_date, custom_fields, created_at")
-          .eq("org_id", access.orgId)
-          .in("crew_id", candidateCrewIds)
-          .in("document_type_id", usedDocTypeIds)
-          .order("created_at", { ascending: false })
-      : { data: [] };
 
   const latestCandidateDocByCrewAndType = new Map<
     string,

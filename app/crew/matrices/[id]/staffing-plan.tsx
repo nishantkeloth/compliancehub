@@ -48,7 +48,7 @@
 // separate, larger "client crew report" feature (multi-client templates,
 // email delivery) this does not attempt to replace.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
@@ -142,6 +142,36 @@ export default function StaffingPlanView({
   };
   const [exporting, setExporting] = useState(false);
   const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
+
+  // Assign/Unassign already succeeded on the server by the time these are
+  // called (see RowActions) — the slow part was never that single insert/
+  // delete, it's the subsequent full-page router.refresh() this component
+  // still triggers afterwards (see onChanged below) so every other tab on
+  // the page eventually sees fresh data too. Moving the row between these
+  // local lists immediately, instead of waiting for that refresh to land,
+  // is what makes Assign/Unassign feel instant — the background refresh
+  // still runs, and resyncs local state (via the effects below) once it
+  // resolves, so nothing is permanently out of step with the server.
+  const [localCrew, setLocalCrew] = useState(crew);
+  const [localCandidateCrew, setLocalCandidateCrew] = useState(candidateCrew ?? []);
+  useEffect(() => setLocalCrew(crew), [crew]);
+  useEffect(() => setLocalCandidateCrew(candidateCrew ?? []), [candidateCrew]);
+
+  const moveToAssigned = (crewId: string) => {
+    setLocalCandidateCrew((prev) => {
+      const person = prev.find((p) => p.crew_id === crewId);
+      if (person) setLocalCrew((c) => (c.some((x) => x.crew_id === crewId) ? c : [...c, person]));
+      return prev.filter((p) => p.crew_id !== crewId);
+    });
+  };
+  const moveToAvailable = (crewId: string) => {
+    setLocalCrew((prev) => {
+      const person = prev.find((p) => p.crew_id === crewId);
+      if (person) setLocalCandidateCrew((c) => (c.some((x) => x.crew_id === crewId) ? c : [...c, person]));
+      return prev.filter((p) => p.crew_id !== crewId);
+    });
+  };
+
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
 
   const usedDocTypeIds = new Set<string>();
@@ -175,7 +205,7 @@ export default function StaffingPlanView({
     );
   }
 
-  const activeCrew = view === "assigned" ? crew : candidateCrew ?? [];
+  const activeCrew = view === "assigned" ? localCrew : localCandidateCrew;
 
   const exportExcel = async () => {
     setExporting(true);
@@ -304,6 +334,8 @@ export default function StaffingPlanView({
               canManage={canManage}
               canAssignCrew={canAssignCrew}
               onChanged={onChanged}
+              onAssigned={moveToAssigned}
+              onUnassigned={moveToAvailable}
               customFieldDefinitions={customFieldDefinitions}
             />
           );
@@ -318,7 +350,7 @@ export default function StaffingPlanView({
           matrixVersion={matrixVersion}
           matrixStatus={matrixStatus}
           lines={orderedLines}
-          assignedCrew={crew}
+          assignedCrew={localCrew}
           documentTypes={documentTypes}
           customFieldDefinitions={customFieldDefinitions}
           onClose={() => setShareModal(null)}
@@ -346,6 +378,8 @@ function StaffingLineCard({
   canManage,
   canAssignCrew,
   onChanged,
+  onAssigned,
+  onUnassigned,
   customFieldDefinitions,
 }: {
   line: Line;
@@ -362,6 +396,8 @@ function StaffingLineCard({
   canManage: boolean;
   canAssignCrew: boolean;
   onChanged?: () => void;
+  onAssigned: (crewId: string) => void;
+  onUnassigned: (crewId: string) => void;
   customFieldDefinitions: FieldDef[];
 }) {
   const [mailBusy, setMailBusy] = useState(false);
@@ -533,6 +569,8 @@ function StaffingLineCard({
                       showUnassign={showUnassignCol}
                       showShare={showShareCol}
                       onChanged={onChanged}
+                      onAssigned={onAssigned}
+                      onUnassigned={onUnassigned}
                     />
                   )}
                 </tr>
@@ -554,6 +592,8 @@ function RowActions({
   showUnassign,
   showShare,
   onChanged,
+  onAssigned,
+  onUnassigned,
 }: {
   crewId: string;
   crewMatrixId: string;
@@ -563,6 +603,8 @@ function RowActions({
   showUnassign: boolean;
   showShare: boolean;
   onChanged?: () => void;
+  onAssigned: (crewId: string) => void;
+  onUnassigned: (crewId: string) => void;
 }) {
   const [busy, setBusy] = useState<"assign" | "unassign" | "share" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -578,6 +620,10 @@ function RowActions({
       setError(res.error);
       return;
     }
+    // The insert already succeeded server-side — move this row over
+    // immediately rather than waiting on the slower full-page refresh
+    // below to land before the UI reflects it.
+    onAssigned(crewId);
     onChanged?.();
   };
 
@@ -591,6 +637,7 @@ function RowActions({
       setError(res.error);
       return;
     }
+    onUnassigned(crewId);
     onChanged?.();
   };
 
