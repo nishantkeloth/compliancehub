@@ -243,8 +243,15 @@ create policy crew_matrix_share_events_insert on crew_matrix_share_events for in
 
 -- ------------------------------------------------------------
 -- 6. Number range — share_reference gets a human-friendly SHR-00001
---    code the same way clients/matrices already do.
+--    code the same way clients/matrices already do. number_range_configs
+--    has a check constraint on entity_type (last widened in migration
+--    0003) that doesn't know about this new entity type yet — widen it
+--    the same way each earlier migration that added one did.
 -- ------------------------------------------------------------
+
+alter table number_range_configs drop constraint if exists number_range_configs_entity_type_check;
+alter table number_range_configs add constraint number_range_configs_entity_type_check
+  check (entity_type = any (array['client', 'contractor', 'contract', 'project', 'crew_matrix', 'mobilization', 'crew_matrix_share']));
 
 insert into number_range_configs (org_id, entity_type, prefix, padding_length, current_number)
 select id, 'crew_matrix_share', 'SHR', 5, 0 from companies
