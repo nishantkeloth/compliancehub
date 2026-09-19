@@ -227,6 +227,15 @@ export default function MatrixDetail({
             </button>
           </div>
         )}
+        {/* Edit also unlocks the Lines tab's checkboxes/requirements (see
+            LinesEditor's editingEnabled prop) — on that tab there's no
+            header form with its own Save/Cancel to turn edit mode back off,
+            so this gives every tab a way out of it. */}
+        {isDraft && canManage && editing && tab !== "overview" && (
+          <button onClick={() => setEditing(false)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
+            Done editing
+          </button>
+        )}
       </div>
 
       {matrix.rejection_reason && ["rejected", "draft"].includes(matrix.status) && (
@@ -333,6 +342,7 @@ export default function MatrixDetail({
           lines={lines}
           isDraft={isDraft}
           canManage={canManage}
+          editingEnabled={editing}
           jobRoles={jobRoles}
           skills={skills}
           rotationTemplates={rotationTemplates}

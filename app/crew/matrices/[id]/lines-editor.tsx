@@ -107,6 +107,7 @@ export default function LinesEditor({
   lines,
   isDraft,
   canManage,
+  editingEnabled,
   jobRoles,
   skills,
   rotationTemplates,
@@ -116,6 +117,13 @@ export default function LinesEditor({
   lines: Line[];
   isDraft: boolean;
   canManage: boolean;
+  // Mirrors the header's "Edit" toggle (matrix-detail.tsx) — lines (and
+  // everything under them: skills, document checkboxes, competencies,
+  // client requirements) only become editable once that button has been
+  // clicked, the same as the Overview tab's fields. Without this, the
+  // requirement checkboxes here were always live for any draft matrix, so
+  // clicking "Edit" up top had no visible effect on this tab.
+  editingEnabled: boolean;
   jobRoles: Ref[];
   skills: Ref[];
   rotationTemplates: Ref[];
@@ -129,7 +137,7 @@ export default function LinesEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const canEdit = isDraft && canManage;
+  const canEdit = isDraft && canManage && editingEnabled;
 
   const refresh = () => router.refresh();
 
@@ -215,6 +223,11 @@ export default function LinesEditor({
       {!isDraft && (
         <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
           Lines can only be edited while this matrix is a draft — create a new version to make changes.
+        </div>
+      )}
+      {isDraft && canManage && !editingEnabled && (
+        <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
+          Click <strong>Edit</strong> above to change lines, requirements, or document checkboxes.
         </div>
       )}
       {error && <div className="text-sm mb-3" style={{ color: "var(--ch-fail)" }}>{error}</div>}
