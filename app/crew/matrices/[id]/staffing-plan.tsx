@@ -78,10 +78,25 @@ export default function StaffingPlanView({
   for (const line of orderedLines) {
     for (const doc of line.documents) usedDocTypeIds.add(doc.document_type_id);
   }
-  // Keep the org's canonical (alphabetical) document-type order rather than
-  // first-seen-per-line order, so the column order stays stable as lines
-  // are added, reordered or copied.
-  const columns = documentTypes.filter((d) => usedDocTypeIds.has(d.id));
+  // Group columns by document-type category (Vaccination / Certificate /
+  // Trainings / etc., set on the document type under Team → Document Types)
+  // so the header can club same-category columns under one spanning band,
+  // matching the client's own template layout. Uncategorized types sort
+  // last under "General". Within a category, keep alphabetical order.
+  const columns = documentTypes
+    .filter((d) => usedDocTypeIds.has(d.id))
+    .sort((a, b) => {
+      const catA = a.category ?? "￿";
+      const catB = b.category ?? "￿";
+      if (catA !== catB) return catA.localeCompare(catB);
+      return a.name.localeCompare(b.name);
+    });
+  const categoryGroups: { category: string | null; count: number }[] = [];
+  for (const col of columns) {
+    const last = categoryGroups[categoryGroups.length - 1];
+    if (last && last.category === col.category) last.count += 1;
+    else categoryGroups.push({ category: col.category, count: 1 });
+  }
 
   if (orderedLines.length === 0) {
     return <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No lines yet — add lines under the Lines tab first.</div>;
@@ -106,7 +121,8 @@ export default function StaffingPlanView({
             ? <>One row per crew member currently assigned to this site, grouped by rank.</>
             : <>One row per crew member who matches the rank, holds no active assignment anywhere, and is free today — a preview for staffing before any mobilization request exists.</>}
           {" "}Columns are every document type required for at least one rank on this matrix — N/A means that rank doesn&apos;t require it,
-          &quot;Missing&quot; means it does and no record exists yet.
+          &quot;Missing&quot; means it does and no record exists yet. Columns are grouped by category, and{" "}
+          <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>*</span> marks a document that&apos;s mandatory for that rank.
         </div>
         {candidateCrew !== undefined && (
           <div className="inline-flex rounded-lg border p-0.5 shrink-0" style={{ borderColor: "var(--ch-line)" }}>
@@ -131,6 +147,7 @@ export default function StaffingPlanView({
         {orderedLines.map((line) => {
           const crewForLine = activeCrew.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
           const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
+          const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
 
           return (
             <div key={line.id} className={`${cardCls} overflow-hidden`} style={cardStyle}>
@@ -151,11 +168,30 @@ export default function StaffingPlanView({
                   <table className="text-xs border-collapse w-full">
                     <thead>
                       <tr style={{ background: "var(--ch-paper)" }}>
-                        <th className="text-left font-semibold px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-sub)" }}>Name</th>
-                        <th className="text-left font-semibold px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-sub)" }}>Nationality</th>
-                        {columns.map((col) => (
-                          <th key={col.id} className="text-left font-semibold px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-sub)" }}>
+                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)" }}>Name</th>
+                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)" }}>Nationality</th>
+                        {categoryGroups.map((g, i) => (
+                          <th
+                            key={`${g.category ?? "general"}-${i}`}
+                            colSpan={g.count}
+                            className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b border-l"
+                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)" }}
+                          >
+                            {g.category ?? "General"}
+                          </th>
+                        ))}
+                      </tr>
+                      <tr style={{ background: "var(--ch-paper)" }}>
+                        {columns.map((col, i) => (
+                          <th
+                            key={col.id}
+                            className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || columns[i - 1].category !== col.category ? " border-l" : ""}`}
+                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)" }}
+                          >
                             {col.name}
+                            {mandatoryDocTypeIds.has(col.id) && (
+                              <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }} title="Mandatory">*</span>
+                            )}
                           </th>
                         ))}
                       </tr>
