@@ -248,7 +248,10 @@ export async function generatePositionsFromMatrix(requestId: string) {
       });
     }
   }
-  const { error: insertError } = await supabase.from("mobilization_positions").insert(rows);
+  const { data: inserted, error: insertError } = await supabase
+    .from("mobilization_positions")
+    .insert(rows)
+    .select("id, crew_matrix_line_id, position_sequence");
   if (insertError) return { error: insertError.message };
 
   const anyClientApproval = lines.some((l) => l.client_approval_required);
@@ -256,8 +259,87 @@ export async function generatePositionsFromMatrix(requestId: string) {
     await supabase.from("mobilization_requests").update({ client_approval_required: anyClientApproval }).eq("id", requestId);
   }
 
+  // Pre-fill positions from whoever is already assigned to this matrix's
+  // site on the Staffing Plan, matched to a line the same way the
+  // Staffing Plan itself matches them (crew_assignments at this site, by
+  // primary_job_role_id) — so a freshly generated mobilization doesn't
+  // start every position "Open" when the matrix already shows real
+  // people staffed. Deliberately a second pass of individual updates
+  // (not folded into the bulk insert above): each fill goes through the
+  // same reservation-lock path as a manual "Select candidate" so a crew
+  // member already pending on another mobilization is silently skipped
+  // (left Open here) instead of failing position generation outright.
+  let prefilled = 0;
+  if (req.offshore_site_id) {
+    const lineJobRoleIds = Array.from(new Set(lines.map((l) => l.job_role_id as string)));
+    const { data: siteAssignments } = await supabase
+      .from("crew_assignments")
+      .select("crew_id")
+      .eq("org_id", access.orgId)
+      .eq("offshore_site_id", req.offshore_site_id)
+      .is("end_date", null);
+    const assignedCrewIds = Array.from(new Set((siteAssignments ?? []).map((a) => a.crew_id as string)));
+
+    if (assignedCrewIds.length && lineJobRoleIds.length) {
+      const { data: assignedCrew } = await supabase
+        .from("crew_profiles")
+        .select("id, primary_job_role_id")
+        .eq("org_id", access.orgId)
+        .eq("employment_status", "active")
+        .in("id", assignedCrewIds)
+        .in("primary_job_role_id", lineJobRoleIds);
+
+      // Candidates queued per role, shared (and drained via shift()) across
+      // every line that shares that role — so two lines both requiring
+      // "Cook" split the assigned Cooks between them instead of the same
+      // person filling a slot on both.
+      const candidatesByRole = new Map<string, string[]>();
+      for (const c of assignedCrew ?? []) {
+        const roleId = c.primary_job_role_id as string;
+        const list = candidatesByRole.get(roleId) ?? [];
+        list.push(c.id as string);
+        candidatesByRole.set(roleId, list);
+      }
+
+      const positionsByLine = new Map<string, { id: string; position_sequence: number }[]>();
+      for (const p of inserted ?? []) {
+        const lineId = p.crew_matrix_line_id as string;
+        const list = positionsByLine.get(lineId) ?? [];
+        list.push({ id: p.id as string, position_sequence: p.position_sequence as number });
+        positionsByLine.set(lineId, list);
+      }
+
+      for (const line of lines) {
+        const positions = (positionsByLine.get(line.id as string) ?? []).sort((a, b) => a.position_sequence - b.position_sequence);
+        const candidates = candidatesByRole.get(line.job_role_id as string) ?? [];
+        for (const pos of positions) {
+          const crewId = candidates.shift();
+          if (!crewId) break;
+          const { error: fillError } = await supabase
+            .from("mobilization_positions")
+            .update({ selected_crew_id: crewId, readiness_status: "selected", updated_by: userId })
+            .eq("id", pos.id);
+          if (!fillError) {
+            prefilled++;
+            await supabase.from("mobilization_position_history").insert({
+              org_id: access.orgId,
+              mobilization_position_id: pos.id,
+              previous_crew_id: null,
+              new_crew_id: crewId,
+              reason: "Pre-filled from the crew matrix's Staffing Plan assignment",
+              changed_by: userId,
+            });
+          }
+          // Any error (most likely the one-active-reservation conflict if
+          // this crew member is already pending elsewhere) just leaves
+          // this position Open — never fails the overall generate step.
+        }
+      }
+    }
+  }
+
   revalidateMobilization(requestId);
-  return { count: rows.length };
+  return { count: rows.length, prefilled };
 }
 
 export async function addAdditionalPosition(requestId: string, formData: FormData) {
