@@ -18,13 +18,13 @@
 //   not to replace the gated mobilization workflow. Reserving/mobilizing
 //   still happens only through Mobilizations → New mobilization request.
 //
-// For each rank (crew matrix line) and each document type the matrix uses
-// anywhere, this shows that person's actual document value when their rank
-// requires it — or N/A when it doesn't (mirroring the client's own crew
-// matrix template, e.g. a Camp Boss row carries Food Safety Certificate but
-// shows N/A for a deck-only cert like a DP certificate). "Missing" (in the
-// expired/critical color) means the rank requires the document but no
-// crew_documents record exists yet for that person.
+// For each rank (crew matrix line), only the document types actually
+// required for THAT rank are shown as columns — a Camp Boss row doesn't
+// carry a column for a deck-only cert like a DP certificate at all (rather
+// than showing N/A for it), mirroring the client's own crew matrix
+// template. "Missing" (in the expired/critical color) means the rank
+// requires the document but no crew_documents record exists yet for that
+// person.
 //
 // This is still a pivot of THIS matrix's Required Document Types config,
 // now joined to real crew_profiles/crew_documents rather than showing the
@@ -51,14 +51,11 @@ export type FieldDef = { id: string; label: string; field_key: string; applies_t
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
-// Light, low-contrast pastel fills for category header bands — cycled by
-// group order so each category gets a stable, distinct shade without
-// needing per-category color configuration anywhere.
+// Light, low-contrast pastel fills for category header bands — assigned per
+// category (see buildCategoryColorMap) so the same category always gets the
+// same shade whichever rank's table it appears in.
 const CATEGORY_BAND_COLORS = ["#eef2ff", "#ecfdf5", "#fff7ed", "#fdf2f8", "#f0f9ff", "#fefce8", "#f3f4f6"];
-
-function bandColor(groupIndex: number): string {
-  return CATEGORY_BAND_COLORS[groupIndex % CATEGORY_BAND_COLORS.length];
-}
+const UNCATEGORIZED_KEY = "\u0000general";
 
 // "certificate" -> "CERTIFICATES", "travel_document" -> "TRAVEL DOCUMENTS".
 // Uncategorized document types are clubbed under a plain "GENERAL" band.
@@ -66,6 +63,26 @@ function formatCategoryLabel(category: string | null): string {
   if (!category) return "GENERAL";
   const upper = category.replace(/[_-]+/g, " ").trim().toUpperCase();
   return /S$/.test(upper) ? upper : `${upper}S`;
+}
+
+type CategoryGroup = { category: string | null; count: number };
+
+// Groups a rank's own applicable columns into contiguous same-category runs
+// (columns are pre-sorted by category, so same-category columns are always
+// adjacent). Used for both the header band spans and the Excel export.
+function groupByCategory(cols: DocTypeRef[]): { groups: CategoryGroup[]; groupIndex: number[] } {
+  const groups: CategoryGroup[] = [];
+  const groupIndex: number[] = [];
+  for (const col of cols) {
+    const last = groups[groups.length - 1];
+    if (last && last.category === col.category) {
+      last.count += 1;
+    } else {
+      groups.push({ category: col.category, count: 1 });
+    }
+    groupIndex.push(groups.length - 1);
+  }
+  return { groups, groupIndex };
 }
 
 function formatDate(iso: string | null | undefined): string | null {
@@ -77,6 +94,9 @@ function formatDate(iso: string | null | undefined): string | null {
 
 // Single source of truth for what a document cell should say, shared by the
 // on-screen table (DocCell) and the Excel export so the two never drift.
+// Every column shown on a rank's table is already required for that rank
+// (see lineColumns below), so this only ever renders "missing"/"empty"/
+// "value" in practice — "na" stays as a defensive fallback.
 type CellInfo = { text: string; kind: "na" | "missing" | "empty" | "value"; status?: DocumentStatus };
 
 function cellInfo(
@@ -133,11 +153,12 @@ export default function StaffingPlanView({
   for (const line of orderedLines) {
     for (const doc of line.documents) usedDocTypeIds.add(doc.document_type_id);
   }
-  // Group columns by document-type category (Vaccination / Certificate /
-  // Trainings / etc., set on the document type under Team → Document Types)
-  // so the header can club same-category columns under one spanning band,
-  // matching the client's own template layout. Uncategorized types sort
-  // last under "General". Within a category, keep alphabetical order.
+  // Canonical ordering for every document type used anywhere on this
+  // matrix: by category (Vaccination / Certificate / Trainings / etc., set
+  // on the document type under Team → Document Types), uncategorized last,
+  // then alphabetically within a category. Each rank's table below filters
+  // this down to just the columns that rank actually requires, so the
+  // per-rank ordering and category grouping stay consistent across ranks.
   const columns = documentTypes
     .filter((d) => usedDocTypeIds.has(d.id))
     .sort((a, b) => {
@@ -146,17 +167,18 @@ export default function StaffingPlanView({
       if (catA !== catB) return catA.localeCompare(catB);
       return a.name.localeCompare(b.name);
     });
-  const categoryGroups: { category: string | null; count: number }[] = [];
-  const columnGroupIndex: number[] = [];
-  for (const col of columns) {
-    const last = categoryGroups[categoryGroups.length - 1];
-    if (last && last.category === col.category) {
-      last.count += 1;
-    } else {
-      categoryGroups.push({ category: col.category, count: 1 });
-    }
-    columnGroupIndex.push(categoryGroups.length - 1);
+
+  // Stable category -> color assignment (by first appearance in the
+  // canonical order above), so e.g. "Certificates" is always the same
+  // shade whether it's the first or third band on a given rank's table.
+  const categoryColorMap = new Map<string, string>();
+  {
+    const { groups } = groupByCategory(columns);
+    groups.forEach((g, i) => {
+      categoryColorMap.set(g.category ?? UNCATEGORIZED_KEY, CATEGORY_BAND_COLORS[i % CATEGORY_BAND_COLORS.length]);
+    });
   }
+  const colorForCategory = (category: string | null) => categoryColorMap.get(category ?? UNCATEGORIZED_KEY) ?? CATEGORY_BAND_COLORS[0];
 
   if (orderedLines.length === 0) {
     return <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No lines yet — add lines under the Lines tab first.</div>;
@@ -166,7 +188,7 @@ export default function StaffingPlanView({
     return (
       <div className="text-sm" style={{ color: "var(--ch-sub)" }}>
         No rank has any Required Document Types configured yet. Add them under the Lines tab — every document required
-        for at least one rank becomes a column here, with N/A for ranks it doesn&apos;t apply to.
+        for at least one rank becomes a column here.
       </div>
     );
   }
@@ -192,6 +214,8 @@ export default function StaffingPlanView({
 
         const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
         const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
+        const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
+        const { groups: lineGroups } = groupByCategory(lineColumns);
 
         let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
         let suffix = 2;
@@ -206,16 +230,16 @@ export default function StaffingPlanView({
         // plus one cell per category band, merged horizontally across the
         // columns it covers. Row 2: blank under Name/Nationality, then the
         // individual document-type column names (with a mandatory "*").
-        ws.addRow(["Name", "Nationality", ...categoryGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
-        ws.addRow(["", "", ...columns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name))]);
+        ws.addRow(["Name", "Nationality", ...lineGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
+        ws.addRow(["", "", ...lineColumns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name))]);
 
         ws.mergeCells(1, 1, 2, 1);
         ws.mergeCells(1, 2, 2, 2);
 
         let colIdx = 3; // 1-indexed; col 1 = Name, col 2 = Nationality
-        categoryGroups.forEach((g, gi) => {
+        lineGroups.forEach((g) => {
           if (g.count > 1) ws.mergeCells(1, colIdx, 1, colIdx + g.count - 1);
-          const argb = `FF${bandColor(gi).replace("#", "").toUpperCase()}`;
+          const argb = `FF${colorForCategory(g.category).replace("#", "").toUpperCase()}`;
           for (let c = colIdx; c < colIdx + g.count; c++) {
             for (const rowNum of [1, 2]) {
               ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
@@ -229,7 +253,7 @@ export default function StaffingPlanView({
           row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             cell.font = { bold: true };
             cell.alignment = { horizontal: colNumber <= 2 ? "left" : "center", vertical: "middle", wrapText: true };
-            const isGroupStart = colNumber > 2 && columns[colNumber - 3] && (colNumber === 3 || columns[colNumber - 4]?.category !== columns[colNumber - 3]?.category);
+            const isGroupStart = colNumber > 2 && lineColumns[colNumber - 3] && (colNumber === 3 || lineColumns[colNumber - 4]?.category !== lineColumns[colNumber - 3]?.category);
             cell.border = { bottom: HEADER_BORDER, ...(isGroupStart ? { left: GROUP_DIVIDER } : {}) };
           });
         }
@@ -238,9 +262,9 @@ export default function StaffingPlanView({
           ws.addRow([
             person.full_name,
             person.nationality ?? "",
-            ...columns.map((col) =>
+            ...lineColumns.map((col) =>
               cellInfo(
-                requiredDocTypeIds.has(col.id),
+                true,
                 col,
                 person.documents[col.id],
                 customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)
@@ -249,8 +273,8 @@ export default function StaffingPlanView({
           ]);
         }
 
-        for (let c = 1; c <= columns.length + 2; c++) {
-          const header = c === 1 ? "Name" : c === 2 ? "Nationality" : columns[c - 3]?.name ?? "";
+        for (let c = 1; c <= lineColumns.length + 2; c++) {
+          const header = c === 1 ? "Name" : c === 2 ? "Nationality" : lineColumns[c - 3]?.name ?? "";
           ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
         }
       }
@@ -281,8 +305,8 @@ export default function StaffingPlanView({
           {view === "assigned"
             ? <>One row per crew member currently assigned to this site, grouped by rank.</>
             : <>One row per crew member who matches the rank, holds no active assignment anywhere, and is free today — a preview for staffing before any mobilization request exists.</>}
-          {" "}Columns are every document type required for at least one rank on this matrix — N/A means that rank doesn&apos;t require it,
-          &quot;Missing&quot; means it does and no record exists yet. Columns are grouped by category, and{" "}
+          {" "}Each rank only shows the document types required for that rank, grouped by category —{" "}
+          &quot;Missing&quot; means it&apos;s required and no record exists yet, and{" "}
           <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>*</span> marks a document that&apos;s mandatory for that rank.
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -319,6 +343,11 @@ export default function StaffingPlanView({
           const crewForLine = activeCrew.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
           const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
           const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
+          // Only the document types this rank actually requires — an
+          // inapplicable (N/A) document type isn't shown as a column at
+          // all on this rank's table.
+          const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
+          const { groups: lineGroups, groupIndex: lineGroupIndex } = groupByCategory(lineColumns);
 
           return (
             <div key={line.id} className={`${cardCls} overflow-hidden`} style={cardStyle}>
@@ -334,6 +363,10 @@ export default function StaffingPlanView({
                     ? "No crew currently assigned to this rank at this site."
                     : "No unassigned, available crew match this rank right now."}
                 </div>
+              ) : lineColumns.length === 0 ? (
+                <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
+                  No document types are required for this rank yet — add them under the Lines tab.
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="text-xs border-collapse w-full">
@@ -341,23 +374,23 @@ export default function StaffingPlanView({
                       <tr>
                         <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
                         <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
-                        {categoryGroups.map((g, i) => (
+                        {lineGroups.map((g, i) => (
                           <th
                             key={`${g.category ?? "general"}-${i}`}
                             colSpan={g.count}
                             className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b border-l"
-                            style={{ color: "var(--ch-ink)", borderColor: "var(--ch-line)", background: bandColor(i) }}
+                            style={{ color: "var(--ch-ink)", borderColor: "var(--ch-line)", background: colorForCategory(g.category) }}
                           >
                             {formatCategoryLabel(g.category)}
                           </th>
                         ))}
                       </tr>
                       <tr>
-                        {columns.map((col, i) => (
+                        {lineColumns.map((col, i) => (
                           <th
                             key={col.id}
-                            className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || columns[i - 1].category !== col.category ? " border-l" : ""}`}
-                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: bandColor(columnGroupIndex[i]) }}
+                            className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || lineColumns[i - 1].category !== col.category ? " border-l" : ""}`}
+                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
                           >
                             {col.name}
                             {mandatoryDocTypeIds.has(col.id) && (
@@ -377,10 +410,9 @@ export default function StaffingPlanView({
                             )}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
-                          {columns.map((col) => (
+                          {lineColumns.map((col) => (
                             <DocCell
                               key={col.id}
-                              required={requiredDocTypeIds.has(col.id)}
                               docType={col}
                               doc={person.documents[col.id]}
                               fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)}
@@ -401,25 +433,17 @@ export default function StaffingPlanView({
 }
 
 function DocCell({
-  required,
   docType,
   doc,
   fieldDefs,
 }: {
-  required: boolean;
   docType: DocTypeRef;
   doc: StaffingCrew["documents"][string] | undefined;
   fieldDefs: FieldDef[];
 }) {
-  const info = cellInfo(required, docType, doc, fieldDefs);
-
-  if (info.kind === "na") {
-    return (
-      <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-sub)" }}>
-        N/A
-      </td>
-    );
-  }
+  // Every column reaching this component is already required for the rank
+  // it's rendered under (see lineColumns) — required is always true here.
+  const info = cellInfo(true, docType, doc, fieldDefs);
 
   if (info.kind === "missing") {
     const colors = DOCUMENT_STATUS_COLORS.expired;
