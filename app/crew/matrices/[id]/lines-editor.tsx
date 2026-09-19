@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   createCrewMatrixLine,
@@ -537,6 +537,18 @@ function DocumentsPanel({
   const [docs, setDocs] = useState<DocRow[]>(line.documents);
   const [error, setError] = useState<string | null>(null);
   const byTypeId = new Map(docs.map((d) => [d.document_type_id, d]));
+  // A just-checked row shows instantly with a placeholder id (not a real
+  // UUID) until its insert comes back. If "Mandatory" or the checkbox
+  // itself gets clicked again before that insert resolves, calling the
+  // server with the placeholder id fails ("invalid input syntax for type
+  // uuid"). This map lets any such follow-up action wait for the real id
+  // instead of firing early with the fake one.
+  const pendingAdds = useRef<Map<string, Promise<string | undefined>>>(new Map());
+
+  const resolveRealId = (doc: DocRow): Promise<string | undefined> => {
+    if (!doc.id.startsWith("optimistic-")) return Promise.resolve(doc.id);
+    return pendingAdds.current.get(doc.id) ?? Promise.resolve(undefined);
+  };
 
   const toggleSelected = (docTypeId: string, checked: boolean) => {
     setError(null);
@@ -549,29 +561,37 @@ function DocumentsPanel({
       const fd = new FormData();
       fd.set("documentTypeId", docTypeId);
       fd.set("minimumRemainingValidityDays", "");
-      addLineDocument(line.id, crewMatrixId, fd).then((res) => {
+      const pending = addLineDocument(line.id, crewMatrixId, fd).then((res) => {
         if (res?.error) {
           setError(res.error);
           setDocs((prev) => prev.filter((d) => d.id !== tempId));
-          return;
+          return undefined;
         }
-        if (res?.id) {
-          const realId = res.id;
+        const realId = res?.id;
+        if (realId) {
           setDocs((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: realId } : d)));
         }
         onChange();
+        return realId;
       });
+      pendingAdds.current.set(tempId, pending);
     } else {
       const existing = byTypeId.get(docTypeId);
       if (!existing) return;
       setDocs((prev) => prev.filter((d) => d.id !== existing.id));
-      removeLineDocument(existing.id, crewMatrixId).then((res) => {
-        if (res?.error) {
-          setError(res.error);
-          setDocs((prev) => [...prev, existing]);
-          return;
-        }
-        onChange();
+      resolveRealId(existing).then((realId) => {
+        // If the add this depends on never got a real id (it failed, or
+        // was itself already removed), there's nothing on the server to
+        // delete.
+        if (!realId) return;
+        removeLineDocument(realId, crewMatrixId).then((res) => {
+          if (res?.error) {
+            setError(res.error);
+            setDocs((prev) => [...prev, { ...existing, id: realId }]);
+            return;
+          }
+          onChange();
+        });
       });
     }
   };
@@ -581,17 +601,20 @@ function DocumentsPanel({
     const nextMandatory = field === "is_mandatory" ? !doc.is_mandatory : doc.is_mandatory;
     const nextWaiver = field === "waiver_permitted" ? !doc.waiver_permitted : doc.waiver_permitted;
     setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_mandatory: nextMandatory, waiver_permitted: nextWaiver } : d)));
-    const fd = new FormData();
-    fd.set("minimumRemainingValidityDays", doc.minimum_remaining_validity_days?.toString() ?? "");
-    if (!nextMandatory) fd.set("isMandatory", "off");
-    if (nextWaiver) fd.set("waiverPermitted", "on");
-    updateLineDocument(doc.id, crewMatrixId, fd).then((res) => {
-      if (res?.error) {
-        setError(res.error);
-        setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_mandatory: doc.is_mandatory, waiver_permitted: doc.waiver_permitted } : d)));
-        return;
-      }
-      onChange();
+    resolveRealId(doc).then((realId) => {
+      if (!realId) return;
+      const fd = new FormData();
+      fd.set("minimumRemainingValidityDays", doc.minimum_remaining_validity_days?.toString() ?? "");
+      if (!nextMandatory) fd.set("isMandatory", "off");
+      if (nextWaiver) fd.set("waiverPermitted", "on");
+      updateLineDocument(realId, crewMatrixId, fd).then((res) => {
+        if (res?.error) {
+          setError(res.error);
+          setDocs((prev) => prev.map((d) => (d.id === realId || d.id === doc.id ? { ...d, is_mandatory: doc.is_mandatory, waiver_permitted: doc.waiver_permitted } : d)));
+          return;
+        }
+        onChange();
+      });
     });
   };
 
