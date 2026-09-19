@@ -20,6 +20,8 @@ import { StatusPill } from "@/app/contracts/contracts-manager";
 import AiReviewPanel from "./ai-review-panel";
 import LinesEditor, { type Line, type Ref, type DocTypeRef } from "./lines-editor";
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
+import SendMatrixWizard from "./send-matrix-wizard";
+import SharingHistoryPanel from "./sharing-history-panel";
 
 type Matrix = {
   id: string;
@@ -115,8 +117,14 @@ export default function MatrixDetail({
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Also reachable from the Staffing Plan tab (same wizard/history panel,
+  // separate open/close state) — this copy lives at the top level so
+  // "Send Matrix to Client" is visible on the main screen (e.g. Overview)
+  // without switching tabs first.
+  const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
 
   const isDraft = matrix.status === "draft";
+  const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
 
   const totalHeadcount = lines.reduce((sum, l) => sum + (l.required_headcount ?? 0), 0);
   const totalDay = lines.reduce((sum, l) => sum + (l.day_shift_quantity ?? 0), 0);
@@ -223,23 +231,43 @@ export default function MatrixDetail({
             {matrix.site_name} · {matrix.project_name}
           </div>
         </div>
-        {isDraft && canManage && !editing && (
-          <div className="flex items-center gap-2">
-            <button onClick={() => setEditing(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Edit</button>
-            <button onClick={submitDelete} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-fail)", color: "var(--ch-fail)" }}>
-              Delete
+        <div className="flex items-center gap-2 flex-wrap">
+          {canShareMatrix && (
+            <>
+              <button
+                onClick={() => setShareModal("send")}
+                className="text-sm font-semibold rounded-lg px-4 py-2 border"
+                style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+              >
+                Send Matrix to Client
+              </button>
+              <button
+                onClick={() => setShareModal("history")}
+                className="text-sm font-semibold rounded-lg px-4 py-2 border"
+                style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+              >
+                Sharing History
+              </button>
+            </>
+          )}
+          {isDraft && canManage && !editing && (
+            <>
+              <button onClick={() => setEditing(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Edit</button>
+              <button onClick={submitDelete} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-fail)", color: "var(--ch-fail)" }}>
+                Delete
+              </button>
+            </>
+          )}
+          {/* Edit also unlocks the Lines tab's checkboxes/requirements (see
+              LinesEditor's editingEnabled prop) — on that tab there's no
+              header form with its own Save/Cancel to turn edit mode back off,
+              so this gives every tab a way out of it. */}
+          {isDraft && canManage && editing && tab !== "overview" && (
+            <button onClick={() => setEditing(false)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
+              Done editing
             </button>
-          </div>
-        )}
-        {/* Edit also unlocks the Lines tab's checkboxes/requirements (see
-            LinesEditor's editingEnabled prop) — on that tab there's no
-            header form with its own Save/Cancel to turn edit mode back off,
-            so this gives every tab a way out of it. */}
-        {isDraft && canManage && editing && tab !== "overview" && (
-          <button onClick={() => setEditing(false)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
-            Done editing
-          </button>
-        )}
+          )}
+        </div>
       </div>
 
       {matrix.rejection_reason && ["rejected", "draft"].includes(matrix.status) && (
@@ -416,6 +444,24 @@ export default function MatrixDetail({
             </div>
           ))}
         </div>
+      )}
+
+      {shareModal === "send" && (
+        <SendMatrixWizard
+          crewMatrixId={matrix.id}
+          matrixTitle={matrix.title}
+          matrixNumber={matrix.matrix_number}
+          matrixVersion={matrix.version_number}
+          matrixStatus={matrix.status}
+          lines={orderedLines}
+          assignedCrew={staffingCrew}
+          documentTypes={documentTypes}
+          customFieldDefinitions={customFieldDefinitions}
+          onClose={() => setShareModal(null)}
+        />
+      )}
+      {shareModal === "history" && (
+        <SharingHistoryPanel crewMatrixId={matrix.id} onClose={() => setShareModal(null)} />
       )}
     </div>
   );
