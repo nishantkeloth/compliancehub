@@ -26,6 +26,21 @@
 // requires the document but no crew_documents record exists yet for that
 // person.
 //
+// Actions (Assigned/Available candidates rows) — all gated behind
+// permission props from the parent (see canManage/canAssignCrew below):
+// - Assign (Available candidates only): a direct, no-approval
+//   crew_assignments write — see staffing-actions.ts for why this
+//   skips the emergency-override path used elsewhere in the app.
+// - Unassign (Assigned only): the direct counterpart — deletes that
+//   assignment outright rather than a formal sign-off.
+// - Share link (Assigned only, per row and per rank-card header): a
+//   token-based public URL a client can open without a ComplianceHub
+//   account to see one candidate's status for that rank. The header
+//   version generates one for every currently-assigned person on that
+//   rank and drafts a mailto: email listing them — using the visitor's
+//   own configured mail client (mailto:), not sending anything from
+//   the server.
+//
 // This is still a pivot of THIS matrix's Required Document Types config,
 // now joined to real crew_profiles/crew_documents rather than showing the
 // abstract Mandatory/Optional/N-A structure only — see
@@ -36,7 +51,7 @@
 import { useState } from "react";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, type DocumentStatus } from "@/lib/document-status";
-import { assignCandidateToMatrix, createResourceProfileLink } from "./staffing-actions";
+import { assignCandidateToMatrix, unassignCandidateFromMatrix, createResourceProfileLink } from "./staffing-actions";
 
 export type StaffingCrew = {
   crew_id: string;
@@ -135,6 +150,7 @@ function cellInfo(
 
 export default function StaffingPlanView({
   crewMatrixId,
+  matrixTitle,
   lines,
   documentTypes,
   crew,
@@ -142,9 +158,10 @@ export default function StaffingPlanView({
   customFieldDefinitions,
   canManage = false,
   canAssignCrew = false,
-  onAssigned,
+  onChanged,
 }: {
   crewMatrixId: string;
+  matrixTitle?: string;
   lines: Line[];
   documentTypes: DocTypeRef[];
   crew: StaffingCrew[];
@@ -155,7 +172,7 @@ export default function StaffingPlanView({
   // hidden, same as no permissions.
   canManage?: boolean;
   canAssignCrew?: boolean;
-  onAssigned?: () => void;
+  onChanged?: () => void;
 }) {
   const [view, setView] = useState<"assigned" | "available">("assigned");
   const [exporting, setExporting] = useState(false);
@@ -360,108 +377,209 @@ export default function StaffingPlanView({
           // all on this rank's table.
           const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
           const { groups: lineGroups, groupIndex: lineGroupIndex } = groupByCategory(lineColumns);
-          // "Assign" only makes sense from Available candidates (an
-          // Assigned person is already assigned); "Share link" is useful
-          // from either view, so a manager can send a client a link for
-          // someone already onboard too.
-          const showAssignCol = view === "available" && canAssignCrew;
-          const showShareCol = canManage;
-          const showActionsCol = showAssignCol || showShareCol;
 
           return (
-            <div key={line.id} className={`${cardCls} overflow-hidden`} style={cardStyle}>
-              <div className="px-3 py-2 flex items-center gap-3 flex-wrap" style={{ background: "var(--ch-navy-soft)" }}>
-                <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{line.job_role_name}</span>
-                <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
-                  Headcount required {line.required_headcount} · {crewForLine.length} {view === "assigned" ? "assigned" : "available"}
-                </span>
-              </div>
-              {crewForLine.length === 0 ? (
-                <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
-                  {view === "assigned"
-                    ? "No crew currently assigned to this rank at this site."
-                    : "No unassigned, available crew match this rank right now."}
-                </div>
-              ) : lineColumns.length === 0 ? (
-                <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
-                  No document types are required for this rank yet — add them under the Lines tab.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="text-xs border-collapse w-full">
-                    <thead>
-                      <tr>
-                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
-                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
-                        {lineGroups.map((g, i) => (
-                          <th
-                            key={`${g.category ?? "general"}-${i}`}
-                            colSpan={g.count}
-                            className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b border-l"
-                            style={{ color: "var(--ch-ink)", borderColor: "var(--ch-line)", background: colorForCategory(g.category) }}
-                          >
-                            {formatCategoryLabel(g.category)}
-                          </th>
-                        ))}
-                        {showActionsCol && (
-                          <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
-                            Actions
-                          </th>
-                        )}
-                      </tr>
-                      <tr>
-                        {lineColumns.map((col, i) => (
-                          <th
-                            key={col.id}
-                            className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || lineColumns[i - 1].category !== col.category ? " border-l" : ""}`}
-                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
-                          >
-                            {col.name}
-                            {mandatoryDocTypeIds.has(col.id) && (
-                              <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }} title="Mandatory">*</span>
-                            )}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {crewForLine.map((person) => (
-                        <tr key={person.crew_id} className="border-t" style={{ borderColor: "var(--ch-line)" }}>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            <div className="font-semibold" style={{ color: "var(--ch-ink)" }}>{person.full_name}</div>
-                            {view === "available" && person.availability_date && (
-                              <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
-                          {lineColumns.map((col) => (
-                            <DocCell
-                              key={col.id}
-                              docType={col}
-                              doc={person.documents[col.id]}
-                              fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)}
-                            />
-                          ))}
-                          {showActionsCol && (
-                            <RowActions
-                              crewId={person.crew_id}
-                              crewMatrixId={crewMatrixId}
-                              lineId={line.id}
-                              showAssign={showAssignCol}
-                              showShare={showShareCol}
-                              onAssigned={onAssigned}
-                            />
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            <StaffingLineCard
+              key={line.id}
+              line={line}
+              view={view}
+              crewForLine={crewForLine}
+              lineColumns={lineColumns}
+              lineGroups={lineGroups}
+              lineGroupIndex={lineGroupIndex}
+              colorForCategory={colorForCategory}
+              mandatoryDocTypeIds={mandatoryDocTypeIds}
+              crewMatrixId={crewMatrixId}
+              matrixTitle={matrixTitle}
+              canManage={canManage}
+              canAssignCrew={canAssignCrew}
+              onChanged={onChanged}
+              customFieldDefinitions={customFieldDefinitions}
+            />
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function StaffingLineCard({
+  line,
+  view,
+  crewForLine,
+  lineColumns,
+  lineGroups,
+  lineGroupIndex,
+  colorForCategory,
+  mandatoryDocTypeIds,
+  crewMatrixId,
+  matrixTitle,
+  canManage,
+  canAssignCrew,
+  onChanged,
+  customFieldDefinitions,
+}: {
+  line: Line;
+  view: "assigned" | "available";
+  crewForLine: StaffingCrew[];
+  lineColumns: DocTypeRef[];
+  lineGroups: CategoryGroup[];
+  lineGroupIndex: number[];
+  colorForCategory: (category: string | null) => string;
+  mandatoryDocTypeIds: Set<string>;
+  crewMatrixId: string;
+  matrixTitle?: string;
+  canManage: boolean;
+  canAssignCrew: boolean;
+  onChanged?: () => void;
+  customFieldDefinitions: FieldDef[];
+}) {
+  const [mailBusy, setMailBusy] = useState(false);
+  const [mailError, setMailError] = useState<string | null>(null);
+
+  // Assign only makes sense from Available candidates; Unassign only from
+  // Assigned. Share (per row and per rank header) is Assigned-only — a
+  // candidate who isn't assigned yet has nothing worth sending a client.
+  const showAssignCol = view === "available" && canAssignCrew;
+  const showUnassignCol = view === "assigned" && canAssignCrew;
+  const showShareCol = view === "assigned" && canManage;
+  const showActionsCol = showAssignCol || showUnassignCol || showShareCol;
+  const showHeaderShare = showShareCol && crewForLine.length > 0;
+
+  const emailAllLinks = async () => {
+    setMailError(null);
+    setMailBusy(true);
+    try {
+      const results = await Promise.all(
+        crewForLine.map(async (person) => {
+          const res = await createResourceProfileLink(person.crew_id, line.id);
+          return { name: person.full_name, url: res?.url as string | undefined, error: res?.error as string | undefined };
+        })
+      );
+      const withLinks = results.filter((r) => r.url);
+      if (withLinks.length === 0) {
+        setMailError(results[0]?.error ?? "Could not generate any links.");
+        return;
+      }
+      const subject = `Candidate profiles — ${line.job_role_name}${matrixTitle ? ` — ${matrixTitle}` : ""}`;
+      const body = results.map((r) => (r.url ? `${r.name}: ${r.url}` : `${r.name}: (couldn't generate a link — ${r.error ?? "unknown error"})`)).join("\n");
+      // mailto: opens whatever mail app is configured on this machine
+      // (Outlook, Mail, Gmail-as-default, etc.) with the message drafted
+      // and ready to review/send — nothing is sent from the server.
+      window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    } finally {
+      setMailBusy(false);
+    }
+  };
+
+  return (
+    <div className={`${cardCls} overflow-hidden`} style={cardStyle}>
+      <div className="px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ background: "var(--ch-navy-soft)" }}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{line.job_role_name}</span>
+          <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Headcount required {line.required_headcount} · {crewForLine.length} {view === "assigned" ? "assigned" : "available"}
+          </span>
+        </div>
+        {showHeaderShare && (
+          <button
+            onClick={emailAllLinks}
+            disabled={mailBusy}
+            className="text-xs font-semibold rounded-lg px-3 py-1.5 border disabled:opacity-50"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)", background: "#fff" }}
+            title="Generates a profile link for everyone assigned to this rank and opens your mail app with them drafted into an email"
+          >
+            {mailBusy ? "Preparing…" : "✉ Email profile links"}
+          </button>
+        )}
+      </div>
+      {mailError && (
+        <div className="px-3 py-1.5 text-xs" style={{ color: "var(--ch-fail)" }}>{mailError}</div>
+      )}
+      {crewForLine.length === 0 ? (
+        <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
+          {view === "assigned"
+            ? "No crew currently assigned to this rank at this site."
+            : "No unassigned, available crew match this rank right now."}
+        </div>
+      ) : lineColumns.length === 0 ? (
+        <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
+          No document types are required for this rank yet — add them under the Lines tab.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="text-xs border-collapse w-full">
+            <thead>
+              <tr>
+                <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
+                <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
+                {lineGroups.map((g, i) => (
+                  <th
+                    key={`${g.category ?? "general"}-${i}`}
+                    colSpan={g.count}
+                    className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b border-l"
+                    style={{ color: "var(--ch-ink)", borderColor: "var(--ch-line)", background: colorForCategory(g.category) }}
+                  >
+                    {formatCategoryLabel(g.category)}
+                  </th>
+                ))}
+                {showActionsCol && (
+                  <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
+                    Actions
+                  </th>
+                )}
+              </tr>
+              <tr>
+                {lineColumns.map((col, i) => (
+                  <th
+                    key={col.id}
+                    className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || lineColumns[i - 1].category !== col.category ? " border-l" : ""}`}
+                    style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
+                  >
+                    {col.name}
+                    {mandatoryDocTypeIds.has(col.id) && (
+                      <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }} title="Mandatory">*</span>
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {crewForLine.map((person) => (
+                <tr key={person.crew_id} className="border-t" style={{ borderColor: "var(--ch-line)" }}>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <div className="font-semibold" style={{ color: "var(--ch-ink)" }}>{person.full_name}</div>
+                    {view === "available" && person.availability_date && (
+                      <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
+                  {lineColumns.map((col) => (
+                    <DocCell
+                      key={col.id}
+                      docType={col}
+                      doc={person.documents[col.id]}
+                      fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)}
+                    />
+                  ))}
+                  {showActionsCol && (
+                    <RowActions
+                      crewId={person.crew_id}
+                      crewMatrixId={crewMatrixId}
+                      lineId={line.id}
+                      personName={person.full_name}
+                      showAssign={showAssignCol}
+                      showUnassign={showUnassignCol}
+                      showShare={showShareCol}
+                      onChanged={onChanged}
+                    />
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -470,18 +588,22 @@ function RowActions({
   crewId,
   crewMatrixId,
   lineId,
+  personName,
   showAssign,
+  showUnassign,
   showShare,
-  onAssigned,
+  onChanged,
 }: {
   crewId: string;
   crewMatrixId: string;
   lineId: string;
+  personName: string;
   showAssign: boolean;
+  showUnassign: boolean;
   showShare: boolean;
-  onAssigned?: () => void;
+  onChanged?: () => void;
 }) {
-  const [busy, setBusy] = useState<"assign" | "share" | null>(null);
+  const [busy, setBusy] = useState<"assign" | "unassign" | "share" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -495,7 +617,20 @@ function RowActions({
       setError(res.error);
       return;
     }
-    onAssigned?.();
+    onChanged?.();
+  };
+
+  const doUnassign = async () => {
+    if (!window.confirm(`Unassign ${personName} from this rank?`)) return;
+    setError(null);
+    setBusy("unassign");
+    const res = await unassignCandidateFromMatrix(crewId, crewMatrixId);
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    onChanged?.();
   };
 
   const doShare = async () => {
@@ -533,6 +668,16 @@ function RowActions({
             style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
           >
             {busy === "assign" ? "Assigning…" : "Assign"}
+          </button>
+        )}
+        {showUnassign && (
+          <button
+            onClick={doUnassign}
+            disabled={busy !== null}
+            className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
+          >
+            {busy === "unassign" ? "Unassigning…" : "Unassign"}
           </button>
         )}
         {showShare && (

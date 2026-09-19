@@ -14,6 +14,14 @@
 //    protects every other crew_assignments write in the app, so it
 //    succeeds under RLS for anyone who could already assign crew
 //    elsewhere in ComplianceHub.
+//  - unassignCandidateFromMatrix: the direct counterpart to
+//    assignCandidateToMatrix — deletes the crew_assignments row outright
+//    (same as deleteCrewAssignment in app/crew/profiles/actions.ts) rather
+//    than routing through the formal sign-off/demob flow in endCrewAssignment.
+//    That flow exists for a real offshore rotation ending; undoing a quick
+//    Staffing Plan assignment that was never a real mobilization doesn't
+//    need a signoff_confirmations audit row. Gated on crew.manage, same as
+//    deleteCrewAssignment, so it succeeds under RLS the same way.
 //  - createResourceProfileLink: generates a token-based public link (see
 //    migration 0017 + app/resource-profile/[token]) that a client can
 //    open without a ComplianceHub account to see one candidate's status
@@ -100,6 +108,39 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
   }
 
   await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", crewId);
+
+  revalidateMatrix(crewMatrixId);
+  return {};
+}
+
+export async function unassignCandidateFromMatrix(crewId: string, crewMatrixId: string) {
+  const { supabase, access } = await requirePermission("crew.manage", "You don't have permission to unassign crew.");
+
+  const { data: matrix, error: matrixErr } = await supabase
+    .from("crew_matrices")
+    .select("id, offshore_site_id")
+    .eq("id", crewMatrixId)
+    .eq("org_id", access.orgId)
+    .single();
+  if (matrixErr || !matrix) return { error: "Matrix not found." };
+
+  const { data: assignment, error: findErr } = await supabase
+    .from("crew_assignments")
+    .select("id, offshore_site_id")
+    .eq("crew_id", crewId)
+    .is("end_date", null)
+    .limit(1)
+    .maybeSingle();
+  if (findErr) return { error: findErr.message };
+  if (!assignment) return { error: "This crew member has no active assignment — refresh and try again." };
+  if (assignment.offshore_site_id !== matrix.offshore_site_id) {
+    return { error: "This crew member's active assignment isn't for this matrix's site — manage it from their profile instead." };
+  }
+
+  const { error } = await supabase.from("crew_assignments").delete().eq("id", assignment.id);
+  if (error) return { error: error.message };
+
+  await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", crewId);
 
   revalidateMatrix(crewMatrixId);
   return {};

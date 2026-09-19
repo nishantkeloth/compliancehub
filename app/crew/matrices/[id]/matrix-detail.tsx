@@ -367,6 +367,7 @@ export default function MatrixDetail({
           </div>
           <StaffingPlanView
             crewMatrixId={matrix.id}
+            matrixTitle={matrix.title}
             lines={lines}
             documentTypes={documentTypes}
             crew={staffingCrew}
@@ -374,7 +375,7 @@ export default function MatrixDetail({
             customFieldDefinitions={customFieldDefinitions}
             canManage={canManage}
             canAssignCrew={canAssignCrew}
-            onAssigned={regenerateStaffingPlan}
+            onChanged={regenerateStaffingPlan}
           />
         </div>
       )}
