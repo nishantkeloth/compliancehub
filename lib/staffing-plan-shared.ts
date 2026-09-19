@@ -63,7 +63,11 @@ export type CategoryGroup = { category: string | null; count: number };
 // Groups a rank's own applicable columns into contiguous same-category runs
 // (columns are pre-sorted by category, so same-category columns are always
 // adjacent). Used for both the header band spans and the Excel export.
-export function groupByCategory(cols: DocTypeRef[]): { groups: CategoryGroup[]; groupIndex: number[] } {
+// Generic over anything carrying a `category` field so it works on both raw
+// DocTypeRef columns and the expanded DisplayColumn list below (a travel
+// document counts as two adjacent columns here, same category, so the band
+// still spans over both without any special-casing).
+export function groupByCategory<T extends { category: string | null }>(cols: T[]): { groups: CategoryGroup[]; groupIndex: number[] } {
   const groups: CategoryGroup[] = [];
   const groupIndex: number[] = [];
   for (const col of cols) {
@@ -76,6 +80,44 @@ export function groupByCategory(cols: DocTypeRef[]): { groups: CategoryGroup[]; 
     groupIndex.push(groups.length - 1);
   }
   return { groups, groupIndex };
+}
+
+// A travel document (passport, seaman's book, offshore ID, etc.) is shown as
+// two side-by-side columns — Issued and Expiry — instead of one combined
+// cell, so the two dates can be scanned/sorted independently. Every other
+// document type still renders as a single column, unchanged. This is the
+// one place that decides the split, so the on-screen table and the Excel
+// export can't disagree about which document types get two columns.
+export type DisplayColumn = { key: string; docType: DocTypeRef; part: "single" | "issued" | "expiry"; category: string | null };
+
+export function expandColumns(columns: DocTypeRef[]): DisplayColumn[] {
+  const out: DisplayColumn[] = [];
+  for (const col of columns) {
+    if (col.category === "travel_document") {
+      out.push({ key: `${col.id}:issued`, docType: col, part: "issued", category: col.category });
+      out.push({ key: `${col.id}:expiry`, docType: col, part: "expiry", category: col.category });
+    } else {
+      out.push({ key: col.id, docType: col, part: "single", category: col.category });
+    }
+  }
+  return out;
+}
+
+// Groups an expanded display-column list back into contiguous runs that
+// belong to the same document type (a split travel document's Issued+Expiry
+// pair, or a lone single-part column) — used to span the document-name
+// header cell over its own sub-columns.
+export function groupByDocType(cols: DisplayColumn[]): { docType: DocTypeRef; count: number }[] {
+  const groups: { docType: DocTypeRef; count: number }[] = [];
+  for (const col of cols) {
+    const last = groups[groups.length - 1];
+    if (last && last.docType.id === col.docType.id) {
+      last.count += 1;
+    } else {
+      groups.push({ docType: col.docType, count: 1 });
+    }
+  }
+  return groups;
 }
 
 export function formatDate(iso: string | null | undefined): string | null {
@@ -131,6 +173,41 @@ export function cellInfo(
 
   if (parts.length === 0) return { text: "On file, no date/number set", kind: "empty" };
   return { text: parts.join(" · "), kind: "value", status };
+}
+
+// Same source data as cellInfo(), but returns just one half of a split
+// travel-document column (see expandColumns()) — "issued" carries the
+// document number (if tracked) plus the issue date, "expiry" carries the
+// expiry date and drives the status color, same as it always did. "single"
+// delegates straight to cellInfo() so every non-split document type is
+// completely unaffected.
+export function cellInfoPart(
+  required: boolean,
+  docType: DocTypeRef,
+  doc: StaffingCrew["documents"][string] | undefined,
+  fieldDefs: FieldDef[],
+  part: "single" | "issued" | "expiry"
+): CellInfo {
+  if (part === "single") return cellInfo(required, docType, doc, fieldDefs);
+  if (!required) return { text: "N/A", kind: "na" };
+  if (!doc) return { text: "Missing", kind: "missing" };
+
+  if (part === "issued") {
+    const parts: string[] = [];
+    if (docType.tracks_number && doc.document_number) parts.push(doc.document_number);
+    if (doc.issue_date) parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
+    for (const f of fieldDefs) {
+      const value = doc.custom_fields?.[f.field_key];
+      if (value !== undefined && value !== null && value !== "") parts.push(`${f.label}: ${value}`);
+    }
+    if (parts.length === 0) return { text: "—", kind: "empty" };
+    return { text: parts.join(" · "), kind: "value" };
+  }
+
+  // part === "expiry"
+  if (!doc.expiry_date) return { text: "—", kind: "empty" };
+  const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
+  return { text: formatDate(doc.expiry_date) ?? doc.expiry_date, kind: "value", status: r.status };
 }
 
 // Canonical, matrix-wide document-type column order: by category, then
@@ -199,6 +276,7 @@ export async function buildStaffingPlanWorkbook(
   const rowOffset = draftWatermark ? 1 : 0;
   const headerRow1 = 1 + rowOffset;
   const headerRow2 = 2 + rowOffset;
+  const headerRow3 = 3 + rowOffset;
 
   for (const line of orderedLines) {
     const crewForLine = crewList.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -207,8 +285,14 @@ export async function buildStaffingPlanWorkbook(
     const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
     const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
     const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
-    const { groups: lineGroups } = groupByCategory(lineColumns);
-    const totalCols = lineColumns.length + 2;
+    // A travel document (Passport, Seaman's Book, ...) expands into two
+    // adjacent display columns — Issued / Expiry — so the two dates sort
+    // and read independently instead of being crammed into one cell. Every
+    // other document type stays a single column, same as before.
+    const displayColumns = expandColumns(lineColumns);
+    const { groups: lineGroups } = groupByCategory(displayColumns);
+    const docTypeGroups = groupByDocType(displayColumns);
+    const totalCols = displayColumns.length + 2;
 
     let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
     let suffix = 2;
@@ -217,7 +301,7 @@ export async function buildStaffingPlanWorkbook(
     }
     usedSheetNames.add(sheetName);
 
-    const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: headerRow2 }] });
+    const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: headerRow3 }] });
 
     if (draftWatermark) {
       ws.addRow([draftWatermark]);
@@ -229,30 +313,49 @@ export async function buildStaffingPlanWorkbook(
       ws.getRow(1).height = 20;
     }
 
+    // Row 1: category band. Row 2: document name (spans its own
+    // Issued/Expiry pair horizontally, or the full header height vertically
+    // when it's a single column). Row 3: "Issued"/"Expiry" sub-labels,
+    // blank under single-column document types.
     ws.addRow(["Name", "Nationality", ...lineGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
-    ws.addRow(["", "", ...lineColumns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name))]);
+    ws.addRow([
+      "",
+      "",
+      ...docTypeGroups.flatMap((g) => [mandatoryDocTypeIds.has(g.docType.id) ? `${g.docType.name} *` : g.docType.name, ...Array(g.count - 1).fill("")]),
+    ]);
+    ws.addRow(["", "", ...displayColumns.map((dc) => (dc.part === "issued" ? "Issued" : dc.part === "expiry" ? "Expiry" : ""))]);
 
-    ws.mergeCells(headerRow1, 1, headerRow2, 1);
-    ws.mergeCells(headerRow1, 2, headerRow2, 2);
+    ws.mergeCells(headerRow1, 1, headerRow3, 1);
+    ws.mergeCells(headerRow1, 2, headerRow3, 2);
 
     let colIdx = 3;
     lineGroups.forEach((g) => {
       if (g.count > 1) ws.mergeCells(headerRow1, colIdx, headerRow1, colIdx + g.count - 1);
       const argb = `FF${colorForCategory(g.category).replace("#", "").toUpperCase()}`;
       for (let c = colIdx; c < colIdx + g.count; c++) {
-        for (const rowNum of [headerRow1, headerRow2]) {
+        for (const rowNum of [headerRow1, headerRow2, headerRow3]) {
           ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
         }
       }
       colIdx += g.count;
     });
 
-    for (const rowNum of [headerRow1, headerRow2]) {
+    colIdx = 3;
+    docTypeGroups.forEach((g) => {
+      if (g.count > 1) {
+        ws.mergeCells(headerRow2, colIdx, headerRow2, colIdx + g.count - 1);
+      } else {
+        ws.mergeCells(headerRow2, colIdx, headerRow3, colIdx);
+      }
+      colIdx += g.count;
+    });
+
+    for (const rowNum of [headerRow1, headerRow2, headerRow3]) {
       const row = ws.getRow(rowNum);
       row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
         cell.font = { bold: true };
         cell.alignment = { horizontal: colNumber <= 2 ? "left" : "center", vertical: "middle", wrapText: true };
-        const isGroupStart = colNumber > 2 && lineColumns[colNumber - 3] && (colNumber === 3 || lineColumns[colNumber - 4]?.category !== lineColumns[colNumber - 3]?.category);
+        const isGroupStart = colNumber > 2 && displayColumns[colNumber - 3] && (colNumber === 3 || displayColumns[colNumber - 4]?.category !== displayColumns[colNumber - 3]?.category);
         cell.border = { bottom: HEADER_BORDER, ...(isGroupStart ? { left: GROUP_DIVIDER } : {}) };
       });
     }
@@ -261,19 +364,22 @@ export async function buildStaffingPlanWorkbook(
       ws.addRow([
         person.full_name,
         person.nationality ?? "",
-        ...lineColumns.map((col) =>
-          cellInfo(
-            true,
-            col,
-            person.documents[col.id],
-            customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)
-          ).text
+        ...displayColumns.map(
+          (dc) =>
+            cellInfoPart(
+              true,
+              dc.docType,
+              person.documents[dc.docType.id],
+              customFieldDefinitions.filter((f) => f.applies_to_document_type_id === dc.docType.id || f.applies_to_document_type_id === null),
+              dc.part
+            ).text
         ),
       ]);
     }
 
     for (let c = 1; c <= totalCols; c++) {
-      const header = c === 1 ? "Name" : c === 2 ? "Nationality" : lineColumns[c - 3]?.name ?? "";
+      const dc = displayColumns[c - 3];
+      const header = c === 1 ? "Name" : c === 2 ? "Nationality" : dc?.part === "issued" ? "Issued" : dc?.part === "expiry" ? "Expiry" : dc?.docType.name ?? "";
       ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
     }
   }

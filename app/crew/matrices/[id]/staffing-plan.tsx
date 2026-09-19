@@ -53,16 +53,19 @@ import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
 import { assignCandidateToMatrix, unassignCandidateFromMatrix, createResourceProfileLink } from "./staffing-actions";
 import {
-  cellInfo,
+  cellInfoPart,
   formatCategoryLabel,
   formatDate,
   groupByCategory,
+  groupByDocType,
+  expandColumns,
   orderDocumentColumns,
   buildCategoryColorMap,
   buildStaffingPlanWorkbook,
   UNCATEGORIZED_KEY,
   CATEGORY_BAND_COLORS,
   type CategoryGroup,
+  type DisplayColumn,
   type StaffingCrew,
   type FieldDef,
 } from "@/lib/staffing-plan-shared";
@@ -243,7 +246,14 @@ export default function StaffingPlanView({
           // inapplicable (N/A) document type isn't shown as a column at
           // all on this rank's table.
           const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
-          const { groups: lineGroups, groupIndex: lineGroupIndex } = groupByCategory(lineColumns);
+          // Travel documents (Passport, Seaman's Book, ...) expand into two
+          // adjacent display columns — Issued / Expiry — everything else
+          // stays a single column. lineGroups (category bands) and
+          // lineDocTypeGroups (document-name spans) are both derived from
+          // this same expanded list so the header tiers always agree.
+          const lineDisplayColumns = expandColumns(lineColumns);
+          const { groups: lineGroups, groupIndex: lineGroupIndex } = groupByCategory(lineDisplayColumns);
+          const lineDocTypeGroups = groupByDocType(lineDisplayColumns);
 
           return (
             <StaffingLineCard
@@ -251,7 +261,8 @@ export default function StaffingPlanView({
               line={line}
               view={view}
               crewForLine={crewForLine}
-              lineColumns={lineColumns}
+              lineDisplayColumns={lineDisplayColumns}
+              lineDocTypeGroups={lineDocTypeGroups}
               lineGroups={lineGroups}
               lineGroupIndex={lineGroupIndex}
               colorForCategory={colorForCategory}
@@ -292,7 +303,8 @@ function StaffingLineCard({
   line,
   view,
   crewForLine,
-  lineColumns,
+  lineDisplayColumns,
+  lineDocTypeGroups,
   lineGroups,
   lineGroupIndex,
   colorForCategory,
@@ -307,7 +319,8 @@ function StaffingLineCard({
   line: Line;
   view: "assigned" | "available";
   crewForLine: StaffingCrew[];
-  lineColumns: DocTypeRef[];
+  lineDisplayColumns: DisplayColumn[];
+  lineDocTypeGroups: { docType: DocTypeRef; count: number }[];
   lineGroups: CategoryGroup[];
   lineGroupIndex: number[];
   colorForCategory: (category: string | null) => string;
@@ -387,7 +400,7 @@ function StaffingLineCard({
             ? "No crew currently assigned to this rank at this site."
             : "No unassigned, available crew match this rank right now."}
         </div>
-      ) : lineColumns.length === 0 ? (
+      ) : lineDisplayColumns.length === 0 ? (
         <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
           No document types are required for this rank yet — add them under the Lines tab.
         </div>
@@ -396,8 +409,8 @@ function StaffingLineCard({
           <table className="text-xs border-collapse w-full">
             <thead>
               <tr>
-                <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
-                <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
+                <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
+                <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
                 {lineGroups.map((g, i) => (
                   <th
                     key={`${g.category ?? "general"}-${i}`}
@@ -409,24 +422,47 @@ function StaffingLineCard({
                   </th>
                 ))}
                 {showActionsCol && (
-                  <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
+                  <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
                     Actions
                   </th>
                 )}
               </tr>
               <tr>
-                {lineColumns.map((col, i) => (
-                  <th
-                    key={col.id}
-                    className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || lineColumns[i - 1].category !== col.category ? " border-l" : ""}`}
-                    style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
-                  >
-                    {col.name}
-                    {mandatoryDocTypeIds.has(col.id) && (
-                      <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }} title="Mandatory">*</span>
-                    )}
-                  </th>
-                ))}
+                {(() => {
+                  let idx = 0;
+                  return lineDocTypeGroups.map((g) => {
+                    const startIdx = idx;
+                    idx += g.count;
+                    const isGroupStart = startIdx === 0 || lineGroupIndex[startIdx - 1] !== lineGroupIndex[startIdx];
+                    return (
+                      <th
+                        key={g.docType.id}
+                        colSpan={g.count}
+                        rowSpan={g.count > 1 ? 1 : 2}
+                        className={`text-left font-semibold px-3 py-2 whitespace-nowrap${isGroupStart ? " border-l" : ""}${g.count > 1 ? "" : " align-bottom"}`}
+                        style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[startIdx]]?.category ?? null) }}
+                      >
+                        {g.docType.name}
+                        {mandatoryDocTypeIds.has(g.docType.id) && (
+                          <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }} title="Mandatory">*</span>
+                        )}
+                      </th>
+                    );
+                  });
+                })()}
+              </tr>
+              <tr>
+                {lineDisplayColumns.map((dc, i) =>
+                  dc.part === "single" ? null : (
+                    <th
+                      key={dc.key}
+                      className={`text-left font-normal px-3 py-1.5 whitespace-nowrap${dc.part === "issued" ? " border-l" : ""}`}
+                      style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
+                    >
+                      {dc.part === "issued" ? "Issued" : "Expiry"}
+                    </th>
+                  )
+                )}
               </tr>
             </thead>
             <tbody>
@@ -439,12 +475,13 @@ function StaffingLineCard({
                     )}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
-                  {lineColumns.map((col) => (
+                  {lineDisplayColumns.map((dc) => (
                     <DocCell
-                      key={col.id}
-                      docType={col}
-                      doc={person.documents[col.id]}
-                      fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)}
+                      key={dc.key}
+                      docType={dc.docType}
+                      part={dc.part}
+                      doc={person.documents[dc.docType.id]}
+                      fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === dc.docType.id || f.applies_to_document_type_id === null)}
                     />
                   ))}
                   {showActionsCol && (
@@ -603,14 +640,19 @@ function DocCell({
   docType,
   doc,
   fieldDefs,
+  part = "single",
 }: {
   docType: DocTypeRef;
   doc: StaffingCrew["documents"][string] | undefined;
   fieldDefs: FieldDef[];
+  part?: "single" | "issued" | "expiry";
 }) {
   // Every column reaching this component is already required for the rank
-  // it's rendered under (see lineColumns) — required is always true here.
-  const info = cellInfo(true, docType, doc, fieldDefs);
+  // it's rendered under (see lineDisplayColumns) — required is always true
+  // here. `part` picks which half of a split travel-document column this
+  // cell renders; "single" (the default) is every other document type,
+  // completely unchanged from before the split existed.
+  const info = cellInfoPart(true, docType, doc, fieldDefs, part);
 
   if (info.kind === "missing") {
     const colors = DOCUMENT_STATUS_COLORS.expired;
@@ -628,7 +670,7 @@ function DocCell({
     return (
       <td className="px-3 py-2 whitespace-nowrap">
         <span className="rounded px-1.5 py-0.5" style={{ background: colors.bg, color: colors.fg }}>
-          On file, no date/number set
+          {info.text}
         </span>
       </td>
     );
