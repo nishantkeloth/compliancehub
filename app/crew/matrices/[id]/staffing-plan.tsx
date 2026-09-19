@@ -129,10 +129,20 @@ function cellInfo(
 
   if (docType.tracks_number && doc.document_number) parts.push(doc.document_number);
 
+  // Travel documents (passport, seaman's book, offshore ID, etc.) carry
+  // both an issue date and an expiry date — show both, labeled, rather
+  // than just the expiry. Other categories keep the unlabeled single-date
+  // format they've always had.
+  const showsBothDates = docType.category === "travel_document" && !!doc.issue_date && !!doc.expiry_date;
+  if (showsBothDates) {
+    parts.push(`Iss ${formatDate(doc.issue_date) ?? doc.issue_date}`);
+  }
+
   if (doc.expiry_date) {
     const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
     status = r.status;
-    parts.push(formatDate(doc.expiry_date) ?? doc.expiry_date);
+    const expiryText = formatDate(doc.expiry_date) ?? doc.expiry_date;
+    parts.push(showsBothDates ? `Exp ${expiryText}` : expiryText);
   } else if (doc.issue_date) {
     // One-time attendance records (e.g. MOSI, Project HSE Induction) carry
     // no expiry — show the date it was completed, unstyled.

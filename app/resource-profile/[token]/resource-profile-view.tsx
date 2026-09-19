@@ -74,10 +74,19 @@ function cellInfo(doc: DocItem): CellInfo {
   let status: DocumentStatus | undefined;
 
   if (doc.tracks_number && doc.document_number) parts.push(doc.document_number);
+
+  // Travel documents carry both an issue date and an expiry date — show
+  // both, labeled, mirroring the Staffing Plan tab's own cellInfo().
+  const showsBothDates = doc.category === "travel_document" && !!doc.issue_date && !!doc.expiry_date;
+  if (showsBothDates) {
+    parts.push(`Iss ${formatDate(doc.issue_date) ?? doc.issue_date}`);
+  }
+
   if (doc.expiry_date) {
     const r = computeDocumentStatus(doc.expiry_date, doc.warning_threshold_days, doc.category);
     status = r.status;
-    parts.push(formatDate(doc.expiry_date) ?? doc.expiry_date);
+    const expiryText = formatDate(doc.expiry_date) ?? doc.expiry_date;
+    parts.push(showsBothDates ? `Exp ${expiryText}` : expiryText);
   } else if (doc.issue_date) {
     parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
   }
