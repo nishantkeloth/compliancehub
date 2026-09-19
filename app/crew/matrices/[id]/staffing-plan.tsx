@@ -59,6 +59,7 @@ import {
   groupByCategory,
   groupByDocType,
   expandColumns,
+  partLabel,
   orderDocumentColumns,
   buildCategoryColorMap,
   buildStaffingPlanWorkbook,
@@ -66,6 +67,7 @@ import {
   CATEGORY_BAND_COLORS,
   type CategoryGroup,
   type DisplayColumn,
+  type DisplayColumnPart,
   type StaffingCrew,
   type FieldDef,
 } from "@/lib/staffing-plan-shared";
@@ -439,7 +441,7 @@ function StaffingLineCard({
                         key={g.docType.id}
                         colSpan={g.count}
                         rowSpan={g.count > 1 ? 1 : 2}
-                        className={`text-left font-semibold px-3 py-2 whitespace-nowrap${isGroupStart ? " border-l" : ""}${g.count > 1 ? "" : " align-bottom"}`}
+                        className={`text-center font-semibold px-3 py-2 whitespace-nowrap${isGroupStart ? " border-l" : ""}${g.count > 1 ? "" : " align-bottom"}`}
                         style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[startIdx]]?.category ?? null) }}
                       >
                         {g.docType.name}
@@ -452,17 +454,24 @@ function StaffingLineCard({
                 })()}
               </tr>
               <tr>
-                {lineDisplayColumns.map((dc, i) =>
-                  dc.part === "single" ? null : (
+                {lineDisplayColumns.map((dc, i) => {
+                  if (dc.part === "single") return null;
+                  // First sub-column of its document type (Number, or
+                  // Issued when a travel document doesn't track a number)
+                  // gets the divider that separates it from the previous
+                  // document type — not hardcoded to any one part, since a
+                  // document type's leading sub-column now varies.
+                  const isFirstSub = i === 0 || lineDisplayColumns[i - 1].docType.id !== dc.docType.id;
+                  return (
                     <th
                       key={dc.key}
-                      className={`text-left font-normal px-3 py-1.5 whitespace-nowrap${dc.part === "issued" ? " border-l" : ""}`}
+                      className={`text-center font-normal px-3 py-1.5 whitespace-nowrap${isFirstSub ? " border-l" : ""}`}
                       style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
                     >
-                      {dc.part === "issued" ? "Issued" : "Expiry"}
+                      {partLabel(dc.part)}
                     </th>
-                  )
-                )}
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -645,7 +654,7 @@ function DocCell({
   docType: DocTypeRef;
   doc: StaffingCrew["documents"][string] | undefined;
   fieldDefs: FieldDef[];
-  part?: "single" | "issued" | "expiry";
+  part?: DisplayColumnPart;
 }) {
   // Every column reaching this component is already required for the rank
   // it's rendered under (see lineDisplayColumns) — required is always true

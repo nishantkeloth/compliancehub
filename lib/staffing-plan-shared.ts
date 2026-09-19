@@ -82,20 +82,31 @@ export function groupByCategory<T extends { category: string | null }>(cols: T[]
   return { groups, groupIndex };
 }
 
-// A travel document (passport, seaman's book, offshore ID, etc.) is shown as
-// two side-by-side columns — Issued and Expiry — instead of one combined
-// cell, so the two dates can be scanned/sorted independently. Every other
-// document type still renders as a single column, unchanged. This is the
-// one place that decides the split, so the on-screen table and the Excel
-// export can't disagree about which document types get two columns.
-export type DisplayColumn = { key: string; docType: DocTypeRef; part: "single" | "issued" | "expiry"; category: string | null };
+// A document type that carries its own number and/or dates is broken out
+// into its own columns instead of one combined "number · date" cell, so
+// each field can be scanned/sorted independently:
+//  - travel_document (passport, seaman's book, offshore ID, ...): Number
+//    (if tracked) + Issued + Expiry — three columns.
+//  - any other category that tracks a number (most certificates): Number +
+//    Date — two columns.
+//  - anything else (no number, e.g. a one-time attendance record): stays a
+//    single column, unchanged.
+// This is the one place that decides the split, so the on-screen table and
+// the Excel export can't disagree about which document types get which
+// columns.
+export type DisplayColumnPart = "single" | "number" | "issued" | "expiry" | "date";
+export type DisplayColumn = { key: string; docType: DocTypeRef; part: DisplayColumnPart; category: string | null };
 
 export function expandColumns(columns: DocTypeRef[]): DisplayColumn[] {
   const out: DisplayColumn[] = [];
   for (const col of columns) {
     if (col.category === "travel_document") {
+      if (col.tracks_number) out.push({ key: `${col.id}:number`, docType: col, part: "number", category: col.category });
       out.push({ key: `${col.id}:issued`, docType: col, part: "issued", category: col.category });
       out.push({ key: `${col.id}:expiry`, docType: col, part: "expiry", category: col.category });
+    } else if (col.tracks_number) {
+      out.push({ key: `${col.id}:number`, docType: col, part: "number", category: col.category });
+      out.push({ key: `${col.id}:date`, docType: col, part: "date", category: col.category });
     } else {
       out.push({ key: col.id, docType: col, part: "single", category: col.category });
     }
@@ -175,26 +186,32 @@ export function cellInfo(
   return { text: parts.join(" · "), kind: "value", status };
 }
 
-// Same source data as cellInfo(), but returns just one half of a split
-// travel-document column (see expandColumns()) — "issued" carries the
-// document number (if tracked) plus the issue date, "expiry" carries the
-// expiry date and drives the status color, same as it always did. "single"
-// delegates straight to cellInfo() so every non-split document type is
-// completely unaffected.
+// Same source data as cellInfo(), but returns just one column's worth of a
+// split document-type column (see expandColumns()): "number" is the
+// document number on its own, "issued"/"expiry" are a travel document's two
+// dates (expiry drives the status color), "date" is the single date column
+// for a non-travel document type that tracks a number (expiry when there is
+// one, else the issue/completion date, unstyled). "single" delegates
+// straight to cellInfo() so a document type with nothing to split (no
+// number, not a travel document) is completely unaffected.
 export function cellInfoPart(
   required: boolean,
   docType: DocTypeRef,
   doc: StaffingCrew["documents"][string] | undefined,
   fieldDefs: FieldDef[],
-  part: "single" | "issued" | "expiry"
+  part: DisplayColumnPart
 ): CellInfo {
   if (part === "single") return cellInfo(required, docType, doc, fieldDefs);
   if (!required) return { text: "N/A", kind: "na" };
   if (!doc) return { text: "Missing", kind: "missing" };
 
+  if (part === "number") {
+    if (!doc.document_number) return { text: "—", kind: "empty" };
+    return { text: doc.document_number, kind: "value" };
+  }
+
   if (part === "issued") {
     const parts: string[] = [];
-    if (docType.tracks_number && doc.document_number) parts.push(doc.document_number);
     if (doc.issue_date) parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
     for (const f of fieldDefs) {
       const value = doc.custom_fields?.[f.field_key];
@@ -204,10 +221,29 @@ export function cellInfoPart(
     return { text: parts.join(" · "), kind: "value" };
   }
 
-  // part === "expiry"
-  if (!doc.expiry_date) return { text: "—", kind: "empty" };
-  const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
-  return { text: formatDate(doc.expiry_date) ?? doc.expiry_date, kind: "value", status: r.status };
+  if (part === "expiry") {
+    if (!doc.expiry_date) return { text: "—", kind: "empty" };
+    const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
+    return { text: formatDate(doc.expiry_date) ?? doc.expiry_date, kind: "value", status: r.status };
+  }
+
+  // part === "date" — the single date column for a non-travel document
+  // type that tracks a number (its Number is a separate column).
+  const parts: string[] = [];
+  let status: DocumentStatus | undefined;
+  if (doc.expiry_date) {
+    const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
+    status = r.status;
+    parts.push(formatDate(doc.expiry_date) ?? doc.expiry_date);
+  } else if (doc.issue_date) {
+    parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
+  }
+  for (const f of fieldDefs) {
+    const value = doc.custom_fields?.[f.field_key];
+    if (value !== undefined && value !== null && value !== "") parts.push(`${f.label}: ${value}`);
+  }
+  if (parts.length === 0) return { text: "—", kind: "empty" };
+  return { text: parts.join(" · "), kind: "value", status };
 }
 
 // Canonical, matrix-wide document-type column order: by category, then
@@ -224,6 +260,23 @@ export function orderDocumentColumns(documentTypes: DocTypeRef[], usedDocTypeIds
       if (catA !== catB) return catA.localeCompare(catB);
       return a.name.localeCompare(b.name);
     });
+}
+
+// Sub-column header label for a split-out part — shared by the on-screen
+// table and the Excel export so they never disagree on wording.
+export function partLabel(part: DisplayColumnPart): string {
+  switch (part) {
+    case "number":
+      return "Number";
+    case "issued":
+      return "Issued";
+    case "expiry":
+      return "Expiry";
+    case "date":
+      return "Date";
+    default:
+      return "";
+  }
 }
 
 export function buildCategoryColorMap(columns: DocTypeRef[]): Map<string, string> {
@@ -285,10 +338,10 @@ export async function buildStaffingPlanWorkbook(
     const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
     const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
     const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
-    // A travel document (Passport, Seaman's Book, ...) expands into two
-    // adjacent display columns — Issued / Expiry — so the two dates sort
-    // and read independently instead of being crammed into one cell. Every
-    // other document type stays a single column, same as before.
+    // A document type that carries a number and/or dates expands into its
+    // own adjacent display columns (see expandColumns()) so each field
+    // sorts and reads independently instead of being crammed into one
+    // cell. A document type with nothing to split stays a single column.
     const displayColumns = expandColumns(lineColumns);
     const { groups: lineGroups } = groupByCategory(displayColumns);
     const docTypeGroups = groupByDocType(displayColumns);
@@ -313,17 +366,17 @@ export async function buildStaffingPlanWorkbook(
       ws.getRow(1).height = 20;
     }
 
-    // Row 1: category band. Row 2: document name (spans its own
-    // Issued/Expiry pair horizontally, or the full header height vertically
-    // when it's a single column). Row 3: "Issued"/"Expiry" sub-labels,
-    // blank under single-column document types.
+    // Row 1: category band. Row 2: document name (spans its own split
+    // sub-columns horizontally, or the full header height vertically when
+    // it's a single column). Row 3: "Number"/"Issued"/"Expiry"/"Date"
+    // sub-labels, blank under single-column document types.
     ws.addRow(["Name", "Nationality", ...lineGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
     ws.addRow([
       "",
       "",
       ...docTypeGroups.flatMap((g) => [mandatoryDocTypeIds.has(g.docType.id) ? `${g.docType.name} *` : g.docType.name, ...Array(g.count - 1).fill("")]),
     ]);
-    ws.addRow(["", "", ...displayColumns.map((dc) => (dc.part === "issued" ? "Issued" : dc.part === "expiry" ? "Expiry" : ""))]);
+    ws.addRow(["", "", ...displayColumns.map((dc) => partLabel(dc.part))]);
 
     ws.mergeCells(headerRow1, 1, headerRow3, 1);
     ws.mergeCells(headerRow1, 2, headerRow3, 2);
@@ -379,7 +432,7 @@ export async function buildStaffingPlanWorkbook(
 
     for (let c = 1; c <= totalCols; c++) {
       const dc = displayColumns[c - 3];
-      const header = c === 1 ? "Name" : c === 2 ? "Nationality" : dc?.part === "issued" ? "Issued" : dc?.part === "expiry" ? "Expiry" : dc?.docType.name ?? "";
+      const header = c === 1 ? "Name" : c === 2 ? "Nationality" : dc && dc.part !== "single" ? partLabel(dc.part) : dc?.docType.name ?? "";
       ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
     }
   }
