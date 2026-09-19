@@ -176,9 +176,15 @@ export default function StaffingPlanView({
   const exportExcel = async () => {
     setExporting(true);
     try {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.utils.book_new();
+      // xlsx (SheetJS Community Edition, used elsewhere in the app) doesn't
+      // write cell styles/fills — ExcelJS does, which is what we need here
+      // to actually color the category bands and center them in the file,
+      // not just on screen.
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
       const usedSheetNames = new Set<string>();
+      const HEADER_BORDER = { style: "thin" as const, color: { argb: "FFD0D5DD" } };
+      const GROUP_DIVIDER = { style: "thin" as const, color: { argb: "FF9CA3AF" } };
 
       for (const line of orderedLines) {
         const crewForLine = activeCrew.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -187,54 +193,82 @@ export default function StaffingPlanView({
         const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
         const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
 
-        const bandRow: string[] = ["", ""];
-        const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
-        let colIdx = 2;
-        for (const g of categoryGroups) {
-          bandRow.push(formatCategoryLabel(g.category));
-          for (let i = 1; i < g.count; i++) bandRow.push("");
-          if (g.count > 1) merges.push({ s: { r: 0, c: colIdx }, e: { r: 0, c: colIdx + g.count - 1 } });
-          colIdx += g.count;
-        }
-
-        const headerRow = [
-          "Name",
-          "Nationality",
-          ...columns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name)),
-        ];
-
-        const dataRows = crewForLine.map((person) => [
-          person.full_name,
-          person.nationality ?? "",
-          ...columns.map((col) =>
-            cellInfo(
-              requiredDocTypeIds.has(col.id),
-              col,
-              person.documents[col.id],
-              customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)
-            ).text
-          ),
-        ]);
-
-        const ws = XLSX.utils.aoa_to_sheet([bandRow, headerRow, ...dataRows]);
-        ws["!merges"] = merges;
-
         let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
         let suffix = 2;
         while (usedSheetNames.has(sheetName)) {
-          const base = sheetName.slice(0, 28);
-          sheetName = `${base} (${suffix++})`;
+          sheetName = `${sheetName.slice(0, 28)} (${suffix++})`;
         }
         usedSheetNames.add(sheetName);
 
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2 }] });
+
+        // Row 1: "Name"/"Nationality" (vertically merged into row 2 below)
+        // plus one cell per category band, merged horizontally across the
+        // columns it covers. Row 2: blank under Name/Nationality, then the
+        // individual document-type column names (with a mandatory "*").
+        ws.addRow(["Name", "Nationality", ...categoryGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
+        ws.addRow(["", "", ...columns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name))]);
+
+        ws.mergeCells(1, 1, 2, 1);
+        ws.mergeCells(1, 2, 2, 2);
+
+        let colIdx = 3; // 1-indexed; col 1 = Name, col 2 = Nationality
+        categoryGroups.forEach((g, gi) => {
+          if (g.count > 1) ws.mergeCells(1, colIdx, 1, colIdx + g.count - 1);
+          const argb = `FF${bandColor(gi).replace("#", "").toUpperCase()}`;
+          for (let c = colIdx; c < colIdx + g.count; c++) {
+            for (const rowNum of [1, 2]) {
+              ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
+            }
+          }
+          colIdx += g.count;
+        });
+
+        for (const rowNum of [1, 2]) {
+          const row = ws.getRow(rowNum);
+          row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            cell.font = { bold: true };
+            cell.alignment = { horizontal: colNumber <= 2 ? "left" : "center", vertical: "middle", wrapText: true };
+            const isGroupStart = colNumber > 2 && columns[colNumber - 3] && (colNumber === 3 || columns[colNumber - 4]?.category !== columns[colNumber - 3]?.category);
+            cell.border = { bottom: HEADER_BORDER, ...(isGroupStart ? { left: GROUP_DIVIDER } : {}) };
+          });
+        }
+
+        for (const person of crewForLine) {
+          ws.addRow([
+            person.full_name,
+            person.nationality ?? "",
+            ...columns.map((col) =>
+              cellInfo(
+                requiredDocTypeIds.has(col.id),
+                col,
+                person.documents[col.id],
+                customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)
+              ).text
+            ),
+          ]);
+        }
+
+        for (let c = 1; c <= columns.length + 2; c++) {
+          const header = c === 1 ? "Name" : c === 2 ? "Nationality" : columns[c - 3]?.name ?? "";
+          ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
+        }
       }
 
       if (usedSheetNames.size === 0) {
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["No crew to export for the current view."]]), "Staffing Plan");
+        wb.addWorksheet("Staffing Plan").addRow(["No crew to export for the current view."]);
       }
 
-      XLSX.writeFile(wb, `staffing-plan-${view}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `staffing-plan-${view}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } finally {
       setExporting(false);
     }
