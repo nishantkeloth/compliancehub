@@ -60,6 +60,7 @@ export default function MatrixDetail({
   candidateStaffingCrew,
   customFieldDefinitions,
   canManage,
+  canAssignCrew,
   canSubmit,
   canApproveInternal,
   canApproveClient,
@@ -77,6 +78,7 @@ export default function MatrixDetail({
   candidateStaffingCrew: StaffingCrew[];
   customFieldDefinitions: FieldDef[];
   canManage: boolean;
+  canAssignCrew: boolean;
   canSubmit: boolean;
   canApproveInternal: boolean;
   canApproveClient: boolean;
@@ -364,11 +366,15 @@ export default function MatrixDetail({
             </button>
           </div>
           <StaffingPlanView
+            crewMatrixId={matrix.id}
             lines={lines}
             documentTypes={documentTypes}
             crew={staffingCrew}
             candidateCrew={candidateStaffingCrew}
             customFieldDefinitions={customFieldDefinitions}
+            canManage={canManage}
+            canAssignCrew={canAssignCrew}
+            onAssigned={regenerateStaffingPlan}
           />
         </div>
       )}

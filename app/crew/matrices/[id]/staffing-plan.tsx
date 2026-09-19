@@ -36,6 +36,7 @@
 import { useState } from "react";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, type DocumentStatus } from "@/lib/document-status";
+import { assignCandidateToMatrix, createResourceProfileLink } from "./staffing-actions";
 
 export type StaffingCrew = {
   crew_id: string;
@@ -133,17 +134,28 @@ function cellInfo(
 }
 
 export default function StaffingPlanView({
+  crewMatrixId,
   lines,
   documentTypes,
   crew,
   candidateCrew,
   customFieldDefinitions,
+  canManage = false,
+  canAssignCrew = false,
+  onAssigned,
 }: {
+  crewMatrixId: string;
   lines: Line[];
   documentTypes: DocTypeRef[];
   crew: StaffingCrew[];
   candidateCrew?: StaffingCrew[];
   customFieldDefinitions: FieldDef[];
+  // Both default to false so this component still works if a caller (e.g.
+  // an older test/story) doesn't pass them — the Actions column just stays
+  // hidden, same as no permissions.
+  canManage?: boolean;
+  canAssignCrew?: boolean;
+  onAssigned?: () => void;
 }) {
   const [view, setView] = useState<"assigned" | "available">("assigned");
   const [exporting, setExporting] = useState(false);
@@ -348,6 +360,13 @@ export default function StaffingPlanView({
           // all on this rank's table.
           const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
           const { groups: lineGroups, groupIndex: lineGroupIndex } = groupByCategory(lineColumns);
+          // "Assign" only makes sense from Available candidates (an
+          // Assigned person is already assigned); "Share link" is useful
+          // from either view, so a manager can send a client a link for
+          // someone already onboard too.
+          const showAssignCol = view === "available" && canAssignCrew;
+          const showShareCol = canManage;
+          const showActionsCol = showAssignCol || showShareCol;
 
           return (
             <div key={line.id} className={`${cardCls} overflow-hidden`} style={cardStyle}>
@@ -384,6 +403,11 @@ export default function StaffingPlanView({
                             {formatCategoryLabel(g.category)}
                           </th>
                         ))}
+                        {showActionsCol && (
+                          <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
+                            Actions
+                          </th>
+                        )}
                       </tr>
                       <tr>
                         {lineColumns.map((col, i) => (
@@ -418,6 +442,16 @@ export default function StaffingPlanView({
                               fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)}
                             />
                           ))}
+                          {showActionsCol && (
+                            <RowActions
+                              crewId={person.crew_id}
+                              crewMatrixId={crewMatrixId}
+                              lineId={line.id}
+                              showAssign={showAssignCol}
+                              showShare={showShareCol}
+                              onAssigned={onAssigned}
+                            />
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -429,6 +463,109 @@ export default function StaffingPlanView({
         })}
       </div>
     </div>
+  );
+}
+
+function RowActions({
+  crewId,
+  crewMatrixId,
+  lineId,
+  showAssign,
+  showShare,
+  onAssigned,
+}: {
+  crewId: string;
+  crewMatrixId: string;
+  lineId: string;
+  showAssign: boolean;
+  showShare: boolean;
+  onAssigned?: () => void;
+}) {
+  const [busy, setBusy] = useState<"assign" | "share" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const doAssign = async () => {
+    setError(null);
+    setBusy("assign");
+    const res = await assignCandidateToMatrix(crewId, crewMatrixId);
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    onAssigned?.();
+  };
+
+  const doShare = async () => {
+    setError(null);
+    setCopied(false);
+    setBusy("share");
+    const res = await createResourceProfileLink(crewId, lineId);
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    if (res?.url) setLink(res.url);
+  };
+
+  const copyLink = async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      // Clipboard permission blocked — the link is already shown in the
+      // read-only field below for the user to select and copy manually.
+    }
+  };
+
+  return (
+    <td className="px-3 py-2 border-l" style={{ borderColor: "var(--ch-line)" }}>
+      <div className="flex items-center gap-1.5 whitespace-nowrap">
+        {showAssign && (
+          <button
+            onClick={doAssign}
+            disabled={busy !== null}
+            className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+          >
+            {busy === "assign" ? "Assigning…" : "Assign"}
+          </button>
+        )}
+        {showShare && (
+          <button
+            onClick={doShare}
+            disabled={busy !== null}
+            className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+          >
+            {busy === "share" ? "Generating…" : link ? "New link" : "Share link"}
+          </button>
+        )}
+      </div>
+      {error && <div className="text-[10px] mt-1" style={{ color: "var(--ch-fail)" }}>{error}</div>}
+      {link && (
+        <div className="mt-1 flex items-center gap-1">
+          <input
+            readOnly
+            value={link}
+            onFocus={(e) => e.currentTarget.select()}
+            className="text-[10px] border rounded px-1 py-0.5 w-44"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+          />
+          <button
+            onClick={copyLink}
+            className="text-[10px] font-semibold rounded px-1.5 py-0.5 border shrink-0"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      )}
+    </td>
   );
 }
 

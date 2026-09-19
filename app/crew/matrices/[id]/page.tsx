@@ -323,6 +323,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         applies_to_document_type_id: f.applies_to_document_type_id as string | null,
       }))}
       canManage={can(access, "crew.matrix.manage")}
+      canAssignCrew={can(access, "crew.manage")}
       canSubmit={can(access, "crew.matrix.submit")}
       canApproveInternal={can(access, "crew.matrix.approve_internal")}
       canApproveClient={can(access, "crew.matrix.approve_client")}
