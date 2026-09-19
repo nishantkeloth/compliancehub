@@ -61,6 +61,7 @@ export default function MatrixDetail({
   customFieldDefinitions,
   canManage,
   canAssignCrew,
+  canShareMatrix,
   canSubmit,
   canApproveInternal,
   canApproveClient,
@@ -79,6 +80,7 @@ export default function MatrixDetail({
   customFieldDefinitions: FieldDef[];
   canManage: boolean;
   canAssignCrew: boolean;
+  canShareMatrix: boolean;
   canSubmit: boolean;
   canApproveInternal: boolean;
   canApproveClient: boolean;
@@ -368,6 +370,9 @@ export default function MatrixDetail({
           <StaffingPlanView
             crewMatrixId={matrix.id}
             matrixTitle={matrix.title}
+            matrixNumber={matrix.matrix_number}
+            matrixVersion={matrix.version_number}
+            matrixStatus={matrix.status}
             lines={lines}
             documentTypes={documentTypes}
             crew={staffingCrew}
@@ -375,6 +380,7 @@ export default function MatrixDetail({
             customFieldDefinitions={customFieldDefinitions}
             canManage={canManage}
             canAssignCrew={canAssignCrew}
+            canShareMatrix={canShareMatrix}
             onChanged={regenerateStaffingPlan}
           />
         </div>

@@ -324,6 +324,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       }))}
       canManage={can(access, "crew.matrix.manage")}
       canAssignCrew={can(access, "crew.manage")}
+      canShareMatrix={can(access, "crew.matrix.share")}
       canSubmit={can(access, "crew.matrix.submit")}
       canApproveInternal={can(access, "crew.matrix.approve_internal")}
       canApproveClient={can(access, "crew.matrix.approve_client")}

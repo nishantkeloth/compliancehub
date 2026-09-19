@@ -27,10 +27,19 @@ export async function sendEmail(opts: {
   to: string;
   subject: string;
   html: string;
-}): Promise<{ error: string | null }> {
+  // Plain-text alternative — some mail clients render this instead of
+  // (or alongside) the HTML body. Optional so existing callers that only
+  // ever sent HTML (e.g. the cron reminders) keep working unchanged.
+  text?: string;
+  replyTo?: string;
+  // Resend accepts attachments as base64-encoded content directly in the
+  // JSON payload — no separate upload step. Used by Crew Matrix Sharing
+  // to attach the generated Excel file.
+  attachments?: { filename: string; content: string; contentType?: string }[];
+}): Promise<{ error: string | null; id: string | null }> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    return { error: "RESEND_API_KEY is not configured." };
+    return { error: "RESEND_API_KEY is not configured.", id: null };
   }
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -44,12 +53,18 @@ export async function sendEmail(opts: {
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
+      ...(opts.text ? { text: opts.text } : {}),
+      ...(opts.replyTo ? { reply_to: opts.replyTo } : {}),
+      ...(opts.attachments?.length
+        ? { attachments: opts.attachments.map((a) => ({ filename: a.filename, content: a.content, ...(a.contentType ? { content_type: a.contentType } : {}) })) }
+        : {}),
     }),
   });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return { error: `Resend API error (${res.status}): ${body}` };
+    return { error: `Resend API error (${res.status}): ${body}`, id: null };
   }
-  return { error: null };
+  const data = (await res.json().catch(() => null)) as { id?: string } | null;
+  return { error: null, id: data?.id ?? null };
 }

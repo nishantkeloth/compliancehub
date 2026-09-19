@@ -50,117 +50,40 @@
 
 import { useState } from "react";
 import type { Line, DocTypeRef } from "./lines-editor";
-import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, type DocumentStatus } from "@/lib/document-status";
+import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
 import { assignCandidateToMatrix, unassignCandidateFromMatrix, createResourceProfileLink } from "./staffing-actions";
+import {
+  cellInfo,
+  formatCategoryLabel,
+  formatDate,
+  groupByCategory,
+  orderDocumentColumns,
+  buildCategoryColorMap,
+  buildStaffingPlanWorkbook,
+  UNCATEGORIZED_KEY,
+  CATEGORY_BAND_COLORS,
+  type CategoryGroup,
+  type StaffingCrew,
+  type FieldDef,
+} from "@/lib/staffing-plan-shared";
+import SendMatrixWizard from "./send-matrix-wizard";
+import SharingHistoryPanel from "./sharing-history-panel";
 
-export type StaffingCrew = {
-  crew_id: string;
-  full_name: string;
-  nationality: string | null;
-  job_role_id: string;
-  availability_date?: string | null;
-  documents: Record<string, { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }>;
-};
-
-export type FieldDef = { id: string; label: string; field_key: string; applies_to_document_type_id: string | null };
+// Re-exported for existing callers (matrix-detail.tsx) that import these
+// types from this file — the actual definitions now live in
+// lib/staffing-plan-shared.ts so server-side code (share-actions.ts) can
+// use them too without importing a "use client" module.
+export type { StaffingCrew, FieldDef };
 
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
-// Light, low-contrast pastel fills for category header bands — assigned per
-// category (see buildCategoryColorMap) so the same category always gets the
-// same shade whichever rank's table it appears in.
-const CATEGORY_BAND_COLORS = ["#eef2ff", "#ecfdf5", "#fff7ed", "#fdf2f8", "#f0f9ff", "#fefce8", "#f3f4f6"];
-const UNCATEGORIZED_KEY = "\u0000general";
-
-// "certificate" -> "CERTIFICATES", "travel_document" -> "TRAVEL DOCUMENTS".
-// Uncategorized document types are clubbed under a plain "GENERAL" band.
-function formatCategoryLabel(category: string | null): string {
-  if (!category) return "GENERAL";
-  const upper = category.replace(/[_-]+/g, " ").trim().toUpperCase();
-  return /S$/.test(upper) ? upper : `${upper}S`;
-}
-
-type CategoryGroup = { category: string | null; count: number };
-
-// Groups a rank's own applicable columns into contiguous same-category runs
-// (columns are pre-sorted by category, so same-category columns are always
-// adjacent). Used for both the header band spans and the Excel export.
-function groupByCategory(cols: DocTypeRef[]): { groups: CategoryGroup[]; groupIndex: number[] } {
-  const groups: CategoryGroup[] = [];
-  const groupIndex: number[] = [];
-  for (const col of cols) {
-    const last = groups[groups.length - 1];
-    if (last && last.category === col.category) {
-      last.count += 1;
-    } else {
-      groups.push({ category: col.category, count: 1 });
-    }
-    groupIndex.push(groups.length - 1);
-  }
-  return { groups, groupIndex };
-}
-
-function formatDate(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso + "T00:00:00");
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-// Single source of truth for what a document cell should say, shared by the
-// on-screen table (DocCell) and the Excel export so the two never drift.
-// Every column shown on a rank's table is already required for that rank
-// (see lineColumns below), so this only ever renders "missing"/"empty"/
-// "value" in practice — "na" stays as a defensive fallback.
-type CellInfo = { text: string; kind: "na" | "missing" | "empty" | "value"; status?: DocumentStatus };
-
-function cellInfo(
-  required: boolean,
-  docType: DocTypeRef,
-  doc: StaffingCrew["documents"][string] | undefined,
-  fieldDefs: FieldDef[]
-): CellInfo {
-  if (!required) return { text: "N/A", kind: "na" };
-  if (!doc) return { text: "Missing", kind: "missing" };
-
-  const parts: string[] = [];
-  let status: DocumentStatus | undefined;
-
-  if (docType.tracks_number && doc.document_number) parts.push(doc.document_number);
-
-  // Travel documents (passport, seaman's book, offshore ID, etc.) carry
-  // both an issue date and an expiry date — show both, labeled, rather
-  // than just the expiry. Other categories keep the unlabeled single-date
-  // format they've always had.
-  const showsBothDates = docType.category === "travel_document" && !!doc.issue_date && !!doc.expiry_date;
-  if (showsBothDates) {
-    parts.push(`Iss ${formatDate(doc.issue_date) ?? doc.issue_date}`);
-  }
-
-  if (doc.expiry_date) {
-    const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
-    status = r.status;
-    const expiryText = formatDate(doc.expiry_date) ?? doc.expiry_date;
-    parts.push(showsBothDates ? `Exp ${expiryText}` : expiryText);
-  } else if (doc.issue_date) {
-    // One-time attendance records (e.g. MOSI, Project HSE Induction) carry
-    // no expiry — show the date it was completed, unstyled.
-    parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
-  }
-
-  for (const f of fieldDefs) {
-    const value = doc.custom_fields?.[f.field_key];
-    if (value !== undefined && value !== null && value !== "") parts.push(`${f.label}: ${value}`);
-  }
-
-  if (parts.length === 0) return { text: "On file, no date/number set", kind: "empty" };
-  return { text: parts.join(" · "), kind: "value", status };
-}
-
 export default function StaffingPlanView({
   crewMatrixId,
   matrixTitle,
+  matrixNumber,
+  matrixVersion,
+  matrixStatus,
   lines,
   documentTypes,
   crew,
@@ -168,24 +91,30 @@ export default function StaffingPlanView({
   customFieldDefinitions,
   canManage = false,
   canAssignCrew = false,
+  canShareMatrix = false,
   onChanged,
 }: {
   crewMatrixId: string;
   matrixTitle?: string;
+  matrixNumber?: string | null;
+  matrixVersion?: number;
+  matrixStatus?: string;
   lines: Line[];
   documentTypes: DocTypeRef[];
   crew: StaffingCrew[];
   candidateCrew?: StaffingCrew[];
   customFieldDefinitions: FieldDef[];
-  // Both default to false so this component still works if a caller (e.g.
+  // All default to false so this component still works if a caller (e.g.
   // an older test/story) doesn't pass them — the Actions column just stays
   // hidden, same as no permissions.
   canManage?: boolean;
   canAssignCrew?: boolean;
+  canShareMatrix?: boolean;
   onChanged?: () => void;
 }) {
   const [view, setView] = useState<"assigned" | "available">("assigned");
   const [exporting, setExporting] = useState(false);
+  const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
 
   const usedDocTypeIds = new Set<string>();
@@ -198,25 +127,12 @@ export default function StaffingPlanView({
   // then alphabetically within a category. Each rank's table below filters
   // this down to just the columns that rank actually requires, so the
   // per-rank ordering and category grouping stay consistent across ranks.
-  const columns = documentTypes
-    .filter((d) => usedDocTypeIds.has(d.id))
-    .sort((a, b) => {
-      const catA = a.category ?? "￿";
-      const catB = b.category ?? "￿";
-      if (catA !== catB) return catA.localeCompare(catB);
-      return a.name.localeCompare(b.name);
-    });
+  const columns = orderDocumentColumns(documentTypes, usedDocTypeIds);
 
   // Stable category -> color assignment (by first appearance in the
   // canonical order above), so e.g. "Certificates" is always the same
   // shade whether it's the first or third band on a given rank's table.
-  const categoryColorMap = new Map<string, string>();
-  {
-    const { groups } = groupByCategory(columns);
-    groups.forEach((g, i) => {
-      categoryColorMap.set(g.category ?? UNCATEGORIZED_KEY, CATEGORY_BAND_COLORS[i % CATEGORY_BAND_COLORS.length]);
-    });
-  }
+  const categoryColorMap = buildCategoryColorMap(columns);
   const colorForCategory = (category: string | null) => categoryColorMap.get(category ?? UNCATEGORIZED_KEY) ?? CATEGORY_BAND_COLORS[0];
 
   if (orderedLines.length === 0) {
@@ -240,88 +156,11 @@ export default function StaffingPlanView({
       // xlsx (SheetJS Community Edition, used elsewhere in the app) doesn't
       // write cell styles/fills — ExcelJS does, which is what we need here
       // to actually color the category bands and center them in the file,
-      // not just on screen.
+      // not just on screen. buildStaffingPlanWorkbook is shared with the
+      // Crew Matrix Sharing feature's emailed attachment so the two files
+      // can never look different from one another.
       const ExcelJS = (await import("exceljs")).default;
-      const wb = new ExcelJS.Workbook();
-      const usedSheetNames = new Set<string>();
-      const HEADER_BORDER = { style: "thin" as const, color: { argb: "FFD0D5DD" } };
-      const GROUP_DIVIDER = { style: "thin" as const, color: { argb: "FF9CA3AF" } };
-
-      for (const line of orderedLines) {
-        const crewForLine = activeCrew.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
-        if (crewForLine.length === 0) continue;
-
-        const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
-        const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
-        const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
-        const { groups: lineGroups } = groupByCategory(lineColumns);
-
-        let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
-        let suffix = 2;
-        while (usedSheetNames.has(sheetName)) {
-          sheetName = `${sheetName.slice(0, 28)} (${suffix++})`;
-        }
-        usedSheetNames.add(sheetName);
-
-        const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2 }] });
-
-        // Row 1: "Name"/"Nationality" (vertically merged into row 2 below)
-        // plus one cell per category band, merged horizontally across the
-        // columns it covers. Row 2: blank under Name/Nationality, then the
-        // individual document-type column names (with a mandatory "*").
-        ws.addRow(["Name", "Nationality", ...lineGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
-        ws.addRow(["", "", ...lineColumns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name))]);
-
-        ws.mergeCells(1, 1, 2, 1);
-        ws.mergeCells(1, 2, 2, 2);
-
-        let colIdx = 3; // 1-indexed; col 1 = Name, col 2 = Nationality
-        lineGroups.forEach((g) => {
-          if (g.count > 1) ws.mergeCells(1, colIdx, 1, colIdx + g.count - 1);
-          const argb = `FF${colorForCategory(g.category).replace("#", "").toUpperCase()}`;
-          for (let c = colIdx; c < colIdx + g.count; c++) {
-            for (const rowNum of [1, 2]) {
-              ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
-            }
-          }
-          colIdx += g.count;
-        });
-
-        for (const rowNum of [1, 2]) {
-          const row = ws.getRow(rowNum);
-          row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-            cell.font = { bold: true };
-            cell.alignment = { horizontal: colNumber <= 2 ? "left" : "center", vertical: "middle", wrapText: true };
-            const isGroupStart = colNumber > 2 && lineColumns[colNumber - 3] && (colNumber === 3 || lineColumns[colNumber - 4]?.category !== lineColumns[colNumber - 3]?.category);
-            cell.border = { bottom: HEADER_BORDER, ...(isGroupStart ? { left: GROUP_DIVIDER } : {}) };
-          });
-        }
-
-        for (const person of crewForLine) {
-          ws.addRow([
-            person.full_name,
-            person.nationality ?? "",
-            ...lineColumns.map((col) =>
-              cellInfo(
-                true,
-                col,
-                person.documents[col.id],
-                customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)
-              ).text
-            ),
-          ]);
-        }
-
-        for (let c = 1; c <= lineColumns.length + 2; c++) {
-          const header = c === 1 ? "Name" : c === 2 ? "Nationality" : lineColumns[c - 3]?.name ?? "";
-          ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
-        }
-      }
-
-      if (usedSheetNames.size === 0) {
-        wb.addWorksheet("Staffing Plan").addRow(["No crew to export for the current view."]);
-      }
-
+      const wb = await buildStaffingPlanWorkbook(ExcelJS, orderedLines, activeCrew, documentTypes, customFieldDefinitions);
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
@@ -357,6 +196,24 @@ export default function StaffingPlanView({
           >
             {exporting ? "Exporting…" : "Export to Excel"}
           </button>
+          {canShareMatrix && (
+            <>
+              <button
+                onClick={() => setShareModal("send")}
+                className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
+                style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+              >
+                Send Matrix to Client
+              </button>
+              <button
+                onClick={() => setShareModal("history")}
+                className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
+                style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+              >
+                Sharing History
+              </button>
+            </>
+          )}
           {candidateCrew !== undefined && (
             <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--ch-line)" }}>
               {(["assigned", "available"] as const).map((v) => (
@@ -409,6 +266,24 @@ export default function StaffingPlanView({
           );
         })}
       </div>
+
+      {shareModal === "send" && (
+        <SendMatrixWizard
+          crewMatrixId={crewMatrixId}
+          matrixTitle={matrixTitle}
+          matrixNumber={matrixNumber}
+          matrixVersion={matrixVersion}
+          matrixStatus={matrixStatus}
+          lines={orderedLines}
+          assignedCrew={crew}
+          documentTypes={documentTypes}
+          customFieldDefinitions={customFieldDefinitions}
+          onClose={() => setShareModal(null)}
+        />
+      )}
+      {shareModal === "history" && (
+        <SharingHistoryPanel crewMatrixId={crewMatrixId} onClose={() => setShareModal(null)} />
+      )}
     </div>
   );
 }
