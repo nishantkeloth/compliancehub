@@ -35,7 +35,7 @@
 
 import { useState } from "react";
 import type { Line, DocTypeRef } from "./lines-editor";
-import { computeDocumentStatus, DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
+import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, type DocumentStatus } from "@/lib/document-status";
 
 export type StaffingCrew = {
   crew_id: string;
@@ -51,11 +51,65 @@ export type FieldDef = { id: string; label: string; field_key: string; applies_t
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
+// Light, low-contrast pastel fills for category header bands — cycled by
+// group order so each category gets a stable, distinct shade without
+// needing per-category color configuration anywhere.
+const CATEGORY_BAND_COLORS = ["#eef2ff", "#ecfdf5", "#fff7ed", "#fdf2f8", "#f0f9ff", "#fefce8", "#f3f4f6"];
+
+function bandColor(groupIndex: number): string {
+  return CATEGORY_BAND_COLORS[groupIndex % CATEGORY_BAND_COLORS.length];
+}
+
+// "certificate" -> "CERTIFICATES", "travel_document" -> "TRAVEL DOCUMENTS".
+// Uncategorized document types are clubbed under a plain "GENERAL" band.
+function formatCategoryLabel(category: string | null): string {
+  if (!category) return "GENERAL";
+  const upper = category.replace(/[_-]+/g, " ").trim().toUpperCase();
+  return /S$/.test(upper) ? upper : `${upper}S`;
+}
+
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso + "T00:00:00");
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+// Single source of truth for what a document cell should say, shared by the
+// on-screen table (DocCell) and the Excel export so the two never drift.
+type CellInfo = { text: string; kind: "na" | "missing" | "empty" | "value"; status?: DocumentStatus };
+
+function cellInfo(
+  required: boolean,
+  docType: DocTypeRef,
+  doc: StaffingCrew["documents"][string] | undefined,
+  fieldDefs: FieldDef[]
+): CellInfo {
+  if (!required) return { text: "N/A", kind: "na" };
+  if (!doc) return { text: "Missing", kind: "missing" };
+
+  const parts: string[] = [];
+  let status: DocumentStatus | undefined;
+
+  if (docType.tracks_number && doc.document_number) parts.push(doc.document_number);
+
+  if (doc.expiry_date) {
+    const r = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
+    status = r.status;
+    parts.push(formatDate(doc.expiry_date) ?? doc.expiry_date);
+  } else if (doc.issue_date) {
+    // One-time attendance records (e.g. MOSI, Project HSE Induction) carry
+    // no expiry — show the date it was completed, unstyled.
+    parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
+  }
+
+  for (const f of fieldDefs) {
+    const value = doc.custom_fields?.[f.field_key];
+    if (value !== undefined && value !== null && value !== "") parts.push(`${f.label}: ${value}`);
+  }
+
+  if (parts.length === 0) return { text: "On file, no date/number set", kind: "empty" };
+  return { text: parts.join(" · "), kind: "value", status };
 }
 
 export default function StaffingPlanView({
@@ -72,6 +126,7 @@ export default function StaffingPlanView({
   customFieldDefinitions: FieldDef[];
 }) {
   const [view, setView] = useState<"assigned" | "available">("assigned");
+  const [exporting, setExporting] = useState(false);
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
 
   const usedDocTypeIds = new Set<string>();
@@ -92,10 +147,15 @@ export default function StaffingPlanView({
       return a.name.localeCompare(b.name);
     });
   const categoryGroups: { category: string | null; count: number }[] = [];
+  const columnGroupIndex: number[] = [];
   for (const col of columns) {
     const last = categoryGroups[categoryGroups.length - 1];
-    if (last && last.category === col.category) last.count += 1;
-    else categoryGroups.push({ category: col.category, count: 1 });
+    if (last && last.category === col.category) {
+      last.count += 1;
+    } else {
+      categoryGroups.push({ category: col.category, count: 1 });
+    }
+    columnGroupIndex.push(categoryGroups.length - 1);
   }
 
   if (orderedLines.length === 0) {
@@ -113,6 +173,73 @@ export default function StaffingPlanView({
 
   const activeCrew = view === "assigned" ? crew : candidateCrew ?? [];
 
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      const usedSheetNames = new Set<string>();
+
+      for (const line of orderedLines) {
+        const crewForLine = activeCrew.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
+        if (crewForLine.length === 0) continue;
+
+        const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
+        const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
+
+        const bandRow: string[] = ["", ""];
+        const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+        let colIdx = 2;
+        for (const g of categoryGroups) {
+          bandRow.push(formatCategoryLabel(g.category));
+          for (let i = 1; i < g.count; i++) bandRow.push("");
+          if (g.count > 1) merges.push({ s: { r: 0, c: colIdx }, e: { r: 0, c: colIdx + g.count - 1 } });
+          colIdx += g.count;
+        }
+
+        const headerRow = [
+          "Name",
+          "Nationality",
+          ...columns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name)),
+        ];
+
+        const dataRows = crewForLine.map((person) => [
+          person.full_name,
+          person.nationality ?? "",
+          ...columns.map((col) =>
+            cellInfo(
+              requiredDocTypeIds.has(col.id),
+              col,
+              person.documents[col.id],
+              customFieldDefinitions.filter((f) => f.applies_to_document_type_id === col.id || f.applies_to_document_type_id === null)
+            ).text
+          ),
+        ]);
+
+        const ws = XLSX.utils.aoa_to_sheet([bandRow, headerRow, ...dataRows]);
+        ws["!merges"] = merges;
+
+        let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
+        let suffix = 2;
+        while (usedSheetNames.has(sheetName)) {
+          const base = sheetName.slice(0, 28);
+          sheetName = `${base} (${suffix++})`;
+        }
+        usedSheetNames.add(sheetName);
+
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      }
+
+      if (usedSheetNames.size === 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["No crew to export for the current view."]]), "Staffing Plan");
+      }
+
+      XLSX.writeFile(wb, `staffing-plan-${view}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
@@ -124,24 +251,34 @@ export default function StaffingPlanView({
           &quot;Missing&quot; means it does and no record exists yet. Columns are grouped by category, and{" "}
           <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>*</span> marks a document that&apos;s mandatory for that rank.
         </div>
-        {candidateCrew !== undefined && (
-          <div className="inline-flex rounded-lg border p-0.5 shrink-0" style={{ borderColor: "var(--ch-line)" }}>
-            {(["assigned", "available"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className="text-xs font-semibold rounded-md px-3 py-1.5"
-                style={
-                  view === v
-                    ? { background: "var(--ch-navy)", color: "#fff" }
-                    : { color: "var(--ch-sub)" }
-                }
-              >
-                {v === "assigned" ? "Assigned" : "Available candidates"}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={exportExcel}
+            disabled={exporting}
+            className="text-xs font-semibold rounded-lg px-3 py-1.5 border disabled:opacity-50"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+          >
+            {exporting ? "Exporting…" : "Export to Excel"}
+          </button>
+          {candidateCrew !== undefined && (
+            <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--ch-line)" }}>
+              {(["assigned", "available"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className="text-xs font-semibold rounded-md px-3 py-1.5"
+                  style={
+                    view === v
+                      ? { background: "var(--ch-navy)", color: "#fff" }
+                      : { color: "var(--ch-sub)" }
+                  }
+                >
+                  {v === "assigned" ? "Assigned" : "Available candidates"}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div className="space-y-4">
         {orderedLines.map((line) => {
@@ -167,26 +304,26 @@ export default function StaffingPlanView({
                 <div className="overflow-x-auto">
                   <table className="text-xs border-collapse w-full">
                     <thead>
-                      <tr style={{ background: "var(--ch-paper)" }}>
-                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)" }}>Name</th>
-                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)" }}>Nationality</th>
+                      <tr>
+                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
+                        <th rowSpan={2} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
                         {categoryGroups.map((g, i) => (
                           <th
                             key={`${g.category ?? "general"}-${i}`}
                             colSpan={g.count}
                             className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b border-l"
-                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)" }}
+                            style={{ color: "var(--ch-ink)", borderColor: "var(--ch-line)", background: bandColor(i) }}
                           >
-                            {g.category ?? "General"}
+                            {formatCategoryLabel(g.category)}
                           </th>
                         ))}
                       </tr>
-                      <tr style={{ background: "var(--ch-paper)" }}>
+                      <tr>
                         {columns.map((col, i) => (
                           <th
                             key={col.id}
                             className={`text-left font-semibold px-3 py-2 whitespace-nowrap${i === 0 || columns[i - 1].category !== col.category ? " border-l" : ""}`}
-                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)" }}
+                            style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: bandColor(columnGroupIndex[i]) }}
                           >
                             {col.name}
                             {mandatoryDocTypeIds.has(col.id) && (
@@ -240,7 +377,9 @@ function DocCell({
   doc: StaffingCrew["documents"][string] | undefined;
   fieldDefs: FieldDef[];
 }) {
-  if (!required) {
+  const info = cellInfo(required, docType, doc, fieldDefs);
+
+  if (info.kind === "na") {
     return (
       <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-sub)" }}>
         N/A
@@ -248,7 +387,7 @@ function DocCell({
     );
   }
 
-  if (!doc) {
+  if (info.kind === "missing") {
     const colors = DOCUMENT_STATUS_COLORS.expired;
     return (
       <td className="px-3 py-2 whitespace-nowrap">
@@ -259,30 +398,7 @@ function DocCell({
     );
   }
 
-  const parts: string[] = [];
-  let bg = "transparent";
-  let fg = "var(--ch-ink)";
-
-  if (docType.tracks_number && doc.document_number) parts.push(doc.document_number);
-
-  if (doc.expiry_date) {
-    const { status } = computeDocumentStatus(doc.expiry_date, docType.warning_threshold_days, docType.category);
-    const colors = DOCUMENT_STATUS_COLORS[status];
-    bg = colors.bg;
-    fg = colors.fg;
-    parts.push(formatDate(doc.expiry_date) ?? doc.expiry_date);
-  } else if (doc.issue_date) {
-    // One-time attendance records (e.g. MOSI, Project HSE Induction) carry
-    // no expiry — show the date it was completed, unstyled.
-    parts.push(formatDate(doc.issue_date) ?? doc.issue_date);
-  }
-
-  for (const f of fieldDefs) {
-    const value = doc.custom_fields?.[f.field_key];
-    if (value !== undefined && value !== null && value !== "") parts.push(`${f.label}: ${value}`);
-  }
-
-  if (parts.length === 0) {
+  if (info.kind === "empty") {
     const colors = DOCUMENT_STATUS_COLORS.none;
     return (
       <td className="px-3 py-2 whitespace-nowrap">
@@ -293,10 +409,11 @@ function DocCell({
     );
   }
 
+  const colors = info.status ? DOCUMENT_STATUS_COLORS[info.status] : null;
   return (
     <td className="px-3 py-2 whitespace-nowrap">
-      <span className={bg !== "transparent" ? "rounded px-1.5 py-0.5" : ""} style={{ background: bg, color: fg }}>
-        {parts.join(" · ")}
+      <span className={colors ? "rounded px-1.5 py-0.5" : ""} style={colors ? { background: colors.bg, color: colors.fg } : { color: "var(--ch-ink)" }}>
+        {info.text}
       </span>
     </td>
   );
