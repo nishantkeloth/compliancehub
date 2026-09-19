@@ -49,6 +49,7 @@
 // email delivery) this does not attempt to replace.
 
 import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
 import { assignCandidateToMatrix, unassignCandidateFromMatrix, createResourceProfileLink } from "./staffing-actions";
@@ -117,7 +118,28 @@ export default function StaffingPlanView({
   canShareMatrix?: boolean;
   onChanged?: () => void;
 }) {
-  const [view, setView] = useState<"assigned" | "available">("assigned");
+  // Assign/Unassign trigger a router.refresh() (see MatrixDetail's
+  // regenerateStaffingPlan) to re-fetch the crew/document snapshot, which
+  // re-suspends this page and remounts the client tree — a plain
+  // useState("assigned") would silently reset back to "Assigned" every
+  // time, even when the action was "Assign" from Available candidates
+  // (confirmed by testing: clicking Assign bounced the view back to
+  // Assigned). Seeding from — and writing to — a `staffingView` URL param
+  // means the remounted component reads the same view straight back out
+  // of the URL instead of losing it, same pattern as MatrixDetail's own
+  // `tab` param.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const viewFromUrl = searchParams.get("staffingView");
+  const [view, setViewState] = useState<"assigned" | "available">(viewFromUrl === "available" ? "available" : "assigned");
+  const setView = (v: "assigned" | "available") => {
+    setViewState(v);
+    const params = new URLSearchParams(searchParams.toString());
+    if (v === "assigned") params.delete("staffingView");
+    else params.set("staffingView", v);
+    const qs = params.toString();
+    router.replace(`/crew/matrices/${crewMatrixId}${qs ? `?${qs}` : ""}`, { scroll: false });
+  };
   const [exporting, setExporting] = useState(false);
   const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
