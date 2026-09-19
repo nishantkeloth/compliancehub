@@ -183,61 +183,69 @@ export default function StaffingPlanView({
 
   return (
     <div>
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <div className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          {view === "assigned"
-            ? <>One row per crew member currently assigned to this site, grouped by rank.</>
-            : <>One row per crew member who matches the rank, holds no active assignment anywhere, and is free today — a preview for staffing before any mobilization request exists.</>}
-          {" "}Each rank only shows the document types required for that rank, grouped by category —{" "}
-          &quot;Missing&quot; means it&apos;s required and no record exists yet, and{" "}
-          <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>*</span> marks a document that&apos;s mandatory for that rank.
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={exportExcel}
-            disabled={exporting}
-            className="text-xs font-semibold rounded-lg px-3 py-1.5 border disabled:opacity-50"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
-          >
-            {exporting ? "Exporting…" : "Export to Excel"}
-          </button>
-          {canShareMatrix && (
-            <>
+      {/* Toolbar gets its own row, always left-aligned, regardless of how
+          long the description below happens to be. The two used to share
+          one `justify-between` flex row — fine while both fit on one line,
+          but the "Available candidates" description is longer than the
+          "Assigned" one, so switching views could force the toolbar to
+          wrap onto its own line, where a lone flex item under
+          `justify-between` collapses to the start (left) instead of
+          staying pinned right. Splitting them into separate rows makes the
+          toolbar's position (left) independent of the description's
+          length entirely, so it can't shift between views anymore. */}
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <button
+          onClick={exportExcel}
+          disabled={exporting}
+          className="text-xs font-semibold rounded-lg px-3 py-1.5 border disabled:opacity-50"
+          style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+        >
+          {exporting ? "Exporting…" : "Export to Excel"}
+        </button>
+        {canShareMatrix && (
+          <>
+            <button
+              onClick={() => setShareModal("send")}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
+              style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+            >
+              Send Matrix to Client
+            </button>
+            <button
+              onClick={() => setShareModal("history")}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+            >
+              Sharing History
+            </button>
+          </>
+        )}
+        {candidateCrew !== undefined && (
+          <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--ch-line)" }}>
+            {(["assigned", "available"] as const).map((v) => (
               <button
-                onClick={() => setShareModal("send")}
-                className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
-                style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+                key={v}
+                onClick={() => setView(v)}
+                className="text-xs font-semibold rounded-md px-3 py-1.5"
+                style={
+                  view === v
+                    ? { background: "var(--ch-navy)", color: "#fff" }
+                    : { color: "var(--ch-sub)" }
+                }
               >
-                Send Matrix to Client
+                {v === "assigned" ? "Assigned" : "Available candidates"}
               </button>
-              <button
-                onClick={() => setShareModal("history")}
-                className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
-                style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
-              >
-                Sharing History
-              </button>
-            </>
-          )}
-          {candidateCrew !== undefined && (
-            <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--ch-line)" }}>
-              {(["assigned", "available"] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className="text-xs font-semibold rounded-md px-3 py-1.5"
-                  style={
-                    view === v
-                      ? { background: "var(--ch-navy)", color: "#fff" }
-                      : { color: "var(--ch-sub)" }
-                  }
-                >
-                  {v === "assigned" ? "Assigned" : "Available candidates"}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        {view === "assigned"
+          ? <>One row per crew member currently assigned to this site, grouped by rank.</>
+          : <>One row per crew member who matches the rank, holds no active assignment anywhere, and is free today — a preview for staffing before any mobilization request exists.</>}
+        {" "}Each rank only shows the document types required for that rank, grouped by category —{" "}
+        &quot;Missing&quot; means it&apos;s required and no record exists yet, and{" "}
+        <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>*</span> marks a document that&apos;s mandatory for that rank.
       </div>
       <div className="space-y-4">
         {orderedLines.map((line) => {
