@@ -355,17 +355,24 @@ export async function addLineDocument(lineId: string, crewMatrixId: string, form
   await assertDraft(supabase, crewMatrixId);
   const documentTypeId = str(formData, "documentTypeId");
   if (!documentTypeId) return { error: "Document type is required." };
-  const { error } = await supabase.from("crew_matrix_line_documents").insert({
-    org_id: access.orgId,
-    line_id: lineId,
-    document_type_id: documentTypeId,
-    minimum_remaining_validity_days: optNum(formData, "minimumRemainingValidityDays"),
-    is_mandatory: formData.get("isMandatory") !== "off",
-    waiver_permitted: formData.get("waiverPermitted") === "on",
-  });
+  const { data, error } = await supabase
+    .from("crew_matrix_line_documents")
+    .insert({
+      org_id: access.orgId,
+      line_id: lineId,
+      document_type_id: documentTypeId,
+      minimum_remaining_validity_days: optNum(formData, "minimumRemainingValidityDays"),
+      is_mandatory: formData.get("isMandatory") !== "off",
+      waiver_permitted: formData.get("waiverPermitted") === "on",
+    })
+    .select("id")
+    .single();
+  // A duplicate (already-checked) row isn't a real failure, but there's no
+  // row id to hand back in that case — the client only needs one for a
+  // freshly-inserted row anyway.
   if (error && !error.message.includes("duplicate")) return { error: error.message };
   revalidateMatrix(crewMatrixId);
-  return {};
+  return { id: data?.id as string | undefined };
 }
 
 export async function updateLineDocument(id: string, crewMatrixId: string, formData: FormData) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useOptimistic } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createCrewMatrixLine,
@@ -457,7 +457,7 @@ function LineRequirements({
       {error && <div className="text-sm sm:col-span-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
 
       <SkillsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} skills={skills} run={run} />
-      <DocumentsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} documentTypes={documentTypes} run={run} />
+      <DocumentsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} documentTypes={documentTypes} onChange={onChange} />
       <CompetenciesPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} run={run} />
       <ClientRequirementsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} run={run} />
     </div>
@@ -509,85 +509,95 @@ function SkillsPanel({
 }
 
 type DocRow = Line["documents"][number];
-type DocOptimisticAction =
-  | { type: "add"; docTypeId: string }
-  | { type: "remove"; id: string }
-  | { type: "update"; id: string; patch: Partial<DocRow> };
-
-function docsOptimisticReducer(state: DocRow[], action: DocOptimisticAction): DocRow[] {
-  switch (action.type) {
-    case "add":
-      // Placeholder row shown instantly on click; the real row (with a
-      // real id and name) replaces it once the server call resolves and
-      // the parent refreshes — this optimistic copy never gets its name
-      // rendered on its own (the label comes from documentTypes, not
-      // this row), so a blank `name` here is fine.
-      return [
-        ...state,
-        { id: `optimistic-${action.docTypeId}`, document_type_id: action.docTypeId, name: "", minimum_remaining_validity_days: null, is_mandatory: true, waiver_permitted: false },
-      ];
-    case "remove":
-      return state.filter((d) => d.id !== action.id);
-    case "update":
-      return state.map((d) => (d.id === action.id ? { ...d, ...action.patch } : d));
-    default:
-      return state;
-  }
-}
 
 function DocumentsPanel({
   crewMatrixId,
   line,
   canEdit,
   documentTypes,
-  run,
+  onChange,
 }: {
   crewMatrixId: string;
   line: Line;
   canEdit: boolean;
   documentTypes: Ref[];
-  run: (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void) => void;
+  onChange: () => void;
 }) {
-  const [optimisticDocs, applyOptimistic] = useOptimistic<DocRow[], DocOptimisticAction>(line.documents, docsOptimisticReducer);
-  const byTypeId = new Map(optimisticDocs.map((d) => [d.document_type_id, d]));
+  // Local state, not tied to a full-page refresh: a checkbox toggle used to
+  // wait on `router.refresh()` (re-fetching every line's full requirement
+  // data) just to make the change "stick" — and since that round trip is
+  // much slower than the actual insert/delete, the optimistic tick would
+  // revert back and then re-apply once the refresh finally landed, which is
+  // what showed up as the checkbox "taking time to update". Managing the
+  // list directly here means the checkbox changes once, immediately, and
+  // stays that way regardless of how long the background refresh takes.
+  // `onChange` (a page refresh) still fires after each save so that other
+  // on-screen counts (e.g. the collapsed "Requirements (N)" total) catch up
+  // eventually — it just no longer gates what this panel shows.
+  const [docs, setDocs] = useState<DocRow[]>(line.documents);
+  const [error, setError] = useState<string | null>(null);
+  const byTypeId = new Map(docs.map((d) => [d.document_type_id, d]));
 
   const toggleSelected = (docTypeId: string, checked: boolean) => {
+    setError(null);
     if (checked) {
+      const tempId = `optimistic-${docTypeId}`;
+      setDocs((prev) => [
+        ...prev,
+        { id: tempId, document_type_id: docTypeId, name: "", minimum_remaining_validity_days: null, is_mandatory: true, waiver_permitted: false },
+      ]);
       const fd = new FormData();
       fd.set("documentTypeId", docTypeId);
       fd.set("minimumRemainingValidityDays", "");
-      // Newly checked docs default to mandatory (matches addLineDocument's default).
-      run(
-        () => addLineDocument(line.id, crewMatrixId, fd),
-        () => applyOptimistic({ type: "add", docTypeId })
-      );
+      addLineDocument(line.id, crewMatrixId, fd).then((res) => {
+        if (res?.error) {
+          setError(res.error);
+          setDocs((prev) => prev.filter((d) => d.id !== tempId));
+          return;
+        }
+        if (res?.id) {
+          const realId = res.id;
+          setDocs((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: realId } : d)));
+        }
+        onChange();
+      });
     } else {
       const existing = byTypeId.get(docTypeId);
-      if (existing) {
-        run(
-          () => removeLineDocument(existing.id, crewMatrixId),
-          () => applyOptimistic({ type: "remove", id: existing.id })
-        );
-      }
+      if (!existing) return;
+      setDocs((prev) => prev.filter((d) => d.id !== existing.id));
+      removeLineDocument(existing.id, crewMatrixId).then((res) => {
+        if (res?.error) {
+          setError(res.error);
+          setDocs((prev) => [...prev, existing]);
+          return;
+        }
+        onChange();
+      });
     }
   };
 
   const toggleField = (doc: DocRow, field: "is_mandatory" | "waiver_permitted") => {
-    const fd = new FormData();
-    fd.set("minimumRemainingValidityDays", doc.minimum_remaining_validity_days?.toString() ?? "");
+    setError(null);
     const nextMandatory = field === "is_mandatory" ? !doc.is_mandatory : doc.is_mandatory;
     const nextWaiver = field === "waiver_permitted" ? !doc.waiver_permitted : doc.waiver_permitted;
+    setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_mandatory: nextMandatory, waiver_permitted: nextWaiver } : d)));
+    const fd = new FormData();
+    fd.set("minimumRemainingValidityDays", doc.minimum_remaining_validity_days?.toString() ?? "");
     if (!nextMandatory) fd.set("isMandatory", "off");
     if (nextWaiver) fd.set("waiverPermitted", "on");
-    run(
-      () => updateLineDocument(doc.id, crewMatrixId, fd),
-      () => applyOptimistic({ type: "update", id: doc.id, patch: { is_mandatory: nextMandatory, waiver_permitted: nextWaiver } })
-    );
+    updateLineDocument(doc.id, crewMatrixId, fd).then((res) => {
+      if (res?.error) {
+        setError(res.error);
+        setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_mandatory: doc.is_mandatory, waiver_permitted: doc.waiver_permitted } : d)));
+        return;
+      }
+      onChange();
+    });
   };
 
   // Adds every document type not yet on this line, and removes every one
   // that is — both just replay toggleSelected per row, so each still goes
-  // through the same optimistic + server-action path as a manual click.
+  // through the same local-state + server-action path as a manual click.
   const selectAll = () => {
     documentTypes.forEach((docType) => {
       if (!byTypeId.has(docType.id)) toggleSelected(docType.id, true);
@@ -610,10 +620,13 @@ function DocumentsPanel({
           </div>
         )}
       </div>
+      {error && <div className="text-xs mb-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
       {documentTypes.length === 0 ? (
         <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types configured yet.</div>
       ) : (
-        <div className="space-y-1 max-h-72 overflow-y-auto pr-1 rounded-lg border p-2" style={{ borderColor: "var(--ch-line)" }}>
+        // No scroll cutoff — every document type is shown at once, laid out
+        // in columns so a long list doesn't turn into a tall single column.
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 rounded-lg border p-2" style={{ borderColor: "var(--ch-line)" }}>
           {documentTypes.map((docType) => {
             const doc = byTypeId.get(docType.id);
             const selected = !!doc;
