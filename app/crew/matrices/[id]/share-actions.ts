@@ -29,7 +29,13 @@ import {
 } from "@/lib/staffing-plan-shared";
 
 const LINK_EXPIRY_DAYS = 30;
-const SHAREABLE_STATUSES = new Set(["approved", "active"]);
+// A matrix can be sent to a client at any status, including draft — but
+// only "approved"/"active" counts as final; everything else (draft,
+// pending internal/client approval, rejected, cancelled, superseded)
+// gets a visible "DRAFT — NOT YET APPROVED" watermark on both the
+// attachment and the secure page, rather than being blocked outright.
+const FINAL_STATUSES = new Set(["approved", "active"]);
+const DRAFT_WATERMARK_TEXT = "DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE";
 
 async function requireShare(message = "You don't have permission to share crew matrices with clients.") {
   const supabase = await createClient();
@@ -155,9 +161,7 @@ export async function sendMatrixSharePackage(input: {
     .single();
   if (matrixErr || !matrix) return { error: "Matrix not found." };
 
-  if (!SHAREABLE_STATUSES.has(matrix.status as string)) {
-    return { error: `This matrix is "${matrix.status}" — only an approved or active matrix can be sent to a client.` };
-  }
+  const isDraftShare = !FINAL_STATUSES.has(matrix.status as string);
 
   const { data: lines } = await supabase
     .from("crew_matrix_lines")
@@ -274,7 +278,7 @@ export async function sendMatrixSharePackage(input: {
   let excelFileName: string | null = null;
   if (input.includeExcel) {
     const ExcelJS = (await import("exceljs")).default;
-    const wb = await buildStaffingPlanWorkbook(ExcelJS, orderedLines, staffingCrew, documentTypes, customFieldDefinitions);
+    const wb = await buildStaffingPlanWorkbook(ExcelJS, orderedLines, staffingCrew, documentTypes, customFieldDefinitions, isDraftShare ? DRAFT_WATERMARK_TEXT : undefined);
     const buffer = await wb.xlsx.writeBuffer();
     excelBase64 = Buffer.from(buffer).toString("base64");
     const safeMatrixNumber = (matrix.matrix_number ?? matrix.id).replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -308,6 +312,7 @@ export async function sendMatrixSharePackage(input: {
     projectName: project?.project_name ?? null,
     siteName: site?.name ?? null,
     shareReference: shareReference as string,
+    isDraftShare,
   });
 
   const { data: pkg, error: pkgErr } = await supabase
@@ -423,7 +428,7 @@ export async function sendMatrixSharePackage(input: {
 
     const shareUrl = `${origin}/crew-matrix-share/${token}`;
     const html = bodyHtml.replace("{{SECURE_LINK}}", shareUrl);
-    const text = `${bodyTextTrimmed}\n\nView the secure crew matrix: ${shareUrl}\n(This link is intended only for ${r.email.trim()} and expires ${new Date(expiresAt).toDateString()}.)`;
+    const text = `${isDraftShare ? "DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE\n\n" : ""}${bodyTextTrimmed}\n\nView the secure crew matrix: ${shareUrl}\n(This link is intended only for ${r.email.trim()} and expires ${new Date(expiresAt).toDateString()}.)`;
 
     const sendResult = await sendEmail({
       from: fromHeader,
@@ -465,6 +470,7 @@ function renderEmailHtml(opts: {
   projectName: string | null;
   siteName: string | null;
   shareReference: string;
+  isDraftShare: boolean;
 }) {
   const escaped = opts.bodyText
     .split("\n")
@@ -472,6 +478,11 @@ function renderEmailHtml(opts: {
     .join("<br/>");
   return `
     <div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #1f2937; line-height: 1.6;">
+      ${
+        opts.isDraftShare
+          ? `<div style="background:#dc2626; color:#fff; font-weight:700; text-align:center; padding:8px 12px; border-radius:6px; margin-bottom:14px; letter-spacing:0.02em;">DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE</div>`
+          : ""
+      }
       <p>${escaped}</p>
       <table cellpadding="0" cellspacing="0" style="margin: 16px 0; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; background: #f8fafc;">
         <tr><td style="color:#64748b; font-size:12px; padding-bottom:4px;">Matrix reference</td><td style="padding-left:16px; font-weight:600;">${opts.matrixNumber ?? "—"} · v${opts.matrixVersion}</td></tr>

@@ -88,6 +88,11 @@ export default function ShareView({ token }: { token: string }) {
 
         {preview !== null && preview.valid && (
           <>
+            {!["approved", "active"].includes(preview.matrix_status_at_share) && (
+              <div className="text-center text-xs font-bold tracking-wide rounded-lg py-2 px-3 mt-3" style={{ background: "#dc2626", color: "#fff" }}>
+                DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE
+              </div>
+            )}
             <h2 className="text-lg font-semibold mt-3" style={{ color: "var(--ch-ink)" }}>{preview.matrix_title}</h2>
             <div className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>
               {preview.matrix_number ?? "—"} · v{preview.matrix_version}

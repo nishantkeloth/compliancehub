@@ -174,7 +174,15 @@ export async function buildStaffingPlanWorkbook(
   orderedLines: LineLike[],
   crewList: StaffingCrew[],
   documentTypes: DocTypeRef[],
-  customFieldDefinitions: FieldDef[]
+  customFieldDefinitions: FieldDef[],
+  // When set, every worksheet gets an extra banner row above the normal
+  // header with this text, bold white-on-red. Used by Crew Matrix Sharing
+  // when a matrix hasn't been approved yet (Nishant: "even in draft stage
+  // it can be sent to the client") — the recipient still needs to see
+  // plainly that what they're looking at isn't final. The regular
+  // on-screen "Export to Excel" button never passes this, so its output
+  // is unchanged.
+  draftWatermark?: string
 ): Promise<InstanceType<typeof ExcelJS.Workbook>> {
   const usedDocTypeIds = new Set<string>();
   for (const line of orderedLines) {
@@ -188,6 +196,9 @@ export async function buildStaffingPlanWorkbook(
   const usedSheetNames = new Set<string>();
   const HEADER_BORDER = { style: "thin" as const, color: { argb: "FFD0D5DD" } };
   const GROUP_DIVIDER = { style: "thin" as const, color: { argb: "FF9CA3AF" } };
+  const rowOffset = draftWatermark ? 1 : 0;
+  const headerRow1 = 1 + rowOffset;
+  const headerRow2 = 2 + rowOffset;
 
   for (const line of orderedLines) {
     const crewForLine = crewList.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -197,6 +208,7 @@ export async function buildStaffingPlanWorkbook(
     const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
     const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
     const { groups: lineGroups } = groupByCategory(lineColumns);
+    const totalCols = lineColumns.length + 2;
 
     let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
     let suffix = 2;
@@ -205,27 +217,37 @@ export async function buildStaffingPlanWorkbook(
     }
     usedSheetNames.add(sheetName);
 
-    const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2 }] });
+    const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: headerRow2 }] });
+
+    if (draftWatermark) {
+      ws.addRow([draftWatermark]);
+      ws.mergeCells(1, 1, 1, totalCols);
+      const cell = ws.getCell(1, 1);
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDC2626" } };
+      ws.getRow(1).height = 20;
+    }
 
     ws.addRow(["Name", "Nationality", ...lineGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
     ws.addRow(["", "", ...lineColumns.map((col) => (mandatoryDocTypeIds.has(col.id) ? `${col.name} *` : col.name))]);
 
-    ws.mergeCells(1, 1, 2, 1);
-    ws.mergeCells(1, 2, 2, 2);
+    ws.mergeCells(headerRow1, 1, headerRow2, 1);
+    ws.mergeCells(headerRow1, 2, headerRow2, 2);
 
     let colIdx = 3;
     lineGroups.forEach((g) => {
-      if (g.count > 1) ws.mergeCells(1, colIdx, 1, colIdx + g.count - 1);
+      if (g.count > 1) ws.mergeCells(headerRow1, colIdx, headerRow1, colIdx + g.count - 1);
       const argb = `FF${colorForCategory(g.category).replace("#", "").toUpperCase()}`;
       for (let c = colIdx; c < colIdx + g.count; c++) {
-        for (const rowNum of [1, 2]) {
+        for (const rowNum of [headerRow1, headerRow2]) {
           ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
         }
       }
       colIdx += g.count;
     });
 
-    for (const rowNum of [1, 2]) {
+    for (const rowNum of [headerRow1, headerRow2]) {
       const row = ws.getRow(rowNum);
       row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
         cell.font = { bold: true };
@@ -250,7 +272,7 @@ export async function buildStaffingPlanWorkbook(
       ]);
     }
 
-    for (let c = 1; c <= lineColumns.length + 2; c++) {
+    for (let c = 1; c <= totalCols; c++) {
       const header = c === 1 ? "Name" : c === 2 ? "Nationality" : lineColumns[c - 3]?.name ?? "";
       ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
     }

@@ -16,7 +16,11 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 
-const SHAREABLE_STATUSES = new Set(["approved", "active"]);
+// A matrix can be sent at any status, including draft — the send action
+// (share-actions.ts) watermarks the attachment and secure page as
+// "DRAFT — NOT YET APPROVED" whenever the status isn't one of these, it
+// never blocks the send.
+const FINAL_STATUSES = new Set(["approved", "active"]);
 
 type Contact = { id: string; fullName: string; email: string; title: string | null };
 type SelectedRecipient = { key: string; name: string; email: string; clientContactId: string | null };
@@ -64,7 +68,7 @@ export default function SendMatrixWizard({
   const [sendResults, setSendResults] = useState<{ name: string; email: string; status: "sent" | "failed"; error?: string }[] | null>(null);
   const [shareReference, setShareReference] = useState<string | null>(null);
 
-  const isShareable = !matrixStatus || SHAREABLE_STATUSES.has(matrixStatus);
+  const isDraftShare = !!matrixStatus && !FINAL_STATUSES.has(matrixStatus);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,13 +176,13 @@ export default function SendMatrixWizard({
           <button onClick={onClose} className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>Close</button>
         </div>
 
-        {!isShareable && (
-          <div className="text-sm rounded-lg px-3 py-2 mb-4" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
-            This matrix is &quot;{matrixStatus}&quot; — only an approved or active matrix can be sent to a client.
+        {isDraftShare && (
+          <div className="text-sm rounded-lg px-3 py-2 mb-4 font-semibold" style={{ background: "#dc2626", color: "#fff" }}>
+            This matrix is &quot;{matrixStatus}&quot; — not yet approved. It can still be sent; the recipient will see a clearly marked DRAFT — NOT YET APPROVED notice on the email, the secure page, and the Excel attachment.
           </div>
         )}
 
-        {isShareable && step === 1 && (
+        {step === 1 && (
           <div>
             <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Matrix &amp; readiness</div>
             <div className="grid grid-cols-2 gap-2 text-sm mb-4">
@@ -206,7 +210,7 @@ export default function SendMatrixWizard({
           </div>
         )}
 
-        {isShareable && step === 2 && (
+        {step === 2 && (
           <div>
             <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Recipients</div>
             {contextError && <div className="text-xs mb-2" style={{ color: "var(--ch-fail)" }}>{contextError}</div>}
@@ -253,7 +257,7 @@ export default function SendMatrixWizard({
           </div>
         )}
 
-        {isShareable && step === 3 && (
+        {step === 3 && (
           <div>
             <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Compose email</div>
             <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
