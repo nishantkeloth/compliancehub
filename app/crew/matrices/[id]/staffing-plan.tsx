@@ -606,15 +606,21 @@ function RowActions({
   onAssigned: (crewId: string) => void;
   onUnassigned: (crewId: string) => void;
 }) {
+  const today = new Date().toISOString().slice(0, 10);
   const [busy, setBusy] = useState<"assign" | "unassign" | "share" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Assign/unassign date inputs default to today but stay editable — AHM
+  // calculates on-board day counts and payroll from these dates, so they
+  // need to be caller-chosen, not silently stamped to "now".
+  const [assignDate, setAssignDate] = useState(today);
+  const [unassignDate, setUnassignDate] = useState(today);
 
   const doAssign = async () => {
     setError(null);
     setBusy("assign");
-    const res = await assignCandidateToMatrix(crewId, crewMatrixId);
+    const res = await assignCandidateToMatrix(crewId, crewMatrixId, assignDate);
     setBusy(null);
     if (res?.error) {
       setError(res.error);
@@ -628,10 +634,10 @@ function RowActions({
   };
 
   const doUnassign = async () => {
-    if (!window.confirm(`Unassign ${personName} from this rank?`)) return;
+    if (!window.confirm(`Unassign ${personName} from this rank as of ${unassignDate}?`)) return;
     setError(null);
     setBusy("unassign");
-    const res = await unassignCandidateFromMatrix(crewId, crewMatrixId);
+    const res = await unassignCandidateFromMatrix(crewId, crewMatrixId, unassignDate);
     setBusy(null);
     if (res?.error) {
       setError(res.error);
@@ -669,24 +675,46 @@ function RowActions({
     <td className="px-3 py-2 border-l" style={{ borderColor: "var(--ch-line)" }}>
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         {showAssign && (
-          <button
-            onClick={doAssign}
-            disabled={busy !== null}
-            className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
-          >
-            {busy === "assign" ? "Assigning…" : "Assign"}
-          </button>
+          <>
+            <input
+              type="date"
+              value={assignDate}
+              onChange={(e) => setAssignDate(e.target.value)}
+              disabled={busy !== null}
+              title="Assign date"
+              className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+            />
+            <button
+              onClick={doAssign}
+              disabled={busy !== null}
+              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+            >
+              {busy === "assign" ? "Assigning…" : "Assign"}
+            </button>
+          </>
         )}
         {showUnassign && (
-          <button
-            onClick={doUnassign}
-            disabled={busy !== null}
-            className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
-          >
-            {busy === "unassign" ? "Unassigning…" : "Unassign"}
-          </button>
+          <>
+            <input
+              type="date"
+              value={unassignDate}
+              onChange={(e) => setUnassignDate(e.target.value)}
+              disabled={busy !== null}
+              title="Unassign date"
+              className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+            />
+            <button
+              onClick={doUnassign}
+              disabled={busy !== null}
+              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
+            >
+              {busy === "unassign" ? "Unassigning…" : "Unassign"}
+            </button>
+          </>
         )}
         {showShare && (
           <button

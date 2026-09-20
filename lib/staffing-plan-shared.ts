@@ -289,12 +289,19 @@ export function buildCategoryColorMap(columns: DocTypeRef[]): Map<string, string
 }
 
 // Builds the same styled ExcelJS workbook used by the Staffing Plan tab's
-// own "Export to Excel" button — one worksheet per rank that has at least
-// one person in `crewList`, category-band header rows (merged + colored +
-// centered), a mandatory "*", and one row per person. Used both by that
-// on-screen button (client-side, triggers a download) and by the Crew
-// Matrix Sharing feature (server-side, attached to the share email) so the
-// two attachments can never look different from one another.
+// own "Export to Excel" button — a single worksheet with one section per
+// rank that has at least one person in `crewList` (a bold rank-title band,
+// then that rank's own category-band header rows — merged + colored +
+// centered, a mandatory "*" — then one row per person), stacked vertically
+// rather than split across separate tabs, per AHM's own practice ("we have
+// all in one only single sheet"). Used both by that on-screen button
+// (client-side, triggers a download) and by the Crew Matrix Sharing
+// feature (server-side, attached to the share email) so the two
+// attachments can never look different from one another.
+//
+// Each rank keeps its own document columns (a Cook's required documents
+// aren't a Steward's), so column layout still varies section to section —
+// only the worksheet is shared, not a single flat column set.
 //
 // Takes an already-constructed ExcelJS module (the caller dynamic-imports
 // it) rather than importing it itself, since the right way to load it
@@ -305,13 +312,12 @@ export async function buildStaffingPlanWorkbook(
   crewList: StaffingCrew[],
   documentTypes: DocTypeRef[],
   customFieldDefinitions: FieldDef[],
-  // When set, every worksheet gets an extra banner row above the normal
-  // header with this text, bold white-on-red. Used by Crew Matrix Sharing
-  // when a matrix hasn't been approved yet (Nishant: "even in draft stage
-  // it can be sent to the client") — the recipient still needs to see
-  // plainly that what they're looking at isn't final. The regular
-  // on-screen "Export to Excel" button never passes this, so its output
-  // is unchanged.
+  // When set, one banner row at the very top of the sheet carries this
+  // text, bold white-on-red. Used by Crew Matrix Sharing when a matrix
+  // hasn't been approved yet (Nishant: "even in draft stage it can be sent
+  // to the client") — the recipient still needs to see plainly that what
+  // they're looking at isn't final. The regular on-screen "Export to
+  // Excel" button never passes this, so its output is unchanged.
   draftWatermark?: string
 ): Promise<InstanceType<typeof ExcelJS.Workbook>> {
   const usedDocTypeIds = new Set<string>();
@@ -323,53 +329,81 @@ export async function buildStaffingPlanWorkbook(
   const colorForCategory = (category: string | null) => categoryColorMap.get(category ?? UNCATEGORIZED_KEY) ?? CATEGORY_BAND_COLORS[0];
 
   const wb = new ExcelJS.Workbook();
-  const usedSheetNames = new Set<string>();
   const HEADER_BORDER = { style: "thin" as const, color: { argb: "FFD0D5DD" } };
   const GROUP_DIVIDER = { style: "thin" as const, color: { argb: "FF9CA3AF" } };
-  const rowOffset = draftWatermark ? 1 : 0;
-  const headerRow1 = 1 + rowOffset;
-  const headerRow2 = 2 + rowOffset;
-  const headerRow3 = 3 + rowOffset;
 
-  for (const line of orderedLines) {
-    const crewForLine = crewList.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
-    if (crewForLine.length === 0) continue;
+  // Pre-compute each rank's own column layout first, so ranks with nobody
+  // assigned are skipped and we know the widest section up front (needed
+  // to size the top watermark band and the shared column widths).
+  const blocks = orderedLines
+    .map((line) => {
+      const crewForLine = crewList.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
+      if (crewForLine.length === 0) return null;
 
-    const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
-    const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
-    const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
-    // A document type that carries a number and/or dates expands into its
-    // own adjacent display columns (see expandColumns()) so each field
-    // sorts and reads independently instead of being crammed into one
-    // cell. A document type with nothing to split stays a single column.
-    const displayColumns = expandColumns(lineColumns);
-    const { groups: lineGroups } = groupByCategory(displayColumns);
-    const docTypeGroups = groupByDocType(displayColumns);
-    const totalCols = displayColumns.length + 2;
+      const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
+      const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
+      const lineColumns = columns.filter((col) => requiredDocTypeIds.has(col.id));
+      // A document type that carries a number and/or dates expands into
+      // its own adjacent display columns (see expandColumns()) so each
+      // field sorts and reads independently instead of being crammed into
+      // one cell. A document type with nothing to split stays a single
+      // column.
+      const displayColumns = expandColumns(lineColumns);
+      const { groups: lineGroups } = groupByCategory(displayColumns);
+      const docTypeGroups = groupByDocType(displayColumns);
+      const totalCols = displayColumns.length + 2;
+      return { line, crewForLine, mandatoryDocTypeIds, displayColumns, lineGroups, docTypeGroups, totalCols };
+    })
+    .filter((b): b is NonNullable<typeof b> => b !== null);
 
-    let sheetName = line.job_role_name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Rank";
-    let suffix = 2;
-    while (usedSheetNames.has(sheetName)) {
-      sheetName = `${sheetName.slice(0, 28)} (${suffix++})`;
-    }
-    usedSheetNames.add(sheetName);
+  if (blocks.length === 0) {
+    wb.addWorksheet("Staffing Plan").addRow(["No crew to include."]);
+    return wb;
+  }
 
-    const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: headerRow3 }] });
+  const maxTotalCols = Math.max(...blocks.map((b) => b.totalCols));
+  const ws = wb.addWorksheet("Staffing Plan");
+  const colWidths = new Map<number, number>();
+  const noteWidth = (c: number, header: string) => colWidths.set(c, Math.max(colWidths.get(c) ?? 0, Math.max(12, Math.min(26, header.length + 4))));
 
-    if (draftWatermark) {
-      ws.addRow([draftWatermark]);
-      ws.mergeCells(1, 1, 1, totalCols);
-      const cell = ws.getCell(1, 1);
-      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDC2626" } };
-      ws.getRow(1).height = 20;
-    }
+  let cursor = 1;
+  if (draftWatermark) {
+    ws.addRow([draftWatermark]);
+    ws.mergeCells(1, 1, 1, maxTotalCols);
+    const cell = ws.getCell(1, 1);
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDC2626" } };
+    ws.getRow(1).height = 20;
+    cursor = 2;
+  }
+
+  for (const block of blocks) {
+    const { line, crewForLine, mandatoryDocTypeIds, displayColumns, lineGroups, docTypeGroups, totalCols } = block;
+
+    // Rank-title band — a plain bold section header naming the rank and
+    // headcount, so scrolling down one continuous sheet still makes clear
+    // which section you're in (the old per-tab sheet name did this job
+    // before; now the tabs are gone).
+    const titleRow = cursor;
+    ws.addRow([`${line.job_role_name} (${crewForLine.length})`]);
+    ws.mergeCells(titleRow, 1, titleRow, Math.max(totalCols, 2));
+    const titleCell = ws.getCell(titleRow, 1);
+    titleCell.font = { bold: true, size: 12 };
+    titleCell.alignment = { horizontal: "left", vertical: "middle" };
+    titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+    ws.getRow(titleRow).height = 20;
+    cursor += 1;
 
     // Row 1: category band. Row 2: document name (spans its own split
     // sub-columns horizontally, or the full header height vertically when
     // it's a single column). Row 3: "Number"/"Issued"/"Expiry"/"Date"
     // sub-labels, blank under single-column document types.
+    const headerRow1 = cursor;
+    const headerRow2 = cursor + 1;
+    const headerRow3 = cursor + 2;
+    cursor += 3;
+
     ws.addRow(["Name", "Nationality", ...lineGroups.flatMap((g) => [formatCategoryLabel(g.category), ...Array(g.count - 1).fill("")])]);
     ws.addRow([
       "",
@@ -380,6 +414,8 @@ export async function buildStaffingPlanWorkbook(
 
     ws.mergeCells(headerRow1, 1, headerRow3, 1);
     ws.mergeCells(headerRow1, 2, headerRow3, 2);
+    noteWidth(1, "Name");
+    noteWidth(2, "Nationality");
 
     let colIdx = 3;
     lineGroups.forEach((g) => {
@@ -428,17 +464,22 @@ export async function buildStaffingPlanWorkbook(
             ).text
         ),
       ]);
+      cursor += 1;
     }
 
-    for (let c = 1; c <= totalCols; c++) {
+    for (let c = 3; c <= totalCols; c++) {
       const dc = displayColumns[c - 3];
-      const header = c === 1 ? "Name" : c === 2 ? "Nationality" : dc && dc.part !== "single" ? partLabel(dc.part) : dc?.docType.name ?? "";
-      ws.getColumn(c).width = Math.max(12, Math.min(26, header.length + 4));
+      const header = dc && dc.part !== "single" ? partLabel(dc.part) : dc?.docType.name ?? "";
+      noteWidth(c, header);
     }
+
+    // Blank divider row between this rank's block and the next.
+    ws.addRow([]);
+    cursor += 1;
   }
 
-  if (usedSheetNames.size === 0) {
-    wb.addWorksheet("Staffing Plan").addRow(["No crew to include."]);
+  for (const [c, width] of colWidths) {
+    ws.getColumn(c).width = width;
   }
 
   return wb;

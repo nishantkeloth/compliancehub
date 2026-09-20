@@ -13,15 +13,23 @@
 //    all yet). Gated on crew.manage, the same permission that already
 //    protects every other crew_assignments write in the app, so it
 //    succeeds under RLS for anyone who could already assign crew
-//    elsewhere in ComplianceHub.
+//    elsewhere in ComplianceHub. Accepts an optional assign date
+//    (defaults to today) — AHM calculates on-board day counts and payroll
+//    from this date, so it has to be caller-supplied, not hardcoded.
 //  - unassignCandidateFromMatrix: the direct counterpart to
-//    assignCandidateToMatrix — deletes the crew_assignments row outright
-//    (same as deleteCrewAssignment in app/crew/profiles/actions.ts) rather
-//    than routing through the formal sign-off/demob flow in endCrewAssignment.
-//    That flow exists for a real offshore rotation ending; undoing a quick
-//    Staffing Plan assignment that was never a real mobilization doesn't
-//    need a signoff_confirmations audit row. Gated on crew.manage, same as
-//    deleteCrewAssignment, so it succeeds under RLS the same way.
+//    assignCandidateToMatrix. Used to delete the crew_assignments row
+//    outright; now soft-closes it instead (sets end_date/planned_end_date
+//    to the given date and assignment_status to "cancelled") so the
+//    assign/unassign date pair AHM needs for day-count and payroll survives
+//    the unassign, and there's a history to look back on. Still distinct
+//    from the formal sign-off/demob flow in endCrewAssignment — that flow
+//    is for a real offshore rotation ending (assignment_status
+//    "signed_off", with a signoff_confirmations audit row); this one is
+//    for undoing a quick Staffing Plan assignment that was never a real
+//    mobilization, so it uses "cancelled" instead. Gated on crew.manage,
+//    same as deleteCrewAssignment, so it succeeds under RLS the same way.
+//    Accepts an optional unassign date (defaults to today), same reasoning
+//    as the assign date above.
 //  - createResourceProfileLink: generates a token-based public link (see
 //    migration 0017 + app/resource-profile/[token]) that a client can
 //    open without a ComplianceHub account to see one candidate's status
@@ -61,7 +69,13 @@ async function appOrigin() {
 
 const revalidateMatrix = (crewMatrixId: string) => revalidatePath(`/crew/matrices/${crewMatrixId}`);
 
-export async function assignCandidateToMatrix(crewId: string, crewMatrixId: string) {
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+function resolveDate(input: string | undefined | null) {
+  if (input && DATE_RE.test(input)) return input;
+  return new Date().toISOString().slice(0, 10);
+}
+
+export async function assignCandidateToMatrix(crewId: string, crewMatrixId: string, assignDate?: string) {
   const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to assign crew.");
 
   const { data: matrix, error: matrixErr } = await supabase
@@ -87,14 +101,14 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
     return { error: `This crew member already has an active assignment on ${site?.name ?? "another site"}.` };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const date = resolveDate(assignDate);
   const { error } = await supabase.from("crew_assignments").insert({
     org_id: access.orgId,
     crew_id: crewId,
     offshore_site_id: matrix.offshore_site_id,
-    start_date: today,
-    planned_start_date: today,
-    actual_start_date: today,
+    start_date: date,
+    planned_start_date: date,
+    actual_start_date: date,
     assignment_status: "active",
     notes: "Assigned directly from the crew matrix Staffing Plan.",
     created_by: userId,
@@ -113,8 +127,8 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
   return {};
 }
 
-export async function unassignCandidateFromMatrix(crewId: string, crewMatrixId: string) {
-  const { supabase, access } = await requirePermission("crew.manage", "You don't have permission to unassign crew.");
+export async function unassignCandidateFromMatrix(crewId: string, crewMatrixId: string, unassignDate?: string) {
+  const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to unassign crew.");
 
   const { data: matrix, error: matrixErr } = await supabase
     .from("crew_matrices")
@@ -126,7 +140,7 @@ export async function unassignCandidateFromMatrix(crewId: string, crewMatrixId: 
 
   const { data: assignment, error: findErr } = await supabase
     .from("crew_assignments")
-    .select("id, offshore_site_id")
+    .select("id, offshore_site_id, start_date")
     .eq("crew_id", crewId)
     .is("end_date", null)
     .limit(1)
@@ -137,7 +151,20 @@ export async function unassignCandidateFromMatrix(crewId: string, crewMatrixId: 
     return { error: "This crew member's active assignment isn't for this matrix's site — manage it from their profile instead." };
   }
 
-  const { error } = await supabase.from("crew_assignments").delete().eq("id", assignment.id);
+  const date = resolveDate(unassignDate);
+  if (assignment.start_date && date < (assignment.start_date as string)) {
+    return { error: `Unassign date can't be before the assign date (${assignment.start_date}).` };
+  }
+
+  const { error } = await supabase
+    .from("crew_assignments")
+    .update({
+      end_date: date,
+      planned_end_date: date,
+      assignment_status: "cancelled",
+      updated_by: userId,
+    })
+    .eq("id", assignment.id);
   if (error) return { error: error.message };
 
   await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", crewId);
