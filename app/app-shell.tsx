@@ -85,6 +85,9 @@ export default async function AppShell({
     mobilizationItems.push({ href: "/readiness", key: "readiness", label: "Compliance Dashboard" });
     mobilizationItems.push({ href: "/rotations", key: "rotations", label: "Rotations" });
   }
+  if (can(access, "mobilization.manage")) {
+    mobilizationItems.push({ href: "/mobilizations/tracks", key: "mobilization-tracks", label: "Mobilization Tracks" });
+  }
 
   const materialsItems: NavItem[] = [];
   if (can(access, "containers.view")) {

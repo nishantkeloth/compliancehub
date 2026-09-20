@@ -22,6 +22,7 @@ import {
 } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
 import PositionsBoard, { type Position } from "./positions-board";
+import ChecklistTab, { type ChecklistItem, type Track } from "./checklist-tab";
 
 type Request = {
   id: string;
@@ -74,6 +75,8 @@ export default function MobilizationDetail({
   positionHistory,
   comments,
   jobRoles,
+  tracks,
+  checklistItems,
   canManage,
   canComplianceReview,
   canApprove,
@@ -86,6 +89,8 @@ export default function MobilizationDetail({
   positionHistory: PositionHistoryRow[];
   comments: Comment[];
   jobRoles: JobRole[];
+  tracks: Track[];
+  checklistItems: ChecklistItem[];
   canManage: boolean;
   canComplianceReview: boolean;
   canApprove: boolean;
@@ -94,7 +99,7 @@ export default function MobilizationDetail({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [tab, setTab] = useState<"overview" | "positions" | "timeline" | "comments">("overview");
+  const [tab, setTab] = useState<"overview" | "positions" | "checklist" | "timeline" | "comments">("overview");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -110,6 +115,7 @@ export default function MobilizationDetail({
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "positions", label: `Positions (${required})` },
+    { key: "checklist", label: "Checklist" },
     { key: "timeline", label: "Status Timeline" },
     { key: "comments", label: `Comments (${comments.filter((c) => !c.is_system).length})` },
   ];
@@ -312,6 +318,10 @@ export default function MobilizationDetail({
           canApprove={canApprove}
           isTerminal={isTerminal}
         />
+      )}
+
+      {tab === "checklist" && (
+        <ChecklistTab requestId={request.id} positions={positions} tracks={tracks} checklistItems={checklistItems} canManage={canManage} />
       )}
 
       {tab === "timeline" && (

@@ -73,6 +73,7 @@ export type Position = {
   is_additional: boolean;
   additional_reason: string | null;
   remarks: string | null;
+  mobilization_track_id: string | null;
 };
 type JobRole = { id: string; name: string };
 
@@ -998,6 +999,7 @@ function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSu
   const [shift, setShift] = useState("");
   const [remarks, setRemarks] = useState("");
   const [supportingDocumentUrl, setSupportingDocumentUrl] = useState("");
+  const [joinMethod, setJoinMethod] = useState<"" | "direct_port" | "crew_boat_transfer">("");
 
   const submit = () => {
     if (!actualOnboardAt) return;
@@ -1011,6 +1013,7 @@ function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSu
     fd.set("shift", shift);
     fd.set("remarks", remarks);
     fd.set("supportingDocumentUrl", supportingDocumentUrl);
+    fd.set("joinMethod", joinMethod);
     onSubmit(fd);
   };
 
@@ -1046,6 +1049,14 @@ function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSu
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Supporting document URL
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={supportingDocumentUrl} onChange={(e) => setSupportingDocumentUrl(e.target.value)} placeholder="Optional" />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          How they joined
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={joinMethod} onChange={(e) => setJoinMethod(e.target.value as "" | "direct_port" | "crew_boat_transfer")}>
+            <option value="">—</option>
+            <option value="direct_port">Direct at port</option>
+            <option value="crew_boat_transfer">Crew boat transfer (offshore)</option>
+          </select>
         </label>
       </div>
       <div className="flex items-center gap-3 flex-wrap mb-3">

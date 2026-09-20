@@ -1,5 +1,6 @@
 "use server";
 
+import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
@@ -900,6 +901,7 @@ export async function confirmBoarding(positionId: string, requestId: string, for
       boarding_reference: optStr(formData, "boardingReference"),
       remarks: optStr(formData, "remarks"),
       supporting_document_url: optStr(formData, "supportingDocumentUrl"),
+      join_method: optStr(formData, "joinMethod"),
     })
     .select("id")
     .single();
@@ -1242,5 +1244,141 @@ export async function emergencyFastTrack(id: string) {
   if (error) return { error: error.message };
   await postSystemComment(supabase, access.orgId, id, "Emergency override used — normal approval sequence was skipped.");
   revalidateMobilization(id);
+  return {};
+}
+
+/* ================= Phase 12: mobilization tracks & checklist ================= */
+
+// Assigns a track (a client's configured onboarding pathway — e.g. "New
+// Joiner" vs "Returning Crew", entirely admin-defined, see
+// tracks-actions.ts) to a position, and instantiates a COPY of that
+// track's template checklist items for this position. Copying rather
+// than referencing the template live means editing a client's template
+// later never silently changes a checklist already in progress for
+// someone currently mobilizing. Deliberately one-way: once a track is
+// set it can't be changed here, since that would mean deciding what to
+// do with any checklist progress already made against the old track.
+export async function setPositionTrack(positionId: string, requestId: string, trackId: string) {
+  const { supabase, access, userId } = await requireManage();
+  await assertNotTerminal(supabase, requestId);
+
+  const { data: position, error: posErr } = await supabase
+    .from("mobilization_positions")
+    .select("id, mobilization_track_id")
+    .eq("id", positionId)
+    .single();
+  if (posErr || !position) return { error: "Could not find that position." };
+  if (position.mobilization_track_id) return { error: "This position already has a track assigned." };
+
+  const { data: track, error: trackErr } = await supabase.from("mobilization_tracks").select("id").eq("id", trackId).eq("org_id", access.orgId).single();
+  if (trackErr || !track) return { error: "Could not find that track." };
+
+  const { data: reqRow, error: reqErr } = await supabase.from("mobilization_requests").select("created_at, required_onboard_date").eq("id", requestId).single();
+  if (reqErr || !reqRow) return { error: "Could not find that mobilization request." };
+
+  const { data: templateItems, error: itemsErr } = await supabase
+    .from("mobilization_checklist_items")
+    .select("id, sequence, title, description, is_parallel, due_basis, due_offset_days, due_relative_item_id, linked_document_type_id")
+    .eq("track_id", trackId)
+    .order("sequence", { ascending: true });
+  if (itemsErr) return { error: itemsErr.message };
+
+  const { error: assignError } = await supabase.from("mobilization_positions").update({ mobilization_track_id: trackId, updated_by: userId }).eq("id", positionId);
+  if (assignError) return { error: assignError.message };
+
+  if (!templateItems || templateItems.length === 0) {
+    // Track has no steps configured yet — assigning it is still valid,
+    // there's just nothing to instantiate.
+    revalidateMobilization(requestId);
+    return { count: 0 };
+  }
+
+  const requestCreatedDate = (reqRow.created_at as string).slice(0, 10);
+  const requiredOnboardDate = reqRow.required_onboard_date as string | null;
+  const addDays = (dateStr: string, days: number) => {
+    const d = new Date(dateStr + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  // Pre-generate instance ids so due_relative_item_id can point at
+  // another INSTANCE row (not the template item) within the same insert.
+  const idByTemplateId = new Map<string, string>();
+  for (const item of templateItems) idByTemplateId.set(item.id as string, crypto.randomUUID());
+
+  const rows = templateItems.map((item) => {
+    const basis = item.due_basis as string;
+    let dueDate: string | null = null;
+    if (basis === "request_created") dueDate = addDays(requestCreatedDate, item.due_offset_days as number);
+    else if (basis === "required_onboard_date" && requiredOnboardDate) dueDate = addDays(requiredOnboardDate, item.due_offset_days as number);
+    // relative_to_item stays null until the item it depends on is marked done.
+    return {
+      id: idByTemplateId.get(item.id as string),
+      org_id: access.orgId,
+      mobilization_position_id: positionId,
+      source_item_id: item.id,
+      sequence: item.sequence,
+      title: item.title,
+      description: item.description,
+      is_parallel: item.is_parallel,
+      due_basis: basis,
+      due_offset_days: item.due_offset_days,
+      due_relative_item_id: item.due_relative_item_id ? idByTemplateId.get(item.due_relative_item_id as string) ?? null : null,
+      due_date: dueDate,
+      linked_document_type_id: item.linked_document_type_id,
+      updated_by: userId,
+    };
+  });
+
+  const { error: insertErr } = await supabase.from("mobilization_position_checklist_items").insert(rows);
+  if (insertErr) return { error: insertErr.message };
+
+  revalidateMobilization(requestId);
+  return { count: rows.length };
+}
+
+// Marking a step "done" resolves the due date of any sibling step (same
+// position) whose due date is relative to this one finishing — this is
+// what reproduces "10 days after the exam step" without a fixed enum of
+// named business milestones anywhere in the schema.
+export async function updateChecklistItemStatus(itemId: string, requestId: string, status: "pending" | "in_progress" | "done" | "blocked") {
+  const { supabase, access, userId } = await requireManage();
+
+  const { data: item, error: itemErr } = await supabase
+    .from("mobilization_position_checklist_items")
+    .select("id, mobilization_position_id")
+    .eq("id", itemId)
+    .eq("org_id", access.orgId)
+    .single();
+  if (itemErr || !item) return { error: "Could not find that checklist item." };
+
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("mobilization_position_checklist_items")
+    .update({
+      status,
+      completed_at: status === "done" ? nowIso : null,
+      completed_by: status === "done" ? userId : null,
+      updated_by: userId,
+    })
+    .eq("id", itemId);
+  if (error) return { error: error.message };
+
+  if (status === "done") {
+    const { data: dependents } = await supabase
+      .from("mobilization_position_checklist_items")
+      .select("id, due_offset_days")
+      .eq("mobilization_position_id", item.mobilization_position_id)
+      .eq("due_relative_item_id", itemId)
+      .eq("due_basis", "relative_to_item");
+    const completedDate = nowIso.slice(0, 10);
+    for (const dep of dependents ?? []) {
+      const d = new Date(completedDate + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + (dep.due_offset_days as number));
+      await supabase.from("mobilization_position_checklist_items").update({ due_date: d.toISOString().slice(0, 10), updated_by: userId }).eq("id", dep.id);
+    }
+  }
+
+  revalidateMobilization(requestId);
   return {};
 }
