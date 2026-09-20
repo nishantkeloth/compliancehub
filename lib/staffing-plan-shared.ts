@@ -39,8 +39,34 @@ export type StaffingCrew = {
   nationality: string | null;
   job_role_id: string;
   availability_date?: string | null;
+  // Phase 16 — the same free-text region string as offshore_sites/projects'
+  // operating_region (see REGIONS in lib/regions.ts), used to sort/group
+  // Available Candidates by whether they're based where the matrix's site
+  // actually is.
+  current_location?: string | null;
   documents: Record<string, { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }>;
 };
+
+// Phase 16 — "how much of this rank's required documentation does this
+// person already have", as a 0-100 percentage: a required document type
+// counts as complete when a crew_documents record exists for it AND (if it
+// carries an expiry date) that date hasn't already passed — matching
+// exactly what DocCell would render as anything other than "Missing" or
+// "Expired". A rank with no required documents at all reads as 100% (there
+// is nothing to be missing). Used to sort Available Candidates by
+// readiness instead of alphabetically.
+export function computeCompleteness(requiredDocs: { document_type_id: string; is_mandatory: boolean }[], documentTypes: DocTypeRef[], docs: StaffingCrew["documents"]): number {
+  if (requiredDocs.length === 0) return 100;
+  let complete = 0;
+  for (const req of requiredDocs) {
+    const doc = docs[req.document_type_id];
+    if (!doc) continue;
+    const docType = documentTypes.find((d) => d.id === req.document_type_id);
+    const { status } = computeDocumentStatus(doc.expiry_date, docType?.warning_threshold_days ?? null, docType?.category ?? null);
+    if (status !== "expired") complete += 1;
+  }
+  return Math.round((complete / requiredDocs.length) * 100);
+}
 
 export type FieldDef = { id: string; label: string; field_key: string; applies_to_document_type_id: string | null };
 

@@ -64,6 +64,7 @@ import {
   orderDocumentColumns,
   buildCategoryColorMap,
   buildStaffingPlanWorkbook,
+  computeCompleteness,
   UNCATEGORIZED_KEY,
   CATEGORY_BAND_COLORS,
   type CategoryGroup,
@@ -84,6 +85,23 @@ export type { StaffingCrew, FieldDef };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
+// Phase 16 — case-insensitive, whitespace-tolerant match between a crew
+// member's current_location (constrained to lib/regions.ts) and a matrix's
+// site/project operating_region (still free text) — see matrixRegion's
+// comment in page.tsx for why these can't be guaranteed to line up exactly.
+function sameRegion(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+type CrewRow = { person: StaffingCrew; completeness: number };
+
+function completenessColors(pct: number): { bg: string; fg: string } {
+  if (pct >= 80) return DOCUMENT_STATUS_COLORS.ok;
+  if (pct >= 50) return DOCUMENT_STATUS_COLORS.warning;
+  return DOCUMENT_STATUS_COLORS.expired;
+}
+
 export default function StaffingPlanView({
   crewMatrixId,
   matrixTitle,
@@ -94,6 +112,7 @@ export default function StaffingPlanView({
   documentTypes,
   crew,
   candidateCrew,
+  matrixRegion,
   customFieldDefinitions,
   canManage = false,
   canAssignCrew = false,
@@ -109,6 +128,12 @@ export default function StaffingPlanView({
   documentTypes: DocTypeRef[];
   crew: StaffingCrew[];
   candidateCrew?: StaffingCrew[];
+  // Phase 16 — the matrix's own site/project region (free text). When set,
+  // Available Candidates splits into region-matched vs "Other region"
+  // groups instead of one alphabetical list; both groups are then sorted
+  // by document completeness (see computeCompleteness) so the
+  // best-prepared, closest candidates surface first.
+  matrixRegion?: string | null;
   customFieldDefinitions: FieldDef[];
   // All default to false so this component still works if a caller (e.g.
   // an older test/story) doesn't pass them — the Actions column just stays
@@ -301,7 +326,6 @@ export default function StaffingPlanView({
       </div>
       <div className="space-y-4">
         {orderedLines.map((line) => {
-          const crewForLine = activeCrew.filter((c) => c.job_role_id === line.job_role_id).sort((a, b) => a.full_name.localeCompare(b.full_name));
           const requiredDocTypeIds = new Set(line.documents.map((d) => d.document_type_id));
           const mandatoryDocTypeIds = new Set(line.documents.filter((d) => d.is_mandatory).map((d) => d.document_type_id));
           // Only the document types this rank actually requires — an
@@ -317,12 +341,33 @@ export default function StaffingPlanView({
           const { groups: lineGroups, groupIndex: lineGroupIndex } = groupByCategory(lineDisplayColumns);
           const lineDocTypeGroups = groupByDocType(lineDisplayColumns);
 
+          // Phase 16 — completeness is computed for every row regardless of
+          // view (cheap, and Assigned rows may still want it later); only
+          // Available candidates actually sorts/splits by it, per the
+          // requirement that closer, more-complete candidates surface
+          // first for staffing decisions.
+          const rowsForLine: CrewRow[] = activeCrew
+            .filter((c) => c.job_role_id === line.job_role_id)
+            .map((c) => ({ person: c, completeness: computeCompleteness(line.documents, documentTypes, c.documents) }));
+
+          const splitByRegion = view === "available" && !!matrixRegion;
+          let matchedRows: CrewRow[] = splitByRegion ? rowsForLine.filter((r) => sameRegion(r.person.current_location, matrixRegion)) : rowsForLine;
+          let otherRows: CrewRow[] = splitByRegion ? rowsForLine.filter((r) => !sameRegion(r.person.current_location, matrixRegion)) : [];
+
+          const sortRows = (rows: CrewRow[]) =>
+            view === "available"
+              ? [...rows].sort((a, b) => b.completeness - a.completeness || a.person.full_name.localeCompare(b.person.full_name))
+              : [...rows].sort((a, b) => a.person.full_name.localeCompare(b.person.full_name));
+          matchedRows = sortRows(matchedRows);
+          otherRows = sortRows(otherRows);
+
           return (
             <StaffingLineCard
               key={line.id}
               line={line}
               view={view}
-              crewForLine={crewForLine}
+              matchedRows={matchedRows}
+              otherRows={otherRows}
               lineDisplayColumns={lineDisplayColumns}
               lineDocTypeGroups={lineDocTypeGroups}
               lineGroups={lineGroups}
@@ -366,7 +411,8 @@ export default function StaffingPlanView({
 function StaffingLineCard({
   line,
   view,
-  crewForLine,
+  matchedRows,
+  otherRows,
   lineDisplayColumns,
   lineDocTypeGroups,
   lineGroups,
@@ -384,7 +430,15 @@ function StaffingLineCard({
 }: {
   line: Line;
   view: "assigned" | "available";
-  crewForLine: StaffingCrew[];
+  // Phase 16 — Available candidates splits into region-matched (matchedRows)
+  // and "Other region" (otherRows, only ever non-empty when a matrixRegion
+  // was set) groups, each already sorted by document completeness
+  // descending. Assigned view (and Available with no matrixRegion) puts
+  // everything in matchedRows, alphabetically, and otherRows stays empty —
+  // so the "Other region" divider below only ever renders when it means
+  // something.
+  matchedRows: CrewRow[];
+  otherRows: CrewRow[];
   lineDisplayColumns: DisplayColumn[];
   lineDocTypeGroups: { docType: DocTypeRef; count: number }[];
   lineGroups: CategoryGroup[];
@@ -403,6 +457,8 @@ function StaffingLineCard({
   const [mailBusy, setMailBusy] = useState(false);
   const [mailError, setMailError] = useState<string | null>(null);
 
+  const allRows = matchedRows.length || otherRows.length ? [...matchedRows, ...otherRows] : [];
+
   // Assign only makes sense from Available candidates; Unassign only from
   // Assigned. Share (per row and per rank header) is Assigned-only — a
   // candidate who isn't assigned yet has nothing worth sending a client.
@@ -410,14 +466,14 @@ function StaffingLineCard({
   const showUnassignCol = view === "assigned" && canAssignCrew;
   const showShareCol = view === "assigned" && canManage;
   const showActionsCol = showAssignCol || showUnassignCol || showShareCol;
-  const showHeaderShare = showShareCol && crewForLine.length > 0;
+  const showHeaderShare = showShareCol && allRows.length > 0;
 
   const emailAllLinks = async () => {
     setMailError(null);
     setMailBusy(true);
     try {
       const results = await Promise.all(
-        crewForLine.map(async (person) => {
+        allRows.map(async ({ person }) => {
           const res = await createResourceProfileLink(person.crew_id, line.id);
           return { name: person.full_name, url: res?.url as string | undefined, error: res?.error as string | undefined };
         })
@@ -444,7 +500,8 @@ function StaffingLineCard({
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{line.job_role_name}</span>
           <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
-            Headcount required {line.required_headcount} · {crewForLine.length} {view === "assigned" ? "assigned" : "available"}
+            Headcount required {line.required_headcount} · {allRows.length} {view === "assigned" ? "assigned" : "available"}
+            {otherRows.length > 0 && ` (${matchedRows.length} in region)`}
           </span>
         </div>
         {showHeaderShare && (
@@ -462,7 +519,7 @@ function StaffingLineCard({
       {mailError && (
         <div className="px-3 py-1.5 text-xs" style={{ color: "var(--ch-fail)" }}>{mailError}</div>
       )}
-      {crewForLine.length === 0 ? (
+      {allRows.length === 0 ? (
         <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
           {view === "assigned"
             ? "No crew currently assigned to this rank at this site."
@@ -541,45 +598,145 @@ function StaffingLineCard({
               </tr>
             </thead>
             <tbody>
-              {crewForLine.map((person) => (
-                <tr key={person.crew_id} className="border-t" style={{ borderColor: "var(--ch-line)" }}>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <div className="font-semibold" style={{ color: "var(--ch-ink)" }}>{person.full_name}</div>
-                    {view === "available" && person.availability_date && (
-                      <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
-                    )}
+              {matchedRows.map(({ person, completeness }) => (
+                <CandidateRow
+                  key={person.crew_id}
+                  person={person}
+                  completeness={completeness}
+                  view={view}
+                  lineDisplayColumns={lineDisplayColumns}
+                  customFieldDefinitions={customFieldDefinitions}
+                  showActionsCol={showActionsCol}
+                  crewMatrixId={crewMatrixId}
+                  lineId={line.id}
+                  showAssignCol={showAssignCol}
+                  showUnassignCol={showUnassignCol}
+                  showShareCol={showShareCol}
+                  onChanged={onChanged}
+                  onAssigned={onAssigned}
+                  onUnassigned={onUnassigned}
+                />
+              ))}
+              {otherRows.length > 0 && (
+                <tr>
+                  <td
+                    colSpan={2 + lineDisplayColumns.length + (showActionsCol ? 1 : 0)}
+                    className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide border-t"
+                    style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}
+                  >
+                    Other region ({otherRows.length})
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
-                  {lineDisplayColumns.map((dc) => (
-                    <DocCell
-                      key={dc.key}
-                      docType={dc.docType}
-                      part={dc.part}
-                      doc={person.documents[dc.docType.id]}
-                      fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === dc.docType.id || f.applies_to_document_type_id === null)}
-                    />
-                  ))}
-                  {showActionsCol && (
-                    <RowActions
-                      crewId={person.crew_id}
-                      crewMatrixId={crewMatrixId}
-                      lineId={line.id}
-                      personName={person.full_name}
-                      showAssign={showAssignCol}
-                      showUnassign={showUnassignCol}
-                      showShare={showShareCol}
-                      onChanged={onChanged}
-                      onAssigned={onAssigned}
-                      onUnassigned={onUnassigned}
-                    />
-                  )}
                 </tr>
+              )}
+              {otherRows.map(({ person, completeness }) => (
+                <CandidateRow
+                  key={person.crew_id}
+                  person={person}
+                  completeness={completeness}
+                  view={view}
+                  lineDisplayColumns={lineDisplayColumns}
+                  customFieldDefinitions={customFieldDefinitions}
+                  showActionsCol={showActionsCol}
+                  crewMatrixId={crewMatrixId}
+                  lineId={line.id}
+                  showAssignCol={showAssignCol}
+                  showUnassignCol={showUnassignCol}
+                  showShareCol={showShareCol}
+                  onChanged={onChanged}
+                  onAssigned={onAssigned}
+                  onUnassigned={onUnassigned}
+                />
               ))}
             </tbody>
           </table>
         </div>
       )}
     </div>
+  );
+}
+
+// Phase 16 — one candidate row, factored out of StaffingLineCard so the
+// same markup renders for both the region-matched and "Other region"
+// groups without duplicating it. The completeness % badge sits first in
+// the Name cell, ahead of the name itself, per the requirement that it be
+// visible "at the beginning of the line" — Available candidates only, since
+// it exists to rank candidates, not to describe someone already assigned.
+function CandidateRow({
+  person,
+  completeness,
+  view,
+  lineDisplayColumns,
+  customFieldDefinitions,
+  showActionsCol,
+  crewMatrixId,
+  lineId,
+  showAssignCol,
+  showUnassignCol,
+  showShareCol,
+  onChanged,
+  onAssigned,
+  onUnassigned,
+}: {
+  person: StaffingCrew;
+  completeness: number;
+  view: "assigned" | "available";
+  lineDisplayColumns: DisplayColumn[];
+  customFieldDefinitions: FieldDef[];
+  showActionsCol: boolean;
+  crewMatrixId: string;
+  lineId: string;
+  showAssignCol: boolean;
+  showUnassignCol: boolean;
+  showShareCol: boolean;
+  onChanged?: () => void;
+  onAssigned: (crewId: string) => void;
+  onUnassigned: (crewId: string) => void;
+}) {
+  const badge = completenessColors(completeness);
+  return (
+    <tr className="border-t" style={{ borderColor: "var(--ch-line)" }}>
+      <td className="px-3 py-2 whitespace-nowrap">
+        <div className="flex items-center gap-1.5">
+          {view === "available" && (
+            <span
+              className="rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0"
+              style={{ background: badge.bg, color: badge.fg }}
+              title="Share of this rank's required documents already on file and not expired"
+            >
+              {completeness}%
+            </span>
+          )}
+          <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>{person.full_name}</span>
+        </div>
+        {view === "available" && person.availability_date && (
+          <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
+        )}
+      </td>
+      <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
+      {lineDisplayColumns.map((dc) => (
+        <DocCell
+          key={dc.key}
+          docType={dc.docType}
+          part={dc.part}
+          doc={person.documents[dc.docType.id]}
+          fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === dc.docType.id || f.applies_to_document_type_id === null)}
+        />
+      ))}
+      {showActionsCol && (
+        <RowActions
+          crewId={person.crew_id}
+          crewMatrixId={crewMatrixId}
+          lineId={lineId}
+          personName={person.full_name}
+          showAssign={showAssignCol}
+          showUnassign={showUnassignCol}
+          showShare={showShareCol}
+          onChanged={onChanged}
+          onAssigned={onAssigned}
+          onUnassigned={onUnassigned}
+        />
+      )}
+    </tr>
   );
 }
 

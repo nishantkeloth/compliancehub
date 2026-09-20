@@ -60,6 +60,7 @@ export default function MatrixDetail({
   documentTypes,
   staffingCrew,
   candidateStaffingCrew,
+  matrixRegion,
   customFieldDefinitions,
   canManage,
   canAssignCrew,
@@ -79,6 +80,7 @@ export default function MatrixDetail({
   documentTypes: DocTypeRef[];
   staffingCrew: StaffingCrew[];
   candidateStaffingCrew: StaffingCrew[];
+  matrixRegion?: string | null;
   customFieldDefinitions: FieldDef[];
   canManage: boolean;
   canAssignCrew: boolean;
@@ -405,6 +407,7 @@ export default function MatrixDetail({
             documentTypes={documentTypes}
             crew={staffingCrew}
             candidateCrew={candidateStaffingCrew}
+            matrixRegion={matrixRegion}
             customFieldDefinitions={customFieldDefinitions}
             canManage={canManage}
             canAssignCrew={canAssignCrew}

@@ -16,7 +16,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
 
   const { data: matrix } = await supabase
     .from("crew_matrices")
-    .select("*, projects(project_name), offshore_sites(name)")
+    .select("*, projects(project_name, operating_region), offshore_sites(name, operating_region)")
     .eq("id", id)
     .eq("org_id", access.orgId)
     .single();
@@ -133,7 +133,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       lineJobRoleIds.length
         ? supabase
             .from("crew_profiles")
-            .select("id, full_name, nationality, primary_job_role_id, availability_date")
+            .select("id, full_name, nationality, primary_job_role_id, availability_date, current_location")
             .eq("org_id", access.orgId)
             .eq("employment_status", "active")
             .in("primary_job_role_id", lineJobRoleIds)
@@ -235,12 +235,22 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       nationality: c.nationality as string | null,
       job_role_id: c.primary_job_role_id as string,
       availability_date: c.availability_date as string | null,
+      current_location: c.current_location as string | null,
       documents,
     };
   });
 
-  const project = (Array.isArray(matrix.projects) ? matrix.projects[0] : matrix.projects) as { project_name?: string } | null;
-  const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as { name?: string } | null;
+  const project = (Array.isArray(matrix.projects) ? matrix.projects[0] : matrix.projects) as { project_name?: string; operating_region?: string | null } | null;
+  const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as { name?: string; operating_region?: string | null } | null;
+  // Phase 16 — the matrix's own region, for splitting Available Candidates
+  // into region-matched vs other-region groups. Site's region wins when
+  // set (a matrix is normally tied to one physical site); falls back to
+  // the project's region when the site doesn't have one. Both fields stay
+  // free text on offshore_sites/projects (unlike crew_profiles.current_location,
+  // which Phase 16 constrained to lib/regions.ts's fixed list) — matching
+  // only works when an admin has typed the same string here as a crew
+  // member's Current location dropdown value (e.g. "Qatar", "Abu Dhabi").
+  const matrixRegion = (site?.operating_region || project?.operating_region || null) as string | null;
 
   const rows = (lines ?? []).map((l) => {
     const role = (Array.isArray(l.job_roles) ? l.job_roles[0] : l.job_roles) as { name?: string } | null;
@@ -321,6 +331,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       documentTypes={documentTypes ?? []}
       staffingCrew={staffingCrew}
       candidateStaffingCrew={candidateStaffingCrew}
+      matrixRegion={matrixRegion}
       customFieldDefinitions={(fieldDefs ?? []).map((f) => ({
         id: f.id as string,
         label: f.label as string,

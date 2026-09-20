@@ -34,6 +34,7 @@ import {
 import { DocumentReadModal } from "@/components/document-read-modal";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import { REGIONS } from "@/lib/regions";
 
 type Crew = {
   id: string;
@@ -457,7 +458,31 @@ function GeneralForm({
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
         <input className={inputCls} style={inputStyle} placeholder="Home country" value={homeCountry} onChange={(e) => { setHomeCountry(e.target.value); setSaved(false); }} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Current location" value={currentLocation} onChange={(e) => { setCurrentLocation(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Current location
+          <select
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={currentLocation}
+            onChange={(e) => { setCurrentLocation(e.target.value); setSaved(false); }}
+            disabled={disabled}
+          >
+            <option value="">Not set</option>
+            {/* A previously-typed free-text value that doesn't match one of
+                the fixed regions (see lib/regions.ts) stays selectable here
+                rather than silently dropping it the moment this form
+                loads — but the Available Candidates region match on the
+                Staffing Plan only works against the fixed list below, so
+                re-picking a real region is worth doing next time this
+                profile is opened. */}
+            {currentLocation && !REGIONS.includes(currentLocation as (typeof REGIONS)[number]) && (
+              <option value={currentLocation}>{currentLocation} (unmatched — pick a region below)</option>
+            )}
+            {REGIONS.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </label>
         <input className={inputCls} style={inputStyle} placeholder="Nearest airport" value={nearestAirport} onChange={(e) => { setNearestAirport(e.target.value); setSaved(false); }} disabled={disabled} />
       </div>
 
