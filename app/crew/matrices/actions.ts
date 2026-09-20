@@ -43,6 +43,79 @@ const revalidateMatrix = (id?: string) => {
   if (id) revalidatePath(`/crew/matrices/${id}`);
 };
 
+// Phase 15 — resolves a project's client the same way Phase 12's
+// Mobilization Tracks do (project -> contract -> client), so a newly
+// created line can pull in that client's document-requirement
+// overrides, not just the org-wide default template.
+async function resolveClientIdForProject(supabase: Supa, projectId: string) {
+  const { data: projectRow } = await supabase.from("projects").select("contract_id, contracts(client_id)").eq("id", projectId).maybeSingle();
+  const contractRow = (Array.isArray(projectRow?.contracts) ? projectRow?.contracts[0] : projectRow?.contracts) as { client_id?: string } | null | undefined;
+  return contractRow?.client_id ?? null;
+}
+
+// Phase 15 — seeds crew_matrix_line_documents for freshly created
+// lines from each role's job_role_document_requirements template,
+// instead of every matrix starting with a blank required-document
+// list. Effective template per (job_role, client): every org-wide row
+// (client_id null), with any row scoped to this specific client
+// either replacing the org-wide row for that document type
+// (is_excluded false) or dropping it (is_excluded true). A role with
+// no template rows at all seeds nothing — same as today's behaviour,
+// just no longer the only option. Never touches a line that already
+// has its own crew_matrix_line_documents rows (copyCrewMatrixLine/
+// createNewVersion own that path already).
+async function seedLineDocumentsFromTemplate(supabase: Supa, orgId: string, clientId: string | null, lines: { id: string; job_role_id: string }[]) {
+  if (lines.length === 0) return;
+  const jobRoleIds = [...new Set(lines.map((l) => l.job_role_id))];
+
+  const { data: templateRows } = await supabase
+    .from("job_role_document_requirements")
+    .select("job_role_id, client_id, document_type_id, is_mandatory, minimum_remaining_validity_days, is_excluded")
+    .eq("org_id", orgId)
+    .in("job_role_id", jobRoleIds)
+    .or(clientId ? `client_id.is.null,client_id.eq.${clientId}` : "client_id.is.null");
+  if (!templateRows || templateRows.length === 0) return;
+
+  const effectiveByRole = new Map<string, Map<string, { document_type_id: string; is_mandatory: boolean; minimum_remaining_validity_days: number | null }>>();
+  for (const row of templateRows.filter((r) => r.client_id === null)) {
+    const byDocType = effectiveByRole.get(row.job_role_id as string) ?? new Map();
+    byDocType.set(row.document_type_id as string, {
+      document_type_id: row.document_type_id as string,
+      is_mandatory: row.is_mandatory as boolean,
+      minimum_remaining_validity_days: row.minimum_remaining_validity_days as number | null,
+    });
+    effectiveByRole.set(row.job_role_id as string, byDocType);
+  }
+  if (clientId) {
+    for (const row of templateRows.filter((r) => r.client_id === clientId)) {
+      const byDocType = effectiveByRole.get(row.job_role_id as string) ?? new Map();
+      if (row.is_excluded) byDocType.delete(row.document_type_id as string);
+      else
+        byDocType.set(row.document_type_id as string, {
+          document_type_id: row.document_type_id as string,
+          is_mandatory: row.is_mandatory as boolean,
+          minimum_remaining_validity_days: row.minimum_remaining_validity_days as number | null,
+        });
+      effectiveByRole.set(row.job_role_id as string, byDocType);
+    }
+  }
+
+  const rows = lines.flatMap((line) => {
+    const byDocType = effectiveByRole.get(line.job_role_id);
+    if (!byDocType) return [];
+    return [...byDocType.values()].map((d) => ({
+      org_id: orgId,
+      line_id: line.id,
+      document_type_id: d.document_type_id,
+      minimum_remaining_validity_days: d.minimum_remaining_validity_days,
+      is_mandatory: d.is_mandatory,
+      waiver_permitted: false,
+    }));
+  });
+  if (rows.length === 0) return;
+  await supabase.from("crew_matrix_line_documents").insert(rows);
+}
+
 // Line/header content can only change while the matrix is still a
 // draft — everything from "submit" onward moves status only, via
 // the dedicated workflow actions below.
@@ -113,7 +186,11 @@ export async function createCrewMatrix(formData: FormData) {
         created_by: userId,
         updated_by: userId,
       }));
-      await supabase.from("crew_matrix_lines").insert(lines);
+      const { data: newLines } = await supabase.from("crew_matrix_lines").insert(lines).select("id, job_role_id");
+      if (newLines && newLines.length > 0) {
+        const clientId = await resolveClientIdForProject(supabase, projectId);
+        await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, newLines as { id: string; job_role_id: string }[]);
+      }
     }
   }
 
@@ -191,6 +268,13 @@ export async function createCrewMatrixLine(crewMatrixId: string, formData: FormD
     .select("id")
     .single();
   if (error) return { error: error.message };
+
+  if (line?.id) {
+    const { data: matrixRow } = await supabase.from("crew_matrices").select("project_id").eq("id", crewMatrixId).maybeSingle();
+    const clientId = matrixRow?.project_id ? await resolveClientIdForProject(supabase, matrixRow.project_id as string) : null;
+    await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, [{ id: line.id as string, job_role_id: jobRoleId }]);
+  }
+
   revalidateMatrix(crewMatrixId);
   return { id: line?.id };
 }
@@ -777,8 +861,13 @@ export async function generateDraftFromManning(projectId: string, offshoreSiteId
     created_by: userId,
     updated_by: userId,
   }));
-  const { error: linesError } = await supabase.from("crew_matrix_lines").insert(lines);
+  const { data: newLines, error: linesError } = await supabase.from("crew_matrix_lines").insert(lines).select("id, job_role_id");
   if (linesError) return { error: linesError.message, id: newId };
+
+  if (newLines && newLines.length > 0) {
+    const clientId = await resolveClientIdForProject(supabase, projectId);
+    await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, newLines as { id: string; job_role_id: string }[]);
+  }
 
   revalidateMatrix();
   return { id: newId };

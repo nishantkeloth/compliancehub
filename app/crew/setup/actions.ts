@@ -358,3 +358,68 @@ export async function deleteCustomFieldDefinition(id: string) {
   revalidateSetup();
   return {};
 }
+
+/* ---------------- Job role document requirement templates (Phase 15) ----------------
+   A template row with clientId blank is the org-wide default for that job
+   role. A row with clientId set overrides (or, with "excluded", removes)
+   the org-wide default for that one client only — see migration 0020 and
+   app/crew/matrices/actions.ts's seedLineDocumentsFromTemplate(), which
+   applies this the moment a crew matrix line is created. */
+
+export async function createJobRoleDocumentRequirement(formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const jobRoleId = str(formData, "jobRoleId");
+  const documentTypeId = str(formData, "documentTypeId");
+  if (!jobRoleId || !documentTypeId) return { error: "Job role and document type are required." };
+  const clientId = optStr(formData, "clientId");
+  const isExcluded = formData.get("isExcluded") === "on";
+  if (isExcluded && !clientId) return { error: "Excluding a document only makes sense for a client-specific row." };
+  const validityRaw = str(formData, "minimumRemainingValidityDays");
+
+  const { error } = await supabase.from("job_role_document_requirements").insert({
+    org_id: access.orgId,
+    job_role_id: jobRoleId,
+    client_id: clientId,
+    document_type_id: documentTypeId,
+    is_mandatory: formData.get("isMandatory") !== "off",
+    minimum_remaining_validity_days: validityRaw ? Number(validityRaw) : null,
+    is_excluded: isExcluded,
+    sort_order: Number(str(formData, "sortOrder") || "0"),
+    created_by: userId,
+    updated_by: userId,
+  });
+  if (error) {
+    if (error.code === "23505") return { error: "This document is already in the list for this role (and client, if set)." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  return {};
+}
+
+export async function updateJobRoleDocumentRequirement(id: string, formData: FormData) {
+  const { supabase, userId } = await requireCrewManage();
+  const isExcluded = formData.get("isExcluded") === "on";
+  const validityRaw = str(formData, "minimumRemainingValidityDays");
+
+  const { error } = await supabase
+    .from("job_role_document_requirements")
+    .update({
+      is_mandatory: formData.get("isMandatory") !== "off",
+      minimum_remaining_validity_days: validityRaw ? Number(validityRaw) : null,
+      is_excluded: isExcluded,
+      sort_order: Number(str(formData, "sortOrder") || "0"),
+      updated_by: userId,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function deleteJobRoleDocumentRequirement(id: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("job_role_document_requirements").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}

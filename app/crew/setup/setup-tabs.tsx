@@ -17,6 +17,9 @@ import {
   createCustomFieldDefinition,
   updateCustomFieldDefinition,
   deleteCustomFieldDefinition,
+  createJobRoleDocumentRequirement,
+  updateJobRoleDocumentRequirement,
+  deleteJobRoleDocumentRequirement,
 } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
@@ -49,8 +52,19 @@ type CustomFieldDefinition = {
   sort_order: number;
   is_active: boolean;
 };
+type Client = { id: string; name: string };
+type DocRequirement = {
+  id: string;
+  job_role_id: string;
+  client_id: string | null;
+  document_type_id: string;
+  is_mandatory: boolean;
+  minimum_remaining_validity_days: number | null;
+  is_excluded: boolean;
+  sort_order: number;
+};
 
-const TABS = ["Job Roles", "Skills", "Rotation Templates", "Document Types", "Custom Fields"] as const;
+const TABS = ["Job Roles", "Skills", "Rotation Templates", "Document Types", "Document Requirements", "Custom Fields"] as const;
 type Tab = (typeof TABS)[number];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -107,12 +121,16 @@ export default function SetupTabs({
   rotationTemplates,
   documentTypes,
   customFieldDefinitions,
+  clients,
+  documentRequirements,
 }: {
   jobRoles: JobRole[];
   skills: Skill[];
   rotationTemplates: RotationTemplate[];
   documentTypes: DocumentType[];
   customFieldDefinitions: CustomFieldDefinition[];
+  clients: Client[];
+  documentRequirements: DocRequirement[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
 
@@ -139,6 +157,9 @@ export default function SetupTabs({
       {tab === "Skills" && <SkillsPanel skills={skills} />}
       {tab === "Rotation Templates" && <RotationTemplatesPanel templates={rotationTemplates} />}
       {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} />}
+      {tab === "Document Requirements" && (
+        <DocumentRequirementsPanel jobRoles={jobRoles} documentTypes={documentTypes} clients={clients} documentRequirements={documentRequirements} />
+      )}
       {tab === "Custom Fields" && (
         <CustomFieldDefinitionsPanel customFieldDefinitions={customFieldDefinitions} documentTypes={documentTypes} />
       )}
@@ -861,6 +882,301 @@ function CustomFieldDefinitionForm({
       )}
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={submitted || !label.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/* ================= Document Requirements (Phase 15) =================
+   A job role's default required documents, pre-filled automatically onto
+   every new crew matrix line for that role instead of being re-added by
+   hand every time (app/crew/matrices/actions.ts's
+   seedLineDocumentsFromTemplate). Optionally overridden per client — e.g.
+   COVID vaccination required for Qatar clients but not others — via a row
+   scoped to that client, which either replaces the org-wide default for
+   that document type or, with "excluded", drops it for that client only. */
+
+function DocumentRequirementsPanel({
+  jobRoles,
+  documentTypes,
+  clients,
+  documentRequirements,
+}: {
+  jobRoles: JobRole[];
+  documentTypes: DocumentType[];
+  clients: Client[];
+  documentRequirements: DocRequirement[];
+}) {
+  const router = useRouter();
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(documentRequirements);
+  const [, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
+  const [roleId, setRoleId] = useState(jobRoles[0]?.id ?? "");
+  const [clientId, setClientId] = useState(""); // "" = viewing/editing the org-wide default
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const docTypeName = (id: string) => documentTypes.find((d) => d.id === id)?.name ?? "—";
+  const scoped = items
+    .filter((r) => r.job_role_id === roleId && (r.client_id ?? "") === clientId)
+    .sort((a, b) => a.sort_order - b.sort_order);
+  const orgWideForRole = items.filter((r) => r.job_role_id === roleId && r.client_id === null);
+
+  const submitCreate = (fd: FormData, optimisticItem: DocRequirement) => {
+    setBgError(null);
+    addOptimistic(optimisticItem);
+    setAdding(false);
+    startTransition(async () => {
+      const res = await createJobRoleDocumentRequirement(fd);
+      if (res?.error) {
+        removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't add "${docTypeName(optimisticItem.document_type_id)}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdate = (requirement: DocRequirement, fd: FormData, patch: Partial<DocRequirement>) => {
+    setBgError(null);
+    updateOptimistic(requirement.id, patch);
+    setEditingId(null);
+    startTransition(async () => {
+      const res = await updateJobRoleDocumentRequirement(requirement.id, fd);
+      if (res?.error) {
+        updateOptimistic(requirement.id, requirement);
+        setBgError(`Couldn't update "${docTypeName(requirement.document_type_id)}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDelete = (requirement: DocRequirement, index: number) => {
+    setBgError(null);
+    removeOptimistic(requirement.id);
+    startTransition(async () => {
+      const res = await deleteJobRoleDocumentRequirement(requirement.id);
+      if (res?.error) {
+        restoreOptimistic(requirement, index);
+        setBgError(`Couldn't delete "${docTypeName(requirement.document_type_id)}": ${res.error}`);
+      }
+    });
+  };
+
+  return (
+    <div>
+      <p className="text-sm mb-4" style={{ color: "var(--ch-sub)" }}>
+        A job role&apos;s default required documents — pre-filled automatically onto every new crew matrix line for
+        that role, instead of adding each document by hand every time. Optionally override the default for one
+        specific client below, e.g. a document only that client requires (or explicitly doesn&apos;t).
+      </p>
+      <BgErrorBanner error={bgError} />
+
+      <div className="flex items-center gap-2 flex-wrap mb-4">
+        <select
+          value={roleId}
+          onChange={(e) => {
+            setRoleId(e.target.value);
+            setAdding(false);
+            setEditingId(null);
+          }}
+          className={inputCls}
+          style={inputStyle}
+        >
+          {jobRoles.length === 0 && <option value="">No job roles yet</option>}
+          {jobRoles.map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
+          ))}
+        </select>
+        <select
+          value={clientId}
+          onChange={(e) => {
+            setClientId(e.target.value);
+            setAdding(false);
+            setEditingId(null);
+          }}
+          className={inputCls}
+          style={inputStyle}
+        >
+          <option value="">Org-wide default</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>{c.name} override</option>
+          ))}
+        </select>
+      </div>
+
+      {!roleId ? (
+        <div className="text-sm" style={{ color: "var(--ch-sub)" }}>Add a job role first, under the Job Roles tab.</div>
+      ) : (
+        <>
+          {clientId && (
+            <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+              Rows here apply only to {clients.find((c) => c.id === clientId)?.name ?? "this client"}, on top of the
+              org-wide default below. Check &quot;excluded&quot; on a row to drop an org-wide document for this
+              client only, rather than requiring it.
+            </div>
+          )}
+
+          {adding ? (
+            <RequirementForm
+              jobRoleId={roleId}
+              clientId={clientId || null}
+              documentTypes={documentTypes}
+              existing={scoped}
+              onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })}
+              onCancel={() => setAdding(false)}
+            />
+          ) : (
+            <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">
+              + Add document
+            </button>
+          )}
+
+          <div className="space-y-2 mt-2">
+            {scoped.length === 0 && (
+              <div className="text-sm" style={{ color: "var(--ch-sub)" }}>
+                No documents configured for this {clientId ? "client override" : "role"} yet.
+              </div>
+            )}
+            {scoped.map((r, i) =>
+              editingId === r.id ? (
+                <RequirementForm
+                  key={r.id}
+                  jobRoleId={roleId}
+                  clientId={clientId || null}
+                  documentTypes={documentTypes}
+                  existing={scoped}
+                  requirement={r}
+                  onSubmit={(fd, values) => submitUpdate(r, fd, values)}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <div key={r.id} className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`} style={cardStyle}>
+                  <div className="flex-1 min-w-[200px]">
+                    <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>
+                      {docTypeName(r.document_type_id)}
+                      {r.is_mandatory && !r.is_excluded && " *"}
+                    </span>
+                    {r.minimum_remaining_validity_days != null && (
+                      <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
+                        min {r.minimum_remaining_validity_days}d remaining
+                      </span>
+                    )}
+                    {r.is_excluded && (
+                      <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Excluded for this client</span>
+                    )}
+                    <SavingTag id={r.id} />
+                  </div>
+                  <button onClick={() => setEditingId(r.id)} disabled={isTempId(r.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>
+                    Edit
+                  </button>
+                  <DeleteButton onConfirm={() => submitDelete(r, i)} disabled={isTempId(r.id)} label="requirement" />
+                </div>
+              )
+            )}
+          </div>
+
+          {clientId && (
+            <div className="mt-6">
+              <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--ch-sub)" }}>
+                Org-wide default for this role (for reference)
+              </div>
+              {orgWideForRole.length === 0 && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No org-wide default set.</div>}
+              {orgWideForRole.map((r) => (
+                <div key={r.id} className="text-xs py-1" style={{ color: "var(--ch-sub)" }}>
+                  {docTypeName(r.document_type_id)}{r.is_mandatory ? " *" : ""}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function RequirementForm({
+  jobRoleId,
+  clientId,
+  documentTypes,
+  existing,
+  requirement,
+  onSubmit,
+  onCancel,
+}: {
+  jobRoleId: string;
+  clientId: string | null;
+  documentTypes: DocumentType[];
+  existing: DocRequirement[];
+  requirement?: DocRequirement;
+  onSubmit: (fd: FormData, values: Omit<DocRequirement, "id">) => void;
+  onCancel: () => void;
+}) {
+  const usedDocTypeIds = new Set(existing.filter((e) => e.id !== requirement?.id).map((e) => e.document_type_id));
+  const availableDocTypes = requirement ? documentTypes : documentTypes.filter((d) => !usedDocTypeIds.has(d.id));
+  const [documentTypeId, setDocumentTypeId] = useState(requirement?.document_type_id ?? availableDocTypes[0]?.id ?? "");
+  const [isMandatory, setIsMandatory] = useState(requirement?.is_mandatory ?? true);
+  const [minValidity, setMinValidity] = useState(
+    requirement?.minimum_remaining_validity_days != null ? String(requirement.minimum_remaining_validity_days) : ""
+  );
+  const [isExcluded, setIsExcluded] = useState(requirement?.is_excluded ?? false);
+  const [submitted, setSubmitted] = useState(false);
+
+  const save = () => {
+    if (!documentTypeId || submitted) return;
+    const fd = new FormData();
+    fd.set("jobRoleId", jobRoleId);
+    if (clientId) fd.set("clientId", clientId);
+    fd.set("documentTypeId", documentTypeId);
+    fd.set("isMandatory", isMandatory ? "on" : "off");
+    fd.set("minimumRemainingValidityDays", minValidity);
+    if (isExcluded) fd.set("isExcluded", "on");
+    fd.set("sortOrder", String(requirement?.sort_order ?? existing.length));
+    setSubmitted(true);
+    onSubmit(fd, {
+      job_role_id: jobRoleId,
+      client_id: clientId,
+      document_type_id: documentTypeId,
+      is_mandatory: isMandatory,
+      minimum_remaining_validity_days: minValidity ? Number(minValidity) : null,
+      is_excluded: isExcluded,
+      sort_order: requirement?.sort_order ?? existing.length,
+    });
+  };
+
+  return (
+    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        <select className={inputCls} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)} disabled={!!requirement}>
+          {availableDocTypes.length === 0 && <option value="">No document types left to add</option>}
+          {availableDocTypes.map((d) => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </select>
+        <input
+          type="number"
+          className={inputCls}
+          style={inputStyle}
+          placeholder="Min remaining validity (days, optional)"
+          value={minValidity}
+          onChange={(e) => setMinValidity(e.target.value)}
+        />
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isMandatory} onChange={(e) => setIsMandatory(e.target.checked)} /> Mandatory
+        </label>
+      </div>
+      {clientId && (
+        <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isExcluded} onChange={(e) => setIsExcluded(e.target.checked)} /> This client does NOT need this
+          document (excludes the org-wide default instead of overriding it)
+        </label>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={submitted || !documentTypeId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
