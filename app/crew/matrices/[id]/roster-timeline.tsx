@@ -21,7 +21,8 @@
 // exactly like the confirmed mockup — expand it to see the full chain.
 
 import { useEffect, useState, type CSSProperties } from "react";
-import { listRosterChangeRequests, decideRosterChangeRequest, REASON_CODES } from "./roster-change-actions";
+import { listRosterChangeRequests, decideRosterChangeRequest } from "./roster-change-actions";
+import { REASON_CODES } from "./roster-change-shared";
 import { getSharingHistory } from "./share-actions";
 
 export type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };

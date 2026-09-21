@@ -39,17 +39,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { sendEmail, companyFromAddress } from "@/lib/email";
+import { REASON_CODES, type ChangeType } from "./roster-change-shared";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-export const REASON_CODES: { value: string; label: string }[] = [
-  { value: "rotation_ended", label: "Rotation ended (6-on/1-off)" },
-  { value: "sick_leave", label: "Sick leave" },
-  { value: "performance_conduct", label: "Performance / conduct" },
-  { value: "client_request", label: "Client request" },
-  { value: "headcount_change", label: "Headcount change" },
-  { value: "other", label: "Other" },
-];
 
 async function requirePermission(permission: string, message: string) {
   const supabase = await createClient();
@@ -95,8 +87,6 @@ async function getApprovalRecipients(admin: ReturnType<typeof createAdminClient>
   }
   return recipients;
 }
-
-export type ChangeType = "assign" | "replace" | "unassign";
 
 export async function requestRosterChange(input: {
   crewMatrixId: string;

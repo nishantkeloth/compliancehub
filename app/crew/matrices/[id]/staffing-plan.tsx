@@ -53,7 +53,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
 import { assignCandidateToMatrix, unassignCandidateFromMatrix } from "./staffing-actions";
-import { requestRosterChange, REASON_CODES } from "./roster-change-actions";
+import { requestRosterChange } from "./roster-change-actions";
+import { REASON_CODES } from "./roster-change-shared";
 import {
   cellInfoPart,
   formatCategoryLabel,
