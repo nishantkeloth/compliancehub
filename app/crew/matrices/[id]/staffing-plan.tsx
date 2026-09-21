@@ -52,7 +52,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
-import { assignCandidateToMatrix, unassignCandidateFromMatrix, createResourceProfileLink } from "./staffing-actions";
+import { assignCandidateToMatrix, unassignCandidateFromMatrix } from "./staffing-actions";
 import { requestRosterChange, REASON_CODES } from "./roster-change-actions";
 import {
   cellInfoPart,
@@ -525,45 +525,15 @@ function StaffingLineCard({
   onUnassigned: (crewId: string) => void;
   customFieldDefinitions: FieldDef[];
 }) {
-  const [mailBusy, setMailBusy] = useState(false);
-  const [mailError, setMailError] = useState<string | null>(null);
-
   const allRows = matchedRows.length || otherRows.length ? [...matchedRows, ...otherRows] : [];
 
   // Assign only makes sense from Available candidates; Unassign only from
-  // Assigned. Share (per row and per rank header) is Assigned-only — a
-  // candidate who isn't assigned yet has nothing worth sending a client.
+  // Assigned. The per-row/per-rank "Share link" / "Email profile links"
+  // actions (candidate_resource_profile_links) were removed at the
+  // client's request — not needed at either the crew or the rank level.
   const showAssignCol = view === "available" && canAssignCrew;
   const showUnassignCol = view === "assigned" && canAssignCrew;
-  const showShareCol = view === "assigned" && canManage;
-  const showActionsCol = showAssignCol || showUnassignCol || showShareCol;
-  const showHeaderShare = showShareCol && allRows.length > 0;
-
-  const emailAllLinks = async () => {
-    setMailError(null);
-    setMailBusy(true);
-    try {
-      const results = await Promise.all(
-        allRows.map(async ({ person }) => {
-          const res = await createResourceProfileLink(person.crew_id, line.id);
-          return { name: person.full_name, url: res?.url as string | undefined, error: res?.error as string | undefined };
-        })
-      );
-      const withLinks = results.filter((r) => r.url);
-      if (withLinks.length === 0) {
-        setMailError(results[0]?.error ?? "Could not generate any links.");
-        return;
-      }
-      const subject = `Candidate profiles — ${line.job_role_name}${matrixTitle ? ` — ${matrixTitle}` : ""}`;
-      const body = results.map((r) => (r.url ? `${r.name}: ${r.url}` : `${r.name}: (couldn't generate a link — ${r.error ?? "unknown error"})`)).join("\n");
-      // mailto: opens whatever mail app is configured on this machine
-      // (Outlook, Mail, Gmail-as-default, etc.) with the message drafted
-      // and ready to review/send — nothing is sent from the server.
-      window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    } finally {
-      setMailBusy(false);
-    }
-  };
+  const showActionsCol = showAssignCol || showUnassignCol;
 
   return (
     <div className={`${cardCls} overflow-hidden`} style={cardStyle}>
@@ -575,21 +545,7 @@ function StaffingLineCard({
             {otherRows.length > 0 && ` (${matchedRows.length} in region)`}
           </span>
         </div>
-        {showHeaderShare && (
-          <button
-            onClick={emailAllLinks}
-            disabled={mailBusy}
-            className="text-xs font-semibold rounded-lg px-3 py-1.5 border disabled:opacity-50"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)", background: "#fff" }}
-            title="Generates a profile link for everyone assigned to this rank and opens your mail app with them drafted into an email"
-          >
-            {mailBusy ? "Preparing…" : "✉ Email profile links"}
-          </button>
-        )}
       </div>
-      {mailError && (
-        <div className="px-3 py-1.5 text-xs" style={{ color: "var(--ch-fail)" }}>{mailError}</div>
-      )}
       {allRows.length === 0 ? (
         <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
           {view === "assigned"
@@ -688,7 +644,6 @@ function StaffingLineCard({
                   lineId={line.id}
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
-                  showShareCol={showShareCol}
                   requiresApproval={requiresApproval}
                   candidateOptions={candidateOptions}
                   onChanged={onChanged}
@@ -720,7 +675,6 @@ function StaffingLineCard({
                   lineId={line.id}
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
-                  showShareCol={showShareCol}
                   requiresApproval={requiresApproval}
                   candidateOptions={candidateOptions}
                   onChanged={onChanged}
@@ -753,7 +707,6 @@ function CandidateRow({
   lineId,
   showAssignCol,
   showUnassignCol,
-  showShareCol,
   requiresApproval,
   candidateOptions,
   onChanged,
@@ -770,7 +723,6 @@ function CandidateRow({
   lineId: string;
   showAssignCol: boolean;
   showUnassignCol: boolean;
-  showShareCol: boolean;
   requiresApproval: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
@@ -825,7 +777,6 @@ function CandidateRow({
           personName={person.full_name}
           showAssign={showAssignCol}
           showUnassign={showUnassignCol}
-          showShare={showShareCol}
           requiresApproval={requiresApproval}
           candidateOptions={candidateOptions}
           onChanged={onChanged}
@@ -844,7 +795,6 @@ function RowActions({
   personName,
   showAssign,
   showUnassign,
-  showShare,
   requiresApproval,
   candidateOptions,
   onChanged,
@@ -857,7 +807,6 @@ function RowActions({
   personName: string;
   showAssign: boolean;
   showUnassign: boolean;
-  showShare: boolean;
   requiresApproval: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
@@ -865,10 +814,8 @@ function RowActions({
   onUnassigned: (crewId: string) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const [busy, setBusy] = useState<"assign" | "unassign" | "share" | "request" | null>(null);
+  const [busy, setBusy] = useState<"assign" | "unassign" | "request" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [link, setLink] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   // Assign/unassign date inputs default to today but stay editable — AHM
   // calculates on-board day counts and payroll from these dates, so they
   // need to be caller-chosen, not silently stamped to "now". Planned end
@@ -955,30 +902,6 @@ function RowActions({
     onChanged?.();
   };
 
-  const doShare = async () => {
-    setError(null);
-    setCopied(false);
-    setBusy("share");
-    const res = await createResourceProfileLink(crewId, lineId);
-    setBusy(null);
-    if (res?.error) {
-      setError(res.error);
-      return;
-    }
-    if (res?.url) setLink(res.url);
-  };
-
-  const copyLink = async () => {
-    if (!link) return;
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-    } catch {
-      // Clipboard permission blocked — the link is already shown in the
-      // read-only field below for the user to select and copy manually.
-    }
-  };
-
   const showRequestFlow = requiresApproval && (showAssign || showUnassign);
 
   return (
@@ -1057,16 +980,6 @@ function RowActions({
             )}
           </>
         )}
-        {showShare && (
-          <button
-            onClick={doShare}
-            disabled={busy !== null}
-            className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
-          >
-            {busy === "share" ? "Generating…" : link ? "New link" : "Share link"}
-          </button>
-        )}
       </div>
       {requestOpen && (
         <div className="mt-2 p-2.5 rounded-lg border space-y-1.5" style={{ borderColor: "var(--ch-line)", background: "var(--ch-paper)", width: "15rem" }}>
@@ -1141,24 +1054,6 @@ function RowActions({
         </div>
       )}
       {error && <div className="text-[10px] mt-1" style={{ color: "var(--ch-fail)" }}>{error}</div>}
-      {link && (
-        <div className="mt-1 flex items-center gap-1">
-          <input
-            readOnly
-            value={link}
-            onFocus={(e) => e.currentTarget.select()}
-            className="text-[10px] border rounded px-1 py-0.5 w-44"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
-          />
-          <button
-            onClick={copyLink}
-            className="text-[10px] font-semibold rounded px-1.5 py-0.5 border shrink-0"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      )}
     </td>
   );
 }
