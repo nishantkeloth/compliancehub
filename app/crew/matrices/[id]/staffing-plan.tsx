@@ -539,6 +539,12 @@ function StaffingLineCard({
               <tr>
                 <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Name</th>
                 <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Nationality</th>
+                {view === "assigned" && (
+                  <>
+                    <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>Start Date</th>
+                    <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Roll Off Date</th>
+                  </>
+                )}
                 {lineGroups.map((g, i) => (
                   <th
                     key={`${g.category ?? "general"}-${i}`}
@@ -623,7 +629,7 @@ function StaffingLineCard({
               {otherRows.length > 0 && (
                 <tr>
                   <td
-                    colSpan={2 + lineDisplayColumns.length + (showActionsCol ? 1 : 0)}
+                    colSpan={2 + (view === "assigned" ? 2 : 0) + lineDisplayColumns.length + (showActionsCol ? 1 : 0)}
                     className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide border-t"
                     style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}
                   >
@@ -714,15 +720,18 @@ function CandidateRow({
         {view === "available" && person.availability_date && (
           <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
         )}
-        {view === "assigned" && (
-          <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>
-            {person.assignment_start_date ? formatDate(person.assignment_start_date) : "—"}
-            {" → "}
-            {person.assignment_planned_end_date ? formatDate(person.assignment_planned_end_date) : "ongoing"}
-          </div>
-        )}
       </td>
       <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
+      {view === "assigned" && (
+        <>
+          <td className="px-3 py-2 whitespace-nowrap border-l" style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}>
+            {person.assignment_start_date ? formatDate(person.assignment_start_date) : "—"}
+          </td>
+          <td className="px-3 py-2 whitespace-nowrap" style={{ color: person.assignment_planned_end_date ? "var(--ch-ink)" : "var(--ch-sub)" }}>
+            {person.assignment_planned_end_date ? formatDate(person.assignment_planned_end_date) : "Not set"}
+          </td>
+        </>
+      )}
       {lineDisplayColumns.map((dc) => (
         <DocCell
           key={dc.key}
