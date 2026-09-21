@@ -24,7 +24,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { listRosterChangeRequests, decideRosterChangeRequest, REASON_CODES } from "./roster-change-actions";
 import { getSharingHistory } from "./share-actions";
 
-type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
+export type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
 
 type Node = {
   id: string;

@@ -22,7 +22,6 @@ import LinesEditor, { type Line, type Ref, type DocTypeRef } from "./lines-edito
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
-import RosterTimeline from "./roster-timeline";
 
 type Matrix = {
   id: string;
@@ -99,8 +98,8 @@ export default function MatrixDetail({
   // apart from the general `run`/startTransition above so its "Regenerating…"
   // state doesn't flicker on while an unrelated workflow action is pending.
   const [staffingPending, startStaffingTransition] = useTransition();
-  type TabKey = "overview" | "lines" | "staffing" | "history" | "versions";
-  const VALID_TABS: TabKey[] = ["overview", "lines", "staffing", "history", "versions"];
+  type TabKey = "overview" | "lines" | "staffing" | "versions";
+  const VALID_TABS: TabKey[] = ["overview", "lines", "staffing", "versions"];
   // Regenerate calls router.refresh(), which re-suspends this page while the
   // server component re-fetches — React remounts the client tree when that
   // resolves, which would silently reset a plain useState("overview") back
@@ -156,7 +155,6 @@ export default function MatrixDetail({
     { key: "overview", label: "Overview" },
     { key: "lines", label: `Lines (${lines.length})` },
     { key: "staffing", label: "Staffing Plan" },
-    { key: "history", label: "Approval History" },
     { key: "versions", label: `Versions (${versions.length})` },
   ];
 
@@ -414,14 +412,11 @@ export default function MatrixDetail({
             canManage={canManage}
             canAssignCrew={canAssignCrew}
             canShareMatrix={canShareMatrix}
+            canApproveInternal={canApproveInternal}
+            statusHistory={history}
+            matrixCreatedAt={matrix.created_at}
             onChanged={regenerateStaffingPlan}
           />
-        </div>
-      )}
-
-      {tab === "history" && (
-        <div className={`${cardCls} p-4`} style={cardStyle}>
-          <RosterTimeline crewMatrixId={matrix.id} history={history} matrixCreatedAt={matrix.created_at} canApproveInternal={canApproveInternal} />
         </div>
       )}
 

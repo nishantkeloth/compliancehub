@@ -76,6 +76,7 @@ import {
 } from "@/lib/staffing-plan-shared";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
+import RosterTimeline, { type HistoryRow } from "./roster-timeline";
 
 // Re-exported for existing callers (matrix-detail.tsx) that import these
 // types from this file — the actual definitions now live in
@@ -118,6 +119,9 @@ export default function StaffingPlanView({
   canManage = false,
   canAssignCrew = false,
   canShareMatrix = false,
+  canApproveInternal = false,
+  statusHistory,
+  matrixCreatedAt,
   onChanged,
 }: {
   crewMatrixId: string;
@@ -142,6 +146,15 @@ export default function StaffingPlanView({
   canManage?: boolean;
   canAssignCrew?: boolean;
   canShareMatrix?: boolean;
+  // Phase 17 — the roster change/approval timeline, shown inline at the
+  // top of the Assigned view rather than as its own top-level tab (see
+  // matrix-detail.tsx, which used to route this to a separate "Approval
+  // History" tab — folded in here per the client's request to keep it
+  // where the assign/unassign actions themselves live). Optional so this
+  // component still renders fine without it (e.g. an older caller).
+  canApproveInternal?: boolean;
+  statusHistory?: HistoryRow[];
+  matrixCreatedAt?: string | null;
   onChanged?: () => void;
 }) {
   // Assign/Unassign trigger a router.refresh() (see MatrixDetail's
@@ -168,6 +181,7 @@ export default function StaffingPlanView({
   };
   const [exporting, setExporting] = useState(false);
   const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
 
   // Assign/Unassign already succeeded on the server by the time these are
   // called (see RowActions) — the slow part was never that single insert/
@@ -276,6 +290,33 @@ export default function StaffingPlanView({
 
   return (
     <div>
+      {/* Phase 17 — roster change/approval timeline, folded into the top
+          of the Assigned view (collapsed by default, one row tall) rather
+          than living on its own top-level tab — this is where the
+          assign/replace/unassign actions themselves happen, so the
+          client asked to see pending approvals and change history right
+          here instead of navigating away to find them. */}
+      {view === "assigned" && (
+        <div className={`${cardCls} mb-3`} style={cardStyle}>
+          <button
+            onClick={() => setTimelineOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-3 py-2 text-left"
+          >
+            <span className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>Roster Change History</span>
+            <span className="text-xs" style={{ color: "var(--ch-sub)" }}>{timelineOpen ? "Hide ▲" : "Show ▼"}</span>
+          </button>
+          {timelineOpen && (
+            <div className="px-3 pb-3 pt-1 border-t" style={{ borderColor: "var(--ch-line)" }}>
+              <RosterTimeline
+                crewMatrixId={crewMatrixId}
+                history={statusHistory ?? []}
+                matrixCreatedAt={matrixCreatedAt}
+                canApproveInternal={canApproveInternal}
+              />
+            </div>
+          )}
+        </div>
+      )}
       {/* Toolbar gets its own row, always left-aligned, regardless of how
           long the description below happens to be. The two used to share
           one `justify-between` flex row — fine while both fit on one line,
