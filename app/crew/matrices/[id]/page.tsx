@@ -343,6 +343,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         client_approval_reference: matrix.client_approval_reference,
         rejection_reason: matrix.rejection_reason,
         approved_at: matrix.approved_at,
+        created_at: matrix.created_at,
       }}
       lines={rows}
       history={history ?? []}

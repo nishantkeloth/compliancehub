@@ -22,6 +22,7 @@ import LinesEditor, { type Line, type Ref, type DocTypeRef } from "./lines-edito
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
+import RosterTimeline from "./roster-timeline";
 
 type Matrix = {
   id: string;
@@ -40,6 +41,7 @@ type Matrix = {
   client_approval_reference: string | null;
   rejection_reason: string | null;
   approved_at: string | null;
+  created_at?: string | null;
 };
 type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
 type VersionRow = { id: string; version_number: number; status: string };
@@ -418,15 +420,8 @@ export default function MatrixDetail({
       )}
 
       {tab === "history" && (
-        <div className="space-y-2">
-          {history.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No status changes recorded yet.</div>}
-          {history.map((h) => (
-            <div key={h.id} className={`${cardCls} p-3 flex items-start gap-2 flex-wrap text-sm`} style={cardStyle}>
-              <span style={{ color: "var(--ch-sub)" }}>{new Date(h.changed_at).toLocaleString()}</span>
-              <span>{(h.old_status ?? "—").replace(/_/g, " ")} → <strong>{h.new_status.replace(/_/g, " ")}</strong></span>
-              {h.comment && <span style={{ color: "var(--ch-sub)" }}>— {h.comment}</span>}
-            </div>
-          ))}
+        <div className={`${cardCls} p-4`} style={cardStyle}>
+          <RosterTimeline crewMatrixId={matrix.id} history={history} matrixCreatedAt={matrix.created_at} canApproveInternal={canApproveInternal} />
         </div>
       )}
 

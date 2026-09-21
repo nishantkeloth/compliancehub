@@ -53,6 +53,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
 import { assignCandidateToMatrix, unassignCandidateFromMatrix, createResourceProfileLink } from "./staffing-actions";
+import { requestRosterChange, REASON_CODES } from "./roster-change-actions";
 import {
   cellInfoPart,
   formatCategoryLabel,
@@ -235,6 +236,18 @@ export default function StaffingPlanView({
 
   const activeCrew = view === "assigned" ? localCrew : localCandidateCrew;
 
+  // Phase 17 — once a matrix is Active (meaning it's a live, client-facing
+  // roster rather than something still being composed), assign/replace/
+  // unassign stop being instant writes and become roster change requests
+  // that need internal sign-off first. See roster-change-actions.ts for
+  // why: the whole point of the request+approval trail is to build the
+  // expanding timeline on the History tab, and that only makes sense once
+  // there's an activated matrix to hang it off. Draft/pending/approved
+  // (not-yet-active) matrices keep today's direct-write behavior
+  // unchanged — they haven't gone live yet, so there's nothing for an
+  // approval step to protect.
+  const requiresApproval = matrixStatus === "active";
+
   const exportExcel = async () => {
     setExporting(true);
     try {
@@ -364,6 +377,14 @@ export default function StaffingPlanView({
           matchedRows = sortRows(matchedRows);
           otherRows = sortRows(otherRows);
 
+          // For the Assigned view's "Replace" picker — who else already
+          // matches this rank and is free, regardless of which view tab
+          // happens to be open right now.
+          const candidateOptions = localCandidateCrew
+            .filter((c) => c.job_role_id === line.job_role_id)
+            .map((c) => ({ crew_id: c.crew_id, full_name: c.full_name }))
+            .sort((a, b) => a.full_name.localeCompare(b.full_name));
+
           return (
             <StaffingLineCard
               key={line.id}
@@ -381,6 +402,8 @@ export default function StaffingPlanView({
               matrixTitle={matrixTitle}
               canManage={canManage}
               canAssignCrew={canAssignCrew}
+              requiresApproval={requiresApproval}
+              candidateOptions={candidateOptions}
               onChanged={onChanged}
               onAssigned={moveToAssigned}
               onUnassigned={moveToAvailable}
@@ -426,6 +449,8 @@ function StaffingLineCard({
   matrixTitle,
   canManage,
   canAssignCrew,
+  requiresApproval,
+  candidateOptions,
   onChanged,
   onAssigned,
   onUnassigned,
@@ -452,6 +477,8 @@ function StaffingLineCard({
   matrixTitle?: string;
   canManage: boolean;
   canAssignCrew: boolean;
+  requiresApproval: boolean;
+  candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
@@ -621,6 +648,8 @@ function StaffingLineCard({
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
                   showShareCol={showShareCol}
+                  requiresApproval={requiresApproval}
+                  candidateOptions={candidateOptions}
                   onChanged={onChanged}
                   onAssigned={onAssigned}
                   onUnassigned={onUnassigned}
@@ -651,6 +680,8 @@ function StaffingLineCard({
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
                   showShareCol={showShareCol}
+                  requiresApproval={requiresApproval}
+                  candidateOptions={candidateOptions}
                   onChanged={onChanged}
                   onAssigned={onAssigned}
                   onUnassigned={onUnassigned}
@@ -682,6 +713,8 @@ function CandidateRow({
   showAssignCol,
   showUnassignCol,
   showShareCol,
+  requiresApproval,
+  candidateOptions,
   onChanged,
   onAssigned,
   onUnassigned,
@@ -697,6 +730,8 @@ function CandidateRow({
   showAssignCol: boolean;
   showUnassignCol: boolean;
   showShareCol: boolean;
+  requiresApproval: boolean;
+  candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
@@ -750,6 +785,8 @@ function CandidateRow({
           showAssign={showAssignCol}
           showUnassign={showUnassignCol}
           showShare={showShareCol}
+          requiresApproval={requiresApproval}
+          candidateOptions={candidateOptions}
           onChanged={onChanged}
           onAssigned={onAssigned}
           onUnassigned={onUnassigned}
@@ -767,6 +804,8 @@ function RowActions({
   showAssign,
   showUnassign,
   showShare,
+  requiresApproval,
+  candidateOptions,
   onChanged,
   onAssigned,
   onUnassigned,
@@ -778,12 +817,14 @@ function RowActions({
   showAssign: boolean;
   showUnassign: boolean;
   showShare: boolean;
+  requiresApproval: boolean;
+  candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const [busy, setBusy] = useState<"assign" | "unassign" | "share" | null>(null);
+  const [busy, setBusy] = useState<"assign" | "unassign" | "share" | "request" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -795,6 +836,22 @@ function RowActions({
   const [assignDate, setAssignDate] = useState(today);
   const [plannedEndDate, setPlannedEndDate] = useState("");
   const [unassignDate, setUnassignDate] = useState(today);
+
+  // Phase 17 — once the matrix is Active, the instant assign/unassign
+  // forms above are replaced by this request form: pick what kind of
+  // change (Replace only makes sense from the Assigned side, where
+  // there's someone to replace), a mandatory reason, optional notes, and
+  // an effective date. Submitting raises a roster_change_request and
+  // stops there — nothing on screen moves until an approver with
+  // crew.matrix.approve_internal confirms it (see the History tab's
+  // timeline, or roster-change-actions.ts).
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requestKind, setRequestKind] = useState<"replace" | "unassign_only">("replace");
+  const [incomingCrewId, setIncomingCrewId] = useState("");
+  const [reasonCode, setReasonCode] = useState("");
+  const [reasonNotes, setReasonNotes] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(today);
+  const [requestSent, setRequestSent] = useState(false);
 
   const doAssign = async () => {
     setError(null);
@@ -826,6 +883,37 @@ function RowActions({
     onChanged?.();
   };
 
+  const doRequestChange = async () => {
+    if (!reasonCode) {
+      setError("Please choose a reason.");
+      return;
+    }
+    if (requestKind === "replace" && !incomingCrewId) {
+      setError("Pick who's replacing them, or switch to “Unassign only”.");
+      return;
+    }
+    setError(null);
+    setBusy("request");
+    const res = await requestRosterChange({
+      crewMatrixId,
+      crewMatrixLineId: lineId,
+      changeType: showAssign ? "assign" : requestKind === "replace" ? "replace" : "unassign",
+      outgoingCrewId: showAssign ? undefined : crewId,
+      incomingCrewId: showAssign ? crewId : requestKind === "replace" ? incomingCrewId : undefined,
+      effectiveDate,
+      reasonCode,
+      reasonNotes: reasonNotes || undefined,
+    });
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    setRequestSent(true);
+    setRequestOpen(false);
+    onChanged?.();
+  };
+
   const doShare = async () => {
     setError(null);
     setCopied(false);
@@ -850,60 +938,82 @@ function RowActions({
     }
   };
 
+  const showRequestFlow = requiresApproval && (showAssign || showUnassign);
+
   return (
     <td className="px-3 py-2 border-l" style={{ borderColor: "var(--ch-line)" }}>
       <div className="flex items-center gap-1.5 whitespace-nowrap">
-        {showAssign && (
+        {showRequestFlow ? (
           <>
-            <input
-              type="date"
-              value={assignDate}
-              onChange={(e) => setAssignDate(e.target.value)}
-              disabled={busy !== null}
-              title="Start date"
-              className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
-            />
-            <input
-              type="date"
-              value={plannedEndDate}
-              onChange={(e) => setPlannedEndDate(e.target.value)}
-              min={assignDate}
-              disabled={busy !== null}
-              title="Planned end date (optional)"
-              placeholder="End date"
-              className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
-            />
-            <button
-              onClick={doAssign}
-              disabled={busy !== null}
-              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
-            >
-              {busy === "assign" ? "Assigning…" : "Assign"}
-            </button>
+            {requestSent ? (
+              <span className="text-[11px] font-semibold rounded px-2 py-1" style={{ background: "#fff7ed", color: "#b45309" }}>
+                Requested — pending approval
+              </span>
+            ) : (
+              <button
+                onClick={() => setRequestOpen((o) => !o)}
+                className="text-[11px] font-semibold rounded px-2 py-1 border"
+                style={{ borderColor: "var(--ch-line)", color: showAssign ? "var(--ch-navy)" : "#9d174d" }}
+              >
+                {showAssign ? "Request Assign" : "Request Change"}
+              </button>
+            )}
           </>
-        )}
-        {showUnassign && (
+        ) : (
           <>
-            <input
-              type="date"
-              value={unassignDate}
-              onChange={(e) => setUnassignDate(e.target.value)}
-              disabled={busy !== null}
-              title="Unassign date"
-              className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
-            />
-            <button
-              onClick={doUnassign}
-              disabled={busy !== null}
-              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
-            >
-              {busy === "unassign" ? "Unassigning…" : "Unassign"}
-            </button>
+            {showAssign && (
+              <>
+                <input
+                  type="date"
+                  value={assignDate}
+                  onChange={(e) => setAssignDate(e.target.value)}
+                  disabled={busy !== null}
+                  title="Start date"
+                  className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+                />
+                <input
+                  type="date"
+                  value={plannedEndDate}
+                  onChange={(e) => setPlannedEndDate(e.target.value)}
+                  min={assignDate}
+                  disabled={busy !== null}
+                  title="Planned end date (optional)"
+                  placeholder="End date"
+                  className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+                />
+                <button
+                  onClick={doAssign}
+                  disabled={busy !== null}
+                  className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+                >
+                  {busy === "assign" ? "Assigning…" : "Assign"}
+                </button>
+              </>
+            )}
+            {showUnassign && (
+              <>
+                <input
+                  type="date"
+                  value={unassignDate}
+                  onChange={(e) => setUnassignDate(e.target.value)}
+                  disabled={busy !== null}
+                  title="Unassign date"
+                  className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+                />
+                <button
+                  onClick={doUnassign}
+                  disabled={busy !== null}
+                  className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
+                >
+                  {busy === "unassign" ? "Unassigning…" : "Unassign"}
+                </button>
+              </>
+            )}
           </>
         )}
         {showShare && (
@@ -917,6 +1027,78 @@ function RowActions({
           </button>
         )}
       </div>
+      {requestOpen && (
+        <div className="mt-2 p-2.5 rounded-lg border space-y-1.5" style={{ borderColor: "var(--ch-line)", background: "var(--ch-paper)", width: "15rem" }}>
+          {showUnassign && (
+            <div className="flex items-center gap-3 text-[11px]" style={{ color: "var(--ch-ink)" }}>
+              <label className="flex items-center gap-1">
+                <input type="radio" checked={requestKind === "replace"} onChange={() => setRequestKind("replace")} /> Replace
+              </label>
+              <label className="flex items-center gap-1">
+                <input type="radio" checked={requestKind === "unassign_only"} onChange={() => setRequestKind("unassign_only")} /> Unassign only
+              </label>
+            </div>
+          )}
+          {showUnassign && requestKind === "replace" && (
+            <select
+              value={incomingCrewId}
+              onChange={(e) => setIncomingCrewId(e.target.value)}
+              className="text-[11px] rounded px-1.5 py-1 border w-full"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+            >
+              <option value="">Replacing with…</option>
+              {candidateOptions.map((c) => (
+                <option key={c.crew_id} value={c.crew_id}>{c.full_name}</option>
+              ))}
+            </select>
+          )}
+          <select
+            value={reasonCode}
+            onChange={(e) => setReasonCode(e.target.value)}
+            className="text-[11px] rounded px-1.5 py-1 border w-full"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+          >
+            <option value="">Reason…</option>
+            {REASON_CODES.map((r) => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
+          </select>
+          <textarea
+            value={reasonNotes}
+            onChange={(e) => setReasonNotes(e.target.value)}
+            placeholder="Notes (optional)"
+            rows={2}
+            className="text-[11px] rounded px-1.5 py-1 border w-full resize-none"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+          />
+          <input
+            type="date"
+            value={effectiveDate}
+            onChange={(e) => setEffectiveDate(e.target.value)}
+            title="Effective date"
+            className="text-[11px] rounded px-1.5 py-1 border w-full"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+          />
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={doRequestChange}
+              disabled={busy !== null}
+              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+            >
+              {busy === "request" ? "Submitting…" : "Submit for approval"}
+            </button>
+            <button
+              onClick={() => setRequestOpen(false)}
+              disabled={busy !== null}
+              className="text-[11px] rounded px-2 py-1"
+              style={{ color: "var(--ch-sub)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {error && <div className="text-[10px] mt-1" style={{ color: "var(--ch-fail)" }}>{error}</div>}
       {link && (
         <div className="mt-1 flex items-center gap-1">
