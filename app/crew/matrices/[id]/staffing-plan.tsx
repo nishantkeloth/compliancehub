@@ -74,8 +74,6 @@ import {
   type StaffingCrew,
   type FieldDef,
 } from "@/lib/staffing-plan-shared";
-import SendMatrixWizard from "./send-matrix-wizard";
-import SharingHistoryPanel from "./sharing-history-panel";
 import RosterTimeline, { type HistoryRow } from "./roster-timeline";
 
 // Re-exported for existing callers (matrix-detail.tsx) that import these
@@ -118,7 +116,6 @@ export default function StaffingPlanView({
   customFieldDefinitions,
   canManage = false,
   canAssignCrew = false,
-  canShareMatrix = false,
   canApproveInternal = false,
   statusHistory,
   matrixCreatedAt,
@@ -145,7 +142,6 @@ export default function StaffingPlanView({
   // hidden, same as no permissions.
   canManage?: boolean;
   canAssignCrew?: boolean;
-  canShareMatrix?: boolean;
   // Phase 17 — the roster change/approval timeline, shown inline at the
   // top of the Assigned view rather than as its own top-level tab (see
   // matrix-detail.tsx, which used to route this to a separate "Approval
@@ -180,7 +176,6 @@ export default function StaffingPlanView({
     router.replace(`/crew/matrices/${crewMatrixId}${qs ? `?${qs}` : ""}`, { scroll: false });
   };
   const [exporting, setExporting] = useState(false);
-  const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
   const [timelineOpen, setTimelineOpen] = useState(false);
 
   // Assign/Unassign already succeeded on the server by the time these are
@@ -336,24 +331,6 @@ export default function StaffingPlanView({
         >
           {exporting ? "Exporting…" : "Export to Excel"}
         </button>
-        {canShareMatrix && (
-          <>
-            <button
-              onClick={() => setShareModal("send")}
-              className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
-              style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
-            >
-              Send Matrix to Client
-            </button>
-            <button
-              onClick={() => setShareModal("history")}
-              className="text-xs font-semibold rounded-lg px-3 py-1.5 border"
-              style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
-            >
-              Sharing History
-            </button>
-          </>
-        )}
         {candidateCrew !== undefined && (
           <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--ch-line)" }}>
             {(["assigned", "available"] as const).map((v) => (
@@ -454,23 +431,6 @@ export default function StaffingPlanView({
         })}
       </div>
 
-      {shareModal === "send" && (
-        <SendMatrixWizard
-          crewMatrixId={crewMatrixId}
-          matrixTitle={matrixTitle}
-          matrixNumber={matrixNumber}
-          matrixVersion={matrixVersion}
-          matrixStatus={matrixStatus}
-          lines={orderedLines}
-          assignedCrew={localCrew}
-          documentTypes={documentTypes}
-          customFieldDefinitions={customFieldDefinitions}
-          onClose={() => setShareModal(null)}
-        />
-      )}
-      {shareModal === "history" && (
-        <SharingHistoryPanel crewMatrixId={crewMatrixId} onClose={() => setShareModal(null)} />
-      )}
     </div>
   );
 }

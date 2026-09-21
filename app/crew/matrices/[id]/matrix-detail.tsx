@@ -411,7 +411,6 @@ export default function MatrixDetail({
             customFieldDefinitions={customFieldDefinitions}
             canManage={canManage}
             canAssignCrew={canAssignCrew}
-            canShareMatrix={canShareMatrix}
             canApproveInternal={canApproveInternal}
             statusHistory={history}
             matrixCreatedAt={matrix.created_at}
