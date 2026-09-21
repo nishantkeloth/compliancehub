@@ -80,8 +80,17 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     // Phase 9: AI review is offered unless the company has switched AI off.
     supabase.from("ai_settings").select("ai_enabled").eq("org_id", access.orgId).maybeSingle(),
     // Staffing Plan "Assigned" view: who's currently assigned to THIS
-    // matrix's site.
-    supabase.from("crew_assignments").select("crew_id").eq("org_id", access.orgId).eq("offshore_site_id", matrix.offshore_site_id).is("end_date", null),
+    // matrix's site. start_date/planned_end_date are carried through so the
+    // Assigned tab can show when each person started and, if one was
+    // entered at Assign time, when they're planned to come off — end_date
+    // itself is always null here by definition (that's what "assigned"
+    // means), so it isn't worth selecting.
+    supabase
+      .from("crew_assignments")
+      .select("crew_id, start_date, planned_end_date")
+      .eq("org_id", access.orgId)
+      .eq("offshore_site_id", matrix.offshore_site_id)
+      .is("end_date", null),
     // Staffing Plan "Available candidates" view: who holds no active
     // assignment ANYWHERE in the company (org-wide, not just this site) —
     // deliberately lighter than the Phase 3/4 candidate + readiness engine
@@ -103,6 +112,16 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   const lineJobRoleIds = Array.from(new Set((lines ?? []).map((l) => l.job_role_id as string)));
   const assignedCrewIds = Array.from(new Set((siteAssignments ?? []).map((a) => a.crew_id as string)));
   const assignedAnywhereCrewIds = new Set((allActiveAssignments ?? []).map((a) => a.crew_id as string));
+  // crew_id -> this site's active assignment dates, for the Assigned tab
+  // (see staffingCrew below). One active assignment per crew member is
+  // enforced by the DB, so a plain last-write-wins map is safe here.
+  const assignmentDatesByCrewId = new Map<string, { start_date: string | null; planned_end_date: string | null }>();
+  for (const a of siteAssignments ?? []) {
+    assignmentDatesByCrewId.set(a.crew_id as string, {
+      start_date: a.start_date as string | null,
+      planned_end_date: a.planned_end_date as string | null,
+    });
+  }
 
   const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }, { data: matchedCrew }, { data: roleMatchedCrew }] =
     await Promise.all([
@@ -195,11 +214,14 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       const entry = latestDocByCrewAndType.get(`${c.id}:${docTypeId}`);
       if (entry) documents[docTypeId] = entry;
     }
+    const assignmentDates = assignmentDatesByCrewId.get(c.id as string);
     return {
       crew_id: c.id as string,
       full_name: c.full_name as string,
       nationality: c.nationality as string | null,
       job_role_id: c.primary_job_role_id as string,
+      assignment_start_date: assignmentDates?.start_date ?? null,
+      assignment_planned_end_date: assignmentDates?.planned_end_date ?? null,
       documents,
     };
   });

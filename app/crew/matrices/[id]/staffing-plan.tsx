@@ -182,10 +182,13 @@ export default function StaffingPlanView({
   useEffect(() => setLocalCrew(crew), [crew]);
   useEffect(() => setLocalCandidateCrew(candidateCrew ?? []), [candidateCrew]);
 
-  const moveToAssigned = (crewId: string) => {
+  const moveToAssigned = (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => {
     setLocalCandidateCrew((prev) => {
       const person = prev.find((p) => p.crew_id === crewId);
-      if (person) setLocalCrew((c) => (c.some((x) => x.crew_id === crewId) ? c : [...c, person]));
+      if (person) {
+        const moved = dates ? { ...person, ...dates } : person;
+        setLocalCrew((c) => (c.some((x) => x.crew_id === crewId) ? c : [...c, moved]));
+      }
       return prev.filter((p) => p.crew_id !== crewId);
     });
   };
@@ -450,7 +453,7 @@ function StaffingLineCard({
   canManage: boolean;
   canAssignCrew: boolean;
   onChanged?: () => void;
-  onAssigned: (crewId: string) => void;
+  onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
   customFieldDefinitions: FieldDef[];
 }) {
@@ -689,7 +692,7 @@ function CandidateRow({
   showUnassignCol: boolean;
   showShareCol: boolean;
   onChanged?: () => void;
-  onAssigned: (crewId: string) => void;
+  onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
 }) {
   const badge = completenessColors(completeness);
@@ -710,6 +713,13 @@ function CandidateRow({
         </div>
         {view === "available" && person.availability_date && (
           <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
+        )}
+        {view === "assigned" && (
+          <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>
+            {person.assignment_start_date ? formatDate(person.assignment_start_date) : "—"}
+            {" → "}
+            {person.assignment_planned_end_date ? formatDate(person.assignment_planned_end_date) : "ongoing"}
+          </div>
         )}
       </td>
       <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--ch-ink)" }}>{person.nationality ?? "—"}</td>
@@ -760,7 +770,7 @@ function RowActions({
   showUnassign: boolean;
   showShare: boolean;
   onChanged?: () => void;
-  onAssigned: (crewId: string) => void;
+  onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -770,23 +780,26 @@ function RowActions({
   const [copied, setCopied] = useState(false);
   // Assign/unassign date inputs default to today but stay editable — AHM
   // calculates on-board day counts and payroll from these dates, so they
-  // need to be caller-chosen, not silently stamped to "now".
+  // need to be caller-chosen, not silently stamped to "now". Planned end
+  // date is optional (left blank by default) — it's shown on the Assigned
+  // tab once set, but nothing requires it.
   const [assignDate, setAssignDate] = useState(today);
+  const [plannedEndDate, setPlannedEndDate] = useState("");
   const [unassignDate, setUnassignDate] = useState(today);
 
   const doAssign = async () => {
     setError(null);
     setBusy("assign");
-    const res = await assignCandidateToMatrix(crewId, crewMatrixId, assignDate);
+    const res = await assignCandidateToMatrix(crewId, crewMatrixId, assignDate, plannedEndDate || undefined);
     setBusy(null);
     if (res?.error) {
       setError(res.error);
       return;
     }
     // The insert already succeeded server-side — move this row over
-    // immediately rather than waiting on the slower full-page refresh
-    // below to land before the UI reflects it.
-    onAssigned(crewId);
+    // immediately, with the dates just entered, rather than waiting on the
+    // slower full-page refresh below to land before the UI reflects it.
+    onAssigned(crewId, { assignment_start_date: assignDate, assignment_planned_end_date: plannedEndDate || null });
     onChanged?.();
   };
 
@@ -838,7 +851,18 @@ function RowActions({
               value={assignDate}
               onChange={(e) => setAssignDate(e.target.value)}
               disabled={busy !== null}
-              title="Assign date"
+              title="Start date"
+              className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+            />
+            <input
+              type="date"
+              value={plannedEndDate}
+              onChange={(e) => setPlannedEndDate(e.target.value)}
+              min={assignDate}
+              disabled={busy !== null}
+              title="Planned end date (optional)"
+              placeholder="End date"
               className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
               style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
             />

@@ -15,7 +15,11 @@
 //    succeeds under RLS for anyone who could already assign crew
 //    elsewhere in ComplianceHub. Accepts an optional assign date
 //    (defaults to today) — AHM calculates on-board day counts and payroll
-//    from this date, so it has to be caller-supplied, not hardcoded.
+//    from this date, so it has to be caller-supplied, not hardcoded. Also
+//    accepts an optional planned end date, entered by the assigner rather
+//    than computed from a rotation template, purely so the Assigned tab
+//    has something to show right away instead of an end date that stays
+//    empty until the person is actually unassigned/signed off.
 //  - unassignCandidateFromMatrix: the direct counterpart to
 //    assignCandidateToMatrix. Used to delete the crew_assignments row
 //    outright; now soft-closes it instead (sets end_date/planned_end_date
@@ -75,7 +79,7 @@ function resolveDate(input: string | undefined | null) {
   return new Date().toISOString().slice(0, 10);
 }
 
-export async function assignCandidateToMatrix(crewId: string, crewMatrixId: string, assignDate?: string) {
+export async function assignCandidateToMatrix(crewId: string, crewMatrixId: string, assignDate?: string, plannedEndDate?: string) {
   const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to assign crew.");
 
   const { data: matrix, error: matrixErr } = await supabase
@@ -102,6 +106,17 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
   }
 
   const date = resolveDate(assignDate);
+  // Planned end date — optional, entered by the assigner at Assign time (not
+  // computed from a rotation template) so the Assigned tab can show it
+  // right away instead of it staying null until someone actually
+  // unassigns/signs the person off. Purely informational at this point: it
+  // doesn't drive any reminder or auto-unassign, and the actual end_date is
+  // still only set when the assignment is closed (see
+  // unassignCandidateFromMatrix / the formal sign-off flow).
+  const plannedEnd = plannedEndDate && DATE_RE.test(plannedEndDate) ? plannedEndDate : null;
+  if (plannedEnd && plannedEnd < date) {
+    return { error: `Planned end date can't be before the assign date (${date}).` };
+  }
   const { error } = await supabase.from("crew_assignments").insert({
     org_id: access.orgId,
     crew_id: crewId,
@@ -109,6 +124,7 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
     start_date: date,
     planned_start_date: date,
     actual_start_date: date,
+    planned_end_date: plannedEnd,
     assignment_status: "active",
     notes: "Assigned directly from the crew matrix Staffing Plan.",
     created_by: userId,

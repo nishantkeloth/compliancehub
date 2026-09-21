@@ -44,6 +44,16 @@ export type StaffingCrew = {
   // Available Candidates by whether they're based where the matrix's site
   // actually is.
   current_location?: string | null;
+  // Assigned-view only — this crew member's active crew_assignments row for
+  // this matrix's site. assignment_start_date is always set once assigned;
+  // assignment_planned_end_date is optional, entered by whoever clicked
+  // Assign (see staffing-actions.ts's assignCandidateToMatrix) rather than
+  // computed from a rotation template, so it's null unless someone typed
+  // one in. Distinct from the real end_date, which stays null the whole
+  // time someone shows up in the Assigned tab — that's what "assigned"
+  // means here — and only gets set once they're actually unassigned.
+  assignment_start_date?: string | null;
+  assignment_planned_end_date?: string | null;
   documents: Record<string, { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }>;
 };
 
