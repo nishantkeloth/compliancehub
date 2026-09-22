@@ -20,7 +20,7 @@ export default async function CrewMatricesPage() {
     .order("matrix_number", { ascending: true })
     .order("version_number", { ascending: false });
 
-  const rows = (matrices ?? []).map((m) => {
+  const allRows = (matrices ?? []).map((m) => {
     const project = Array.isArray(m.projects) ? m.projects[0] : m.projects;
     const site = Array.isArray(m.offshore_sites) ? m.offshore_sites[0] : m.offshore_sites;
     return {
@@ -36,6 +36,24 @@ export default async function CrewMatricesPage() {
       project_name: (project as { project_name?: string } | null)?.project_name ?? "—",
       site_name: (site as { name?: string } | null)?.name ?? "—",
     };
+  });
+
+  // One card per matrix_number — different versions of the same matrix
+  // (draft/active/superseded/cancelled/...) used to each get their own
+  // card, which cluttered this list once a matrix had a few versions (see
+  // ADNOC Gas showing v1/v2/v3 separately). The query above already
+  // orders version_number descending within each matrix_number, so the
+  // first row seen per matrix_number is its latest version — every older
+  // version stays reachable from that card's own Versions tab, nothing is
+  // lost, just decluttered here. A matrix_number of null (shouldn't
+  // normally happen) can't identify a family of versions, so each such
+  // row keys on its own id instead of collapsing together.
+  const seen = new Set<string>();
+  const rows = allRows.filter((m) => {
+    const key = m.matrix_number ?? `__id_${m.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 
   return (
