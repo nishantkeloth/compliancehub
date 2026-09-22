@@ -255,21 +255,33 @@ export default function StaffingPlanView({
   //  - Once a matrix is Active (isLiveMatrix below) — whatever version —
   //    its Staffing Plan is read-only. No Assign/Replace/Unassign/Request
   //    Change at all. The only way to change crew is Create New Version.
-  //  - Assign/replace/unassign on a NEW version (version_number > 1,
-  //    meaning it was created via Create New Version) go through the
-  //    Request Change + approval flow instead of writing instantly — but
-  //    approving one doesn't touch the live roster yet either; it's staged
-  //    and only applied when that new version itself is Activated (see
-  //    applyApprovedRosterChanges in roster-change-actions.ts), so the
-  //    still-active previous version stays exactly as the client last saw
-  //    it until the new version has gone through its own full approval
-  //    pipeline and formally goes live.
+  //  - A NEW version (version_number > 1) is only editable while it's
+  //    still a draft (canEditRoster below) — Replace/Unassign there
+  //    records the change with a mandatory reason and stages it (see
+  //    requestRosterChange) instead of writing to crew_assignments
+  //    immediately, but it's a single step, not a separate request-then-
+  //    approve — make as many changes as needed, then use the existing
+  //    "Submit for approval" button at the top of the page (same Draft ->
+  //    Submitted -> Internal approval -> Client approval pipeline every
+  //    matrix already goes through) to send the whole version for review.
+  //    Staged changes stay visible on this Staffing Plan (via page.tsx's
+  //    overlay) all the way through that review, but only actually move
+  //    the real, shared crew_assignments rows once, at Activate (see
+  //    applyApprovedRosterChanges) — so the still-active previous version
+  //    stays exactly as the client last saw it until the new version
+  //    formally goes live. Once submitted (pending_internal_approval,
+  //    pending_client_approval, approved, ...) the new version is
+  //    read-only too, same as Lines editing already locks post-draft —
+  //    return it to draft to make further changes.
   //  - A matrix's very first version (version 1, never yet active) keeps
-  //    today's plain instant assign/unassign — nothing is live for a
-  //    client yet, so there's nothing for an approval step to protect.
+  //    today's plain instant assign/unassign in any non-active status —
+  //    nothing is live for a client yet, so there's nothing to protect.
   const isLiveMatrix = matrixStatus === "active";
+  const isDraft = matrixStatus === "draft";
   const isNewVersion = (matrixVersion ?? 1) > 1;
-  const requiresApproval = isNewVersion && !isLiveMatrix;
+  const isNewVersionUnderReview = isNewVersion && !isDraft && !isLiveMatrix;
+  const readOnlyStaffing = isLiveMatrix || isNewVersionUnderReview;
+  const canEditRoster = isNewVersion && isDraft;
 
   const exportExcel = async () => {
     setExporting(true);
@@ -299,9 +311,13 @@ export default function StaffingPlanView({
 
   return (
     <div>
-      {isLiveMatrix && (
+      {readOnlyStaffing && (
         <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
-          This matrix is live, so its Staffing Plan is read-only. To change crew, use <strong>Create new version</strong> above.
+          {isLiveMatrix ? (
+            <>This matrix is live, so its Staffing Plan is read-only. To change crew, use <strong>Create new version</strong> above.</>
+          ) : (
+            <>This version has been submitted for approval, so its Staffing Plan is read-only for now — crew changes already made are shown below and will take effect when this version goes live. Return it to draft to make more.</>
+          )}
         </div>
       )}
       {/* Phase 17 — roster change/approval timeline, folded into the top
@@ -439,8 +455,8 @@ export default function StaffingPlanView({
               matrixTitle={matrixTitle}
               canManage={canManage}
               canAssignCrew={canAssignCrew}
-              isLiveMatrix={isLiveMatrix}
-              requiresApproval={requiresApproval}
+              readOnlyStaffing={readOnlyStaffing}
+              canEditRoster={canEditRoster}
               candidateOptions={candidateOptions}
               onChanged={onChanged}
               onAssigned={moveToAssigned}
@@ -470,8 +486,8 @@ function StaffingLineCard({
   matrixTitle,
   canManage,
   canAssignCrew,
-  isLiveMatrix,
-  requiresApproval,
+  readOnlyStaffing,
+  canEditRoster,
   candidateOptions,
   onChanged,
   onAssigned,
@@ -499,8 +515,8 @@ function StaffingLineCard({
   matrixTitle?: string;
   canManage: boolean;
   canAssignCrew: boolean;
-  isLiveMatrix: boolean;
-  requiresApproval: boolean;
+  readOnlyStaffing: boolean;
+  canEditRoster: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
@@ -513,10 +529,11 @@ function StaffingLineCard({
   // Assigned. The per-row/per-rank "Share link" / "Email profile links"
   // actions (candidate_resource_profile_links) were removed at the
   // client's request — not needed at either the crew or the rank level.
-  // A live (Active) matrix is read-only regardless of view — see
-  // isLiveMatrix's comment in StaffingPlanView.
-  const showAssignCol = !isLiveMatrix && view === "available" && canAssignCrew;
-  const showUnassignCol = !isLiveMatrix && view === "assigned" && canAssignCrew;
+  // A live matrix, or a new version already submitted for review, is
+  // read-only regardless of view — see readOnlyStaffing's comment in
+  // StaffingPlanView.
+  const showAssignCol = !readOnlyStaffing && view === "available" && canAssignCrew;
+  const showUnassignCol = !readOnlyStaffing && view === "assigned" && canAssignCrew;
   const showActionsCol = showAssignCol || showUnassignCol;
 
   return (
@@ -628,7 +645,7 @@ function StaffingLineCard({
                   lineId={line.id}
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
-                  requiresApproval={requiresApproval}
+                  canEditRoster={canEditRoster}
                   candidateOptions={candidateOptions}
                   onChanged={onChanged}
                   onAssigned={onAssigned}
@@ -659,7 +676,7 @@ function StaffingLineCard({
                   lineId={line.id}
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
-                  requiresApproval={requiresApproval}
+                  canEditRoster={canEditRoster}
                   candidateOptions={candidateOptions}
                   onChanged={onChanged}
                   onAssigned={onAssigned}
@@ -691,7 +708,7 @@ function CandidateRow({
   lineId,
   showAssignCol,
   showUnassignCol,
-  requiresApproval,
+  canEditRoster,
   candidateOptions,
   onChanged,
   onAssigned,
@@ -707,7 +724,7 @@ function CandidateRow({
   lineId: string;
   showAssignCol: boolean;
   showUnassignCol: boolean;
-  requiresApproval: boolean;
+  canEditRoster: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
@@ -761,7 +778,7 @@ function CandidateRow({
           personName={person.full_name}
           showAssign={showAssignCol}
           showUnassign={showUnassignCol}
-          requiresApproval={requiresApproval}
+          canEditRoster={canEditRoster}
           candidateOptions={candidateOptions}
           onChanged={onChanged}
           onAssigned={onAssigned}
@@ -779,7 +796,7 @@ function RowActions({
   personName,
   showAssign,
   showUnassign,
-  requiresApproval,
+  canEditRoster,
   candidateOptions,
   onChanged,
   onAssigned,
@@ -791,7 +808,7 @@ function RowActions({
   personName: string;
   showAssign: boolean;
   showUnassign: boolean;
-  requiresApproval: boolean;
+  canEditRoster: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
@@ -809,21 +826,23 @@ function RowActions({
   const [plannedEndDate, setPlannedEndDate] = useState("");
   const [unassignDate, setUnassignDate] = useState(today);
 
-  // Phase 17 — once the matrix is Active, the instant assign/unassign
-  // forms above are replaced by this request form: pick what kind of
+  // Phase 17 (revised) — on a new version's draft, the instant assign/
+  // unassign forms above are replaced by this form: pick what kind of
   // change (Replace only makes sense from the Assigned side, where
   // there's someone to replace), a mandatory reason, optional notes, and
-  // an effective date. Submitting raises a roster_change_request and
-  // stops there — nothing on screen moves until an approver with
-  // crew.matrix.approve_internal confirms it (see the History tab's
-  // timeline, or roster-change-actions.ts).
+  // an effective date. Confirming records the change and applies it to
+  // this row right away (see doRosterChange below) — no separate approval
+  // step per change; make as many of these as needed, then use "Submit
+  // for approval" at the top of the page for the whole version. The
+  // change is only staged (not written to the real, shared
+  // crew_assignments) until this version is Activated — see
+  // roster-change-actions.ts.
   const [requestOpen, setRequestOpen] = useState(false);
   const [requestKind, setRequestKind] = useState<"replace" | "unassign_only">("replace");
   const [incomingCrewId, setIncomingCrewId] = useState("");
   const [reasonCode, setReasonCode] = useState("");
   const [reasonNotes, setReasonNotes] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(today);
-  const [requestSent, setRequestSent] = useState(false);
 
   const doAssign = async () => {
     setError(null);
@@ -855,7 +874,7 @@ function RowActions({
     onChanged?.();
   };
 
-  const doRequestChange = async () => {
+  const doRosterChange = async () => {
     if (!reasonCode) {
       setError("Please choose a reason.");
       return;
@@ -864,12 +883,13 @@ function RowActions({
       setError("Pick who's replacing them, or switch to “Unassign only”.");
       return;
     }
+    const changeType = showAssign ? "assign" : requestKind === "replace" ? "replace" : "unassign";
     setError(null);
     setBusy("request");
     const res = await requestRosterChange({
       crewMatrixId,
       crewMatrixLineId: lineId,
-      changeType: showAssign ? "assign" : requestKind === "replace" ? "replace" : "unassign",
+      changeType,
       outgoingCrewId: showAssign ? undefined : crewId,
       incomingCrewId: showAssign ? crewId : requestKind === "replace" ? incomingCrewId : undefined,
       effectiveDate,
@@ -881,32 +901,35 @@ function RowActions({
       setError(res.error);
       return;
     }
-    setRequestSent(true);
+    // Recorded server-side already — move the row(s) over immediately,
+    // same as the instant assign/unassign above, rather than waiting on
+    // the slower background refresh (onChanged) to land first.
+    if (changeType === "unassign" || changeType === "replace") onUnassigned(crewId);
+    if (changeType === "assign") onAssigned(crewId, { assignment_start_date: effectiveDate, assignment_planned_end_date: null });
+    if (changeType === "replace") {
+      const incoming = candidateOptions.find((c) => c.crew_id === incomingCrewId);
+      if (incoming) onAssigned(incoming.crew_id, { assignment_start_date: effectiveDate, assignment_planned_end_date: null });
+    }
     setRequestOpen(false);
+    setReasonCode("");
+    setReasonNotes("");
+    setIncomingCrewId("");
     onChanged?.();
   };
 
-  const showRequestFlow = requiresApproval && (showAssign || showUnassign);
+  const showRequestFlow = canEditRoster && (showAssign || showUnassign);
 
   return (
     <td className="px-3 py-2 border-l" style={{ borderColor: "var(--ch-line)" }}>
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         {showRequestFlow ? (
-          <>
-            {requestSent ? (
-              <span className="text-[11px] font-semibold rounded px-2 py-1" style={{ background: "#fff7ed", color: "#b45309" }}>
-                Requested — pending approval
-              </span>
-            ) : (
-              <button
-                onClick={() => setRequestOpen((o) => !o)}
-                className="text-[11px] font-semibold rounded px-2 py-1 border"
-                style={{ borderColor: "var(--ch-line)", color: showAssign ? "var(--ch-navy)" : "#9d174d" }}
-              >
-                {showAssign ? "Request Assign" : "Request Change"}
-              </button>
-            )}
-          </>
+          <button
+            onClick={() => setRequestOpen((o) => !o)}
+            className="text-[11px] font-semibold rounded px-2 py-1 border"
+            style={{ borderColor: "var(--ch-line)", color: showAssign ? "var(--ch-navy)" : "#9d174d" }}
+          >
+            {showAssign ? "Assign" : "Replace"}
+          </button>
         ) : (
           <>
             {showAssign && (
@@ -967,6 +990,9 @@ function RowActions({
       </div>
       {requestOpen && (
         <div className="mt-2 p-2.5 rounded-lg border space-y-1.5" style={{ borderColor: "var(--ch-line)", background: "var(--ch-paper)", width: "15rem" }}>
+          <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>
+            Recorded on this version now. Use <strong>Submit for approval</strong> at the top once all your changes are done.
+          </div>
           {showUnassign && (
             <div className="flex items-center gap-3 text-[11px]" style={{ color: "var(--ch-ink)" }}>
               <label className="flex items-center gap-1">
@@ -1019,12 +1045,12 @@ function RowActions({
           />
           <div className="flex items-center gap-1.5">
             <button
-              onClick={doRequestChange}
+              onClick={doRosterChange}
               disabled={busy !== null}
               className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
               style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
             >
-              {busy === "request" ? "Submitting…" : "Submit for approval"}
+              {busy === "request" ? "Saving…" : requestKind === "unassign_only" || showAssign ? "Confirm" : "Replace"}
             </button>
             <button
               onClick={() => setRequestOpen(false)}

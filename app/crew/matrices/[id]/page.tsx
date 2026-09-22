@@ -51,6 +51,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     { data: siteAssignments },
     { data: allActiveAssignments },
     { data: fieldDefs },
+    { data: stagedChanges },
   ] = await Promise.all([
     supabase
       .from("crew_matrix_lines")
@@ -99,6 +100,22 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     // for this rank" while planning, before a Mobilization Request exists.
     supabase.from("crew_assignments").select("crew_id").eq("org_id", access.orgId).is("end_date", null),
     supabase.from("document_custom_field_definitions").select("id, label, field_key, applies_to_document_type_id").eq("org_id", access.orgId).eq("is_active", true),
+    // Phase 17 (revised) — a new-version draft (or one already submitted
+    // for its own internal/client review, but not yet Activated) can
+    // carry staged roster changes recorded via requestRosterChange
+    // (roster-change-actions.ts) — status "approved", not yet applied to
+    // the real crew_assignments rows. Fetched unconditionally (cheap, and
+    // there's nothing to fetch for a first-ever draft or an active
+    // matrix); the overlay below only uses it when it's actually
+    // meaningful. See "staged, not applied on request" in
+    // roster-change-actions.ts for why this preview exists at all.
+    supabase
+      .from("roster_change_requests")
+      .select("change_type, outgoing_crew_id, incoming_crew_id, effective_date")
+      .eq("crew_matrix_id", id)
+      .eq("org_id", access.orgId)
+      .eq("status", "approved")
+      .is("applied_assignment_id", null),
   ]);
 
   const aiVisible = aiSettings?.ai_enabled ?? true;
@@ -110,8 +127,41 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   // crew_matrix_line_documents below is known), not every org document
   // type, to avoid an expensive fetch of irrelevant records.
   const lineJobRoleIds = Array.from(new Set((lines ?? []).map((l) => l.job_role_id as string)));
-  const assignedCrewIds = Array.from(new Set((siteAssignments ?? []).map((a) => a.crew_id as string)));
+
+  // Phase 17 (revised) — overlay this matrix's own staged roster changes
+  // (fetched above) onto the site-wide assignment lists BEFORE anything
+  // below queries crew_profiles/candidates from them, so a new-version
+  // draft's Staffing Plan already shows what it would look like if
+  // activated as-is: outgoing crew drop off Assigned and reappear as
+  // Available (as far as this one page's preview goes — their real
+  // crew_assignments row is untouched), incoming crew show as Assigned.
+  // Only ever non-empty for a matrix that could actually have staged
+  // requests (see the query above); an active matrix's approved requests
+  // are always already applied (see applyApprovedRosterChanges), so this
+  // is a no-op there in practice, same as for a matrix's first version.
+  const stagedOutgoingIds = new Set<string>();
+  const stagedIncoming = new Map<string, string>(); // crew_id -> effective_date
+  for (const r of stagedChanges ?? []) {
+    if ((r.change_type === "unassign" || r.change_type === "replace") && r.outgoing_crew_id) {
+      stagedOutgoingIds.add(r.outgoing_crew_id as string);
+    }
+    if ((r.change_type === "assign" || r.change_type === "replace") && r.incoming_crew_id) {
+      stagedIncoming.set(r.incoming_crew_id as string, r.effective_date as string);
+    }
+  }
+
+  const assignedCrewIdSet = new Set((siteAssignments ?? []).map((a) => a.crew_id as string));
   const assignedAnywhereCrewIds = new Set((allActiveAssignments ?? []).map((a) => a.crew_id as string));
+  for (const crewId of stagedOutgoingIds) {
+    assignedCrewIdSet.delete(crewId);
+    assignedAnywhereCrewIds.delete(crewId); // frees them up in this draft's Available preview too
+  }
+  for (const crewId of stagedIncoming.keys()) {
+    assignedCrewIdSet.add(crewId);
+    assignedAnywhereCrewIds.add(crewId); // don't also list them as available
+  }
+  const assignedCrewIds = Array.from(assignedCrewIdSet);
+
   // crew_id -> this site's active assignment dates, for the Assigned tab
   // (see staffingCrew below). One active assignment per crew member is
   // enforced by the DB, so a plain last-write-wins map is safe here.
@@ -121,6 +171,9 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       start_date: a.start_date as string | null,
       planned_end_date: a.planned_end_date as string | null,
     });
+  }
+  for (const [crewId, effectiveDate] of stagedIncoming) {
+    assignmentDatesByCrewId.set(crewId, { start_date: effectiveDate, planned_end_date: null });
   }
 
   const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }, { data: matchedCrew }, { data: roleMatchedCrew }] =

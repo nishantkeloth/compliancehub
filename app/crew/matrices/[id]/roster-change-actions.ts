@@ -1,71 +1,64 @@
 "use server";
 
-// Phase 17 — Roster Change Requests: the approval step + audit trail
-// behind every assign/replace/unassign on a crew matrix that's already
-// Active and has been sent to the client at least once. See
+// Phase 17 (revised) — Roster Change Requests: the mandatory-reason audit
+// trail behind every assign/replace/unassign made while composing a NEW
+// VERSION of a crew matrix. See
 // supabase/migrations/0021_phase17_roster_change_requests.sql for the
-// full design rationale (why this is a new table rather than reusing
-// Phase 6's crew_change_requests, why the permissions are what they
-// are, etc.) — this file is the mechanics.
+// table design — this file is the mechanics.
 //
-//  - requestRosterChange: raises a pending_approval row and emails
-//    everyone in the org who holds crew.matrix.approve_internal, with a
-//    deep link back into the matrix (an ordinary authenticated
-//    ComplianceHub link, not a public token page — approving a live
-//    offshore roster is higher-stakes than the client-facing share
-//    links elsewhere in this module, so it reuses the app's own
-//    sign-in + RBAC instead of inventing an unauthenticated write
-//    surface for it). Gated on crew.manage, same as a direct
-//    assign/unassign today. Only allowed on a matrix that's a NEW
-//    VERSION (status draft, version_number > 1, i.e. created via Create
-//    New Version) and not yet Active — see the revised design note
-//    below.
-//  - decideRosterChangeRequest: approve or reject a pending request.
-//    Approving no longer writes to crew_assignments at all — it just
-//    records the decision. See "staged, not applied" below for why.
-//    Gated on crew.matrix.approve_internal, the same permission that
-//    already decides internal approval on the matrix itself.
+//  - requestRosterChange: records the change and stages it — see "staged,
+//    not applied" below. One call, no separate approval step: the client
+//    asked for exactly this ("you just replace this in the new version,
+//    and once all the changes are done you click Submit for approval from
+//    the top again") — the review that matters is the existing whole-
+//    matrix Draft -> Submitted -> Internal approval -> Client approval
+//    pipeline (submitForApproval etc. in app/crew/matrices/actions.ts),
+//    not a second approval on every individual crew swap. Only allowed
+//    while the matrix is still a NEW VERSION'S draft (status draft,
+//    version_number > 1, i.e. created via Create New Version) — once it's
+//    submitted, no further crew changes until it's returned to draft or
+//    goes live. Gated on crew.manage, same as a direct assign/unassign.
 //  - applyApprovedRosterChanges: called once, from activateCrewMatrix
 //    (app/crew/matrices/actions.ts), at the moment a new-version matrix
-//    actually goes live. Applies every approved-but-not-yet-applied
-//    request for that matrix to the real crew_assignments rows, in the
-//    same insert/soft-close shapes assignCandidateToMatrix /
+//    actually goes live. Applies every staged (status approved, not yet
+//    applied) request for that matrix to the real crew_assignments rows,
+//    in the same insert/soft-close shapes assignCandidateToMatrix /
 //    unassignCandidateFromMatrix already use, stamping whichever row(s)
 //    it touches with roster_change_request_id so the timeline can trace
 //    the change back to its request.
-//  - cancelRosterChangeRequest: lets the original requester withdraw
-//    their own still-pending request.
+//  - decideRosterChangeRequest: kept for a still-pending_approval row
+//    (none are created by the current flow, but this stays as the one
+//    place that transition is ever handled) — approve/reject, gated on
+//    crew.matrix.approve_internal.
+//  - cancelRosterChangeRequest: lets the original requester withdraw a
+//    still-undecided/unapplied change — e.g. to undo a staged replace
+//    made in error while still composing the new version.
 //  - listRosterChangeRequests: every request for a matrix (any status),
-//    newest first, with crew names resolved — feeds both the pending-
-//    approvals panel and the expanding timeline.
+//    newest first, with crew names resolved — feeds the expanding
+//    timeline and (via page.tsx) the draft's own Staffing Plan preview.
 //
-// Revised design — staged, not applied on approval: crew_assignments rows
-// aren't scoped to a specific crew_matrix or version at all (crew_id +
-// offshore_site_id only — see assignCandidateToMatrix in
-// staffing-actions.ts). That means every version of a site's matrix shares
-// the exact same live roster. Originally (first Phase 17 build) Request
-// Change lived on the Active matrix and applied immediately on approval.
-// That's wrong: editing "the active matrix" was really always editing the
-// one shared, client-facing roster with no review step actually
-// protecting it, and a still-Active OLD version's Assigned tab would
-// change the instant a request was approved on some other matrix touching
-// the same site. So the flow moved: Request Change now only exists on a
-// NEW VERSION (a draft created via Create New Version, before it's been
-// activated) — see staffing-plan.tsx's isNewVersion/requiresApproval — and
-// approving one stages the change instead of applying it. The staged
-// changes are only applied, all together, when that new version is
-// Activated (the same moment it supersedes the previously-active
-// version), so the live roster the client sees never moves until the new
-// version has gone through its own full approval pipeline. The currently
+// Staged, not applied on request: crew_assignments rows aren't scoped to
+// a specific crew_matrix or version at all (crew_id + offshore_site_id
+// only — see assignCandidateToMatrix in staffing-actions.ts). That means
+// every version of a site's matrix shares the exact same live roster, so
+// writing to crew_assignments the moment someone clicks Replace on a
+// still-unsubmitted new-version draft would move the still-Active OLD
+// version's Assigned tab too — before the new version has been reviewed
+// at all. So requestRosterChange only ever records the change (status
+// "approved" — self-recorded, there's no separate decision step in this
+// flow) and never touches crew_assignments. app/crew/matrices/[id]/page.tsx
+// overlays every staged, unapplied request for a matrix onto its own
+// Staffing Plan preview (Assigned/Available), so the draft always shows
+// what it would look like if activated as-is, all the way through
+// internal/client review — but the real, shared crew_assignments rows
+// only move once, at Activate (applyApprovedRosterChanges), together with
+// whatever else that activation does (superseding the old version). The
 // Active matrix itself is read-only (no Request Change, no direct
-// assign/unassign) — see isLiveMatrix in staffing-plan.tsx.
+// assign/unassign at all) — see isLiveMatrix in staffing-plan.tsx.
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import { sendEmail, companyFromAddress } from "@/lib/email";
 import { REASON_CODES, type ChangeType } from "./roster-change-shared";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -82,38 +75,7 @@ async function requirePermission(permission: string, message: string) {
   return { supabase, access, userId: user.id, userEmail: user.email ?? null };
 }
 
-async function appOrigin() {
-  const hdrs = await headers();
-  const host = hdrs.get("host") ?? "localhost:3000";
-  const protocol = host.startsWith("localhost") ? "http" : "https";
-  return `${protocol}://${host}`;
-}
-
 const revalidateMatrix = (crewMatrixId: string) => revalidatePath(`/crew/matrices/${crewMatrixId}`);
-
-// Every profile in this org holding crew.matrix.approve_internal, with
-// their sign-in email resolved via the admin client — mirrors
-// getEscalationRecipients() in app/api/cron/send-reminders/route.ts
-// exactly (role_permissions -> profiles -> auth.admin.getUserById).
-async function getApprovalRecipients(admin: ReturnType<typeof createAdminClient>, orgId: string): Promise<{ id: string; email: string }[]> {
-  const { data: roleRows } = await admin
-    .from("roles")
-    .select("id, role_permissions!inner(permission_key)")
-    .eq("org_id", orgId)
-    .eq("role_permissions.permission_key", "crew.matrix.approve_internal");
-  const roleIds = (roleRows ?? []).map((r: any) => r.id);
-  if (roleIds.length === 0) return [];
-
-  const { data: profileRows } = await admin.from("profiles").select("id").eq("org_id", orgId).in("role_id", roleIds);
-
-  const recipients: { id: string; email: string }[] = [];
-  for (const p of profileRows ?? []) {
-    const { data: userResult } = await admin.auth.admin.getUserById((p as any).id);
-    const email = userResult?.user?.email;
-    if (email) recipients.push({ id: (p as any).id, email });
-  }
-  return recipients;
-}
 
 export async function requestRosterChange(input: {
   crewMatrixId: string;
@@ -125,7 +87,7 @@ export async function requestRosterChange(input: {
   reasonCode: string;
   reasonNotes?: string | null;
 }) {
-  const { supabase, access, userId, userEmail } = await requirePermission("crew.manage", "You don't have permission to request a roster change.");
+  const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to change crew on this matrix.");
 
   if (!DATE_RE.test(input.effectiveDate)) return { error: "Effective date is required." };
   if (!REASON_CODES.some((r) => r.value === input.reasonCode)) return { error: "Please choose a reason." };
@@ -134,18 +96,22 @@ export async function requestRosterChange(input: {
 
   const { data: matrix, error: matrixErr } = await supabase
     .from("crew_matrices")
-    .select("id, title, matrix_number, status, version_number, offshore_site_id, offshore_sites(name)")
+    .select("id, status, version_number")
     .eq("id", input.crewMatrixId)
     .eq("org_id", access.orgId)
     .single();
   if (matrixErr || !matrix) return { error: "Matrix not found." };
-  if (matrix.status === "active") {
-    return { error: "This matrix is live and read-only. Use Create New Version to change crew." };
+  if (matrix.status !== "draft") {
+    return { error: "Crew changes can only be made while this new version is still a draft — return it to draft first, or wait for it to go live." };
   }
   if ((matrix.version_number ?? 1) <= 1) {
     return { error: "Roster change requests are only for a new version of the matrix (Create New Version first)." };
   }
 
+  // Self-recorded: there's no separate approval step in this flow (see
+  // this file's top comment) — status goes straight to "approved" so
+  // applyApprovedRosterChanges picks it up at Activate, decided_by/at
+  // just note that it was recorded, not that anyone else signed off.
   const { data: request, error: insertErr } = await supabase
     .from("roster_change_requests")
     .insert({
@@ -159,39 +125,13 @@ export async function requestRosterChange(input: {
       reason_code: input.reasonCode,
       reason_notes: input.reasonNotes?.trim() || null,
       requested_by: userId,
+      status: "approved",
+      decided_by: userId,
+      decided_at: new Date().toISOString(),
     })
     .select("id")
     .single();
-  if (insertErr || !request) return { error: insertErr?.message ?? "Could not create the request." };
-
-  // Notify every internal approver — best-effort; a failed/unconfigured
-  // email must never block the request itself from having been raised.
-  try {
-    const admin = createAdminClient();
-    const recipients = await getApprovalRecipients(admin, access.orgId!);
-    if (recipients.length > 0) {
-      const { data: company } = await supabase.from("companies").select("name, notify_prefix").eq("id", access.orgId).single();
-      const companyDisplayName = company?.name ?? access.companyName ?? "ComplianceHub";
-      const from = companyFromAddress(companyDisplayName, company?.notify_prefix ?? null);
-      const origin = await appOrigin();
-      const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as { name?: string } | null;
-      const matrixLabel = `${matrix.matrix_number ?? matrix.title}${site?.name ? ` — ${site.name}` : ""}`;
-      const changeLabel = input.changeType === "assign" ? "New assignment" : input.changeType === "unassign" ? "Unassign" : "Crew replacement";
-      const reasonLabel = REASON_CODES.find((r) => r.value === input.reasonCode)?.label ?? input.reasonCode;
-      const url = `${origin}/crew/matrices/${input.crewMatrixId}`;
-      const subject = `Roster change awaiting your approval — ${matrixLabel}`;
-      const html = `
-        <p>A roster change on <strong>${matrixLabel}</strong> needs your approval before it takes effect.</p>
-        <p><strong>${changeLabel}</strong> — effective ${input.effectiveDate}<br/>Reason: ${reasonLabel}${input.reasonNotes ? `<br/>Notes: ${input.reasonNotes}` : ""}</p>
-        <p>Requested by ${access.fullName ?? userEmail ?? "a ComplianceHub user"}.</p>
-        <p><a href="${url}">Review and confirm in ComplianceHub</a></p>
-      `.trim();
-      const text = `A roster change on ${matrixLabel} needs your approval.\n\n${changeLabel} — effective ${input.effectiveDate}\nReason: ${reasonLabel}${input.reasonNotes ? `\nNotes: ${input.reasonNotes}` : ""}\n\nRequested by ${access.fullName ?? userEmail ?? "a ComplianceHub user"}.\n\nReview and confirm: ${url}`;
-      await Promise.all(recipients.map((r) => sendEmail({ from, to: r.email, subject, html, text, replyTo: userEmail ?? undefined })));
-    }
-  } catch {
-    // Notification is best-effort — the request itself already succeeded.
-  }
+  if (insertErr || !request) return { error: insertErr?.message ?? "Could not record the change." };
 
   revalidateMatrix(input.crewMatrixId);
   return { requestId: request.id as string };
@@ -202,13 +142,19 @@ export async function cancelRosterChangeRequest(requestId: string) {
 
   const { data: request, error: fetchErr } = await supabase
     .from("roster_change_requests")
-    .select("id, org_id, crew_matrix_id, status, requested_by")
+    .select("id, org_id, crew_matrix_id, status, requested_by, applied_assignment_id")
     .eq("id", requestId)
     .single();
   if (fetchErr || !request || request.org_id !== access.orgId) return { error: "Request not found." };
-  if (request.status !== "pending_approval") return { error: "Only a pending request can be withdrawn." };
+  // A request from the current flow is self-recorded straight to
+  // "approved" and staged (see requestRosterChange) — it can still be
+  // withdrawn right up until it's actually applied to crew_assignments
+  // (Activate). "pending_approval" is kept here too in case one is ever
+  // left in that state (decideRosterChangeRequest still exists for it).
+  const withdrawable = request.status === "pending_approval" || (request.status === "approved" && !request.applied_assignment_id);
+  if (!withdrawable) return { error: "This change can no longer be withdrawn." };
   if (request.requested_by !== userId && !can(access, "crew.matrix.approve_internal")) {
-    return { error: "You can only withdraw a request you raised yourself." };
+    return { error: "You can only withdraw a change you made yourself." };
   }
 
   const { error } = await supabase.from("roster_change_requests").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", requestId);

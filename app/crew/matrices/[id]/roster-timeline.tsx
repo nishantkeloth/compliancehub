@@ -109,7 +109,7 @@ function changeDetail(r: RosterChangeRequestRow) {
 
 function requestToNodes(r: RosterChangeRequestRow): Node[] {
   const tone = r.status === "approved" ? "done" : r.status === "rejected" || r.status === "cancelled" ? "fail" : "pending";
-  const approvedWord = r.applied_assignment_id ? "Approved — applied" : "Approved — will apply when this version goes live";
+  const approvedWord = r.applied_assignment_id ? "Applied" : "Recorded — will apply when this version goes live";
   const statusWord = r.status === "pending_approval" ? "Pending your review" : r.status === "approved" ? approvedWord : r.status === "rejected" ? "Rejected" : "Withdrawn";
   const nodes: Node[] = [
     {
@@ -123,7 +123,14 @@ function requestToNodes(r: RosterChangeRequestRow): Node[] {
       request: r,
     },
   ];
-  if (r.decided_at) {
+  // A separate "Change approval" gate node is only meaningful when someone
+  // OTHER than the requester actually decided it (decideRosterChangeRequest
+  // — kept for a pending_approval row, though the current flow never
+  // creates one). The current flow's requestRosterChange self-records
+  // straight to "approved" (requested_by === decided_by, same moment) —
+  // showing a second node for that would just duplicate the change node
+  // above.
+  if (r.decided_at && r.decided_by && r.decided_by !== r.requested_by) {
     nodes.push({
       id: `gate-${r.id}`,
       at: r.decided_at,
