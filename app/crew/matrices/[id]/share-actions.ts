@@ -530,16 +530,24 @@ async function appOrigin() {
 // Sharing History
 // ------------------------------------------------------------
 
-export async function getSharingHistory(crewMatrixId: string) {
+export async function getSharingHistory(crewMatrixId: string | string[]) {
   const { supabase, access } = await requireShare();
-  const { data: packages, error } = await supabase
+  let query = supabase
     .from("crew_matrix_share_packages")
     .select(
       "id, share_reference, status, matrix_version_snapshot, excel_attached, staff_count, document_count, created_at, revoked_at, revocation_reason, crew_matrix_share_recipients(id, recipient_name, recipient_email, delivery_status, view_count, first_opened_at, last_opened_at, revoked_at, token_expires_at)"
     )
-    .eq("org_id", access.orgId)
-    .eq("crew_matrix_id", crewMatrixId)
-    .order("created_at", { ascending: false });
+    .eq("org_id", access.orgId);
+  // Phase 17 (timeline continuity) — a single matrix "number" is really a
+  // family of crew_matrices rows, one per version, each with its own id.
+  // The expanding Roster Change History timeline (roster-timeline.tsx)
+  // wants every send across every version of that family in one ledger,
+  // not just the version currently being viewed — so callers building
+  // that timeline pass the whole family's ids as an array; anyone wanting
+  // just one version's own sends (e.g. sharing-history-panel.tsx) still
+  // passes a single id, unchanged.
+  query = Array.isArray(crewMatrixId) ? query.in("crew_matrix_id", crewMatrixId) : query.eq("crew_matrix_id", crewMatrixId);
+  const { data: packages, error } = await query.order("created_at", { ascending: false });
   if (error) return { error: error.message };
   return {
     packages: (packages ?? []).map((p) => ({

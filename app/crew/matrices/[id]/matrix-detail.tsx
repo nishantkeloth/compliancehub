@@ -43,7 +43,7 @@ type Matrix = {
   created_at?: string | null;
 };
 type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
-type VersionRow = { id: string; version_number: number; status: string };
+type VersionRow = { id: string; version_number: number; status: string; created_at: string };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
@@ -414,6 +414,7 @@ export default function MatrixDetail({
             canApproveInternal={canApproveInternal}
             statusHistory={history}
             matrixCreatedAt={matrix.created_at}
+            allVersions={versions}
             onChanged={regenerateStaffingPlan}
           />
         </div>

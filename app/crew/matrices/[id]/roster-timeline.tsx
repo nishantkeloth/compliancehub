@@ -25,7 +25,15 @@ import { listRosterChangeRequests, decideRosterChangeRequest } from "./roster-ch
 import { REASON_CODES } from "./roster-change-shared";
 import { getSharingHistory } from "./share-actions";
 
-export type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
+// crew_matrix_id is optional for backward compatibility with any caller
+// that doesn't select it — every current caller (page.tsx) does, since
+// it's what lets a merged, multi-version history row be labeled with
+// which version it happened on (see versionSuffix below).
+export type HistoryRow = { id: string; crew_matrix_id?: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
+
+// Phase 17 (timeline continuity) — one version in this matrix's family
+// (same matrix_number). Passed down from page.tsx's `versions` query.
+export type VersionMeta = { id: string; version_number: number; status: string; created_at: string };
 
 type Node = {
   id: string;
@@ -40,6 +48,7 @@ type Node = {
 
 type RosterChangeRequestRow = {
   id: string;
+  crew_matrix_id?: string;
   change_type: "assign" | "replace" | "unassign";
   outgoing_crew_id: string | null;
   incoming_crew_id: string | null;
@@ -77,7 +86,7 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-function statusHistoryToNode(h: HistoryRow): Node {
+function statusHistoryToNode(h: HistoryRow, versionLabel?: string): Node {
   const isGate = h.new_status === "pending_client_approval" || h.new_status === "approved";
   const isFail = h.new_status === "rejected" || h.new_status === "cancelled";
   return {
@@ -86,7 +95,7 @@ function statusHistoryToNode(h: HistoryRow): Node {
     kind: isGate ? "gate" : "circle",
     tone: isFail ? "fail" : "done",
     label: STATUS_LABELS[h.new_status] ?? h.new_status.replace(/_/g, " "),
-    sub: new Date(h.changed_at).toLocaleDateString(),
+    sub: `${new Date(h.changed_at).toLocaleDateString()}${versionLabel ? ` · ${versionLabel}` : ""}`,
     detail: h.comment ?? undefined,
   };
 }
@@ -107,7 +116,7 @@ function changeDetail(r: RosterChangeRequestRow) {
   return `Reason: ${reasonLabel}${r.reason_notes ? ` — ${r.reason_notes}` : ""} · ${swap} · Effective ${r.effective_date}`;
 }
 
-function requestToNodes(r: RosterChangeRequestRow): Node[] {
+function requestToNodes(r: RosterChangeRequestRow, versionLabel?: string): Node[] {
   const tone = r.status === "approved" ? "done" : r.status === "rejected" || r.status === "cancelled" ? "fail" : "pending";
   const approvedWord = r.applied_assignment_id ? "Applied" : "Recorded — will apply when this version goes live";
   const statusWord = r.status === "pending_approval" ? "Pending your review" : r.status === "approved" ? approvedWord : r.status === "rejected" ? "Rejected" : "Withdrawn";
@@ -118,7 +127,7 @@ function requestToNodes(r: RosterChangeRequestRow): Node[] {
       kind: "change",
       tone,
       label: changeLabel(r),
-      sub: `${statusWord} · ${new Date(r.requested_at).toLocaleDateString()}`,
+      sub: `${statusWord} · ${new Date(r.requested_at).toLocaleDateString()}${versionLabel ? ` · ${versionLabel}` : ""}`,
       detail: changeDetail(r),
       request: r,
     },
@@ -242,11 +251,19 @@ export default function RosterTimeline({
   crewMatrixId,
   history,
   matrixCreatedAt,
+  allVersions,
   canApproveInternal,
 }: {
   crewMatrixId: string;
   history: HistoryRow[];
   matrixCreatedAt?: string | null;
+  // Phase 17 (timeline continuity) — every version in this matrix's family
+  // (same matrix_number, one row per version_number), so this component can
+  // build one continuous ledger across all of them instead of resetting at
+  // each new version's own "Draft created" — see this file's header. Falls
+  // back to just the single current version (crewMatrixId/matrixCreatedAt)
+  // when not passed, so an older/simpler caller still works.
+  allVersions?: VersionMeta[];
   canApproveInternal: boolean;
 }) {
   const [requests, setRequests] = useState<RosterChangeRequestRow[]>([]);
@@ -256,11 +273,17 @@ export default function RosterTimeline({
   const [decideBusy, setDecideBusy] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
 
+  // The whole family's ids when available (queries below then span every
+  // version), otherwise just this one version — same fallback as above.
+  const versionIds = allVersions && allVersions.length > 0 ? allVersions.map((v) => v.id) : [crewMatrixId];
+  const versionIdsKey = versionIds.join(",");
+
   const load = async () => {
     setLoading(true);
+    const idsArg = versionIds.length > 1 ? versionIds : versionIds[0];
     const [reqRes, shareRes] = await Promise.all([
-      listRosterChangeRequests(crewMatrixId).catch(() => ({ requests: [] as RosterChangeRequestRow[] })),
-      getSharingHistory(crewMatrixId).catch(() => ({ packages: undefined as any })),
+      listRosterChangeRequests(idsArg).catch(() => ({ requests: [] as RosterChangeRequestRow[] })),
+      getSharingHistory(idsArg).catch(() => ({ packages: undefined as any })),
     ]);
     setRequests(((reqRes as any)?.requests ?? []) as RosterChangeRequestRow[]);
     setSends(((shareRes as any)?.packages ?? []).map((p: any) => ({ id: p.id, matrixVersion: p.matrixVersion, createdAt: p.createdAt, status: p.status, staffCount: p.staffCount })));
@@ -270,7 +293,7 @@ export default function RosterTimeline({
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crewMatrixId]);
+  }, [versionIdsKey]);
 
   const onDecide = async (requestId: string, decision: "approved" | "rejected") => {
     setDecideError(null);
@@ -291,10 +314,39 @@ export default function RosterTimeline({
   const sendsSorted = [...sends].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   const sendNodes = sendsSorted.map((s, i) => sendToNode(s, i === 0));
 
+  // Phase 17 (timeline continuity) — a label like "v2" appended to every
+  // node's sub-line, but only once there's actually more than one version
+  // in play (a matrix's whole life as v1 stays exactly as clean as before —
+  // no redundant "v1" tags everywhere). versionNumberById resolves a
+  // status-history row or roster-change request back to which version it
+  // belongs to (both now select crew_matrix_id — see page.tsx/
+  // roster-change-actions.ts); falls back to undefined (no label) for a row
+  // from an older caller that didn't select it.
+  const showVersionLabels = !!allVersions && allVersions.length > 1;
+  const versionNumberById = new Map<string, number>((allVersions ?? []).map((v) => [v.id, v.version_number]));
+  const versionLabelFor = (crewMatrixIdOfRow: string | undefined) =>
+    showVersionLabels && crewMatrixIdOfRow && versionNumberById.has(crewMatrixIdOfRow) ? `v${versionNumberById.get(crewMatrixIdOfRow)}` : undefined;
+
+  // One "Draft created" node per version — when allVersions is passed, this
+  // replaces the old single matrixCreatedAt-only node so v1's own creation
+  // shows up too, not just whichever version is currently open.
+  const draftCreatedNodes: Node[] = allVersions && allVersions.length > 0
+    ? allVersions.map((v) => ({
+        id: `created-${v.id}`,
+        at: v.created_at,
+        kind: "circle" as const,
+        tone: "done" as const,
+        label: "Draft created",
+        sub: `${new Date(v.created_at).toLocaleDateString()}${showVersionLabels ? ` · v${v.version_number}` : ""}`,
+      }))
+    : matrixCreatedAt
+      ? [{ id: "created", at: matrixCreatedAt, kind: "circle" as const, tone: "done" as const, label: "Draft created", sub: new Date(matrixCreatedAt).toLocaleDateString() }]
+      : [];
+
   const allNodes: Node[] = [
-    ...(matrixCreatedAt ? [{ id: "created", at: matrixCreatedAt, kind: "circle" as const, tone: "done" as const, label: "Draft created", sub: new Date(matrixCreatedAt).toLocaleDateString() }] : []),
-    ...history.map(statusHistoryToNode),
-    ...requests.flatMap(requestToNodes),
+    ...draftCreatedNodes,
+    ...history.map((h) => statusHistoryToNode(h, versionLabelFor(h.crew_matrix_id))),
+    ...requests.flatMap((r) => requestToNodes(r, versionLabelFor(r.crew_matrix_id))),
     ...sendNodes,
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 

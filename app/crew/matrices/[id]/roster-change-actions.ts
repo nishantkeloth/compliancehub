@@ -300,18 +300,27 @@ export async function applyApprovedRosterChanges(
   return { applied, skipped };
 }
 
-export async function listRosterChangeRequests(crewMatrixId: string) {
+// Phase 17 (timeline continuity) — accepts either one version's id (a
+// single crew_matrix_id) or a whole matrix family's ids (every version's
+// id, same matrix_number) so the expanding Roster Change History timeline
+// (roster-timeline.tsx) can show every roster change ever recorded across
+// every version, not just whichever one is currently open — matching this
+// file's own "ever-growing ledger that never resets" design (see this
+// file's top comment). crew_matrix_id is included in the select so the
+// caller can label each row by which version it belongs to when it's
+// showing more than one.
+export async function listRosterChangeRequests(crewMatrixId: string | string[]) {
   const { supabase, access } = await requirePermission("crew.manage", "You don't have permission to view roster changes.");
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("roster_change_requests")
     .select(
-      "id, change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes, status, requested_by, requested_at, decided_by, decided_at, decision_comment, applied_assignment_id, crew_matrix_line_id, " +
+      "id, crew_matrix_id, change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes, status, requested_by, requested_at, decided_by, decided_at, decision_comment, applied_assignment_id, crew_matrix_line_id, " +
         "outgoing:crew_profiles!outgoing_crew_id(full_name), incoming:crew_profiles!incoming_crew_id(full_name)"
     )
-    .eq("crew_matrix_id", crewMatrixId)
-    .eq("org_id", access.orgId)
-    .order("requested_at", { ascending: false });
+    .eq("org_id", access.orgId);
+  query = Array.isArray(crewMatrixId) ? query.in("crew_matrix_id", crewMatrixId) : query.eq("crew_matrix_id", crewMatrixId);
+  const { data, error } = await query.order("requested_at", { ascending: false });
   if (error) return { error: error.message, requests: [] as any[] };
   return { requests: data ?? [] };
 }

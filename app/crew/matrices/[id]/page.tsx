@@ -42,7 +42,6 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   //      from stage 3 and the required document-type-id list from stage 3
   const [
     { data: lines },
-    { data: history },
     { data: versions },
     { data: jobRoles },
     { data: skills },
@@ -59,15 +58,16 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       .select("*, job_roles(name), rotation_templates(name)")
       .eq("crew_matrix_id", id)
       .order("sort_order", { ascending: true }),
-    supabase
-      .from("crew_matrix_status_history")
-      .select("id, old_status, new_status, changed_at, comment")
-      .eq("crew_matrix_id", id)
-      .order("changed_at", { ascending: false })
-      .limit(30),
+    // Every version of this matrix (same matrix_number), oldest first isn't
+    // needed here — kept newest-first for the Versions tab's own list — but
+    // this is also now the source of the full crew_matrix_id set the Roster
+    // Change History timeline needs (see allVersionsHistory below) to show
+    // one continuous ledger across every version instead of resetting at
+    // each new version's own "Draft created". created_at is selected for
+    // that timeline's per-version "Draft created" node.
     supabase
       .from("crew_matrices")
-      .select("id, version_number, status")
+      .select("id, version_number, status, created_at")
       .eq("matrix_number", matrix.matrix_number ?? "__none__")
       .order("version_number", { ascending: false }),
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -129,6 +129,12 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   // type, to avoid an expensive fetch of irrelevant records.
   const lineJobRoleIds = Array.from(new Set((lines ?? []).map((l) => l.job_role_id as string)));
 
+  // Every version's id in this matrix's family (same matrix_number) — used
+  // below to pull crew_matrix_status_history across the WHOLE family, not
+  // just this one version's own id, so the Roster Change History timeline
+  // can be one continuous ledger (see allVersionsHistory and roster-timeline.tsx).
+  const versionIds = (versions ?? []).map((v) => v.id as string);
+
   // Phase 17 (revised) — overlay this matrix's own staged roster changes
   // (fetched above) onto the site-wide assignment lists BEFORE anything
   // below queries crew_profiles/candidates from them, so a new-version
@@ -177,7 +183,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     assignmentDatesByCrewId.set(crewId, { start_date: effectiveDate, planned_end_date: null });
   }
 
-  const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }, { data: matchedCrew }, { data: roleMatchedCrew }] =
+  const [{ data: lineSkills }, { data: lineDocuments }, { data: lineCompetencies }, { data: lineClientReqs }, { data: matchedCrew }, { data: roleMatchedCrew }, { data: allVersionsHistory }] =
     await Promise.all([
       lineIds.length
         ? supabase.from("crew_matrix_line_skills").select("id, line_id, skill_id, skills(name)").in("line_id", lineIds)
@@ -210,6 +216,21 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
             .eq("org_id", access.orgId)
             .eq("employment_status", "active")
             .in("primary_job_role_id", lineJobRoleIds)
+        : Promise.resolve({ data: [] }),
+      // Roster Change History timeline continuity (see roster-timeline.tsx
+      // and versionIds above) — every status change across EVERY version of
+      // this matrix, not just the one being viewed, so the timeline reads
+      // as one continuous ledger: v1's own Draft -> Submitted -> Internal
+      // approval -> Client approval -> Activated, then v2's on top of it,
+      // and so on. crew_matrix_id is selected so each row can be labeled by
+      // which version it belongs to.
+      versionIds.length
+        ? supabase
+            .from("crew_matrix_status_history")
+            .select("id, crew_matrix_id, old_status, new_status, changed_at, comment")
+            .in("crew_matrix_id", versionIds)
+            .order("changed_at", { ascending: false })
+            .limit(100)
         : Promise.resolve({ data: [] }),
     ]);
 
@@ -426,8 +447,8 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         created_at: matrix.created_at,
       }}
       lines={rows}
-      history={history ?? []}
-      versions={(versions ?? []).map((v) => ({ id: v.id as string, version_number: v.version_number as number, status: v.status as string }))}
+      history={allVersionsHistory ?? []}
+      versions={(versions ?? []).map((v) => ({ id: v.id as string, version_number: v.version_number as number, status: v.status as string, created_at: v.created_at as string }))}
       jobRoles={jobRoles ?? []}
       skills={skills ?? []}
       rotationTemplates={rotationTemplates ?? []}

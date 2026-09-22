@@ -120,6 +120,7 @@ export default function StaffingPlanView({
   canApproveInternal = false,
   statusHistory,
   matrixCreatedAt,
+  allVersions,
   onChanged,
 }: {
   crewMatrixId: string;
@@ -152,6 +153,14 @@ export default function StaffingPlanView({
   canApproveInternal?: boolean;
   statusHistory?: HistoryRow[];
   matrixCreatedAt?: string | null;
+  // Phase 17 (timeline continuity) — every version in this matrix's family
+  // (same matrix_number), each with its own id/status/created_at, so the
+  // Roster Change History timeline can show one continuous ledger across
+  // every version instead of resetting at each new version's own "Draft
+  // created" (see RosterTimeline's file header). Optional, same reasoning
+  // as statusHistory/matrixCreatedAt above — falls back to just this one
+  // version when not passed.
+  allVersions?: { id: string; version_number: number; status: string; created_at: string }[];
   onChanged?: () => void;
 }) {
   // Assign/Unassign trigger a router.refresh() (see MatrixDetail's
@@ -362,6 +371,7 @@ export default function StaffingPlanView({
                 crewMatrixId={crewMatrixId}
                 history={statusHistory ?? []}
                 matrixCreatedAt={matrixCreatedAt}
+                allVersions={allVersions}
                 canApproveInternal={canApproveInternal}
               />
             </div>
