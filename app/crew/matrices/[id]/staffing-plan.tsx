@@ -282,6 +282,15 @@ export default function StaffingPlanView({
   const isNewVersionUnderReview = isNewVersion && !isDraft && !isLiveMatrix;
   const readOnlyStaffing = isLiveMatrix || isNewVersionUnderReview;
   const canEditRoster = isNewVersion && isDraft;
+  // Traffic light dots (Assigned view only) — only worth showing on a new
+  // version at all, since a first-ever version (v1) can never carry a
+  // staged roster change (see requestRosterChange's version_number > 1
+  // check) and would just be a row of green dots with no information in
+  // it. Once this version is Activated, page.tsx's overlay stops
+  // surfacing any staged notes (they're applied by then), so every dot
+  // here reads green from then on with no extra logic needed — the dot is
+  // always literally "does this row carry a rosterChangeNote right now".
+  const showTrafficLight = isNewVersion && view === "assigned";
 
   const exportExcel = async () => {
     setExporting(true);
@@ -318,6 +327,18 @@ export default function StaffingPlanView({
           ) : (
             <>This version has been submitted for approval, so its Staffing Plan is read-only for now — crew changes already made are shown below and will take effect when this version goes live. Return it to draft to make more.</>
           )}
+        </div>
+      )}
+      {showTrafficLight && (
+        <div className="flex items-center gap-4 text-xs mb-3 flex-wrap" style={{ color: "var(--ch-sub)" }}>
+          <span className="flex items-center gap-1.5">
+            <span className="rounded-full inline-block" style={{ width: 8, height: 8, background: "#16a34a", boxShadow: "0 0 0 3px #eafaf0" }} />
+            No change on this version
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="rounded-full inline-block" style={{ width: 8, height: 8, background: "#b45309", boxShadow: "0 0 0 3px #fff7ed" }} />
+            Assigned/replaced on this version — turns green once activated
+          </span>
         </div>
       )}
       {/* Phase 17 — roster change/approval timeline, folded into the top
@@ -457,6 +478,7 @@ export default function StaffingPlanView({
               canAssignCrew={canAssignCrew}
               readOnlyStaffing={readOnlyStaffing}
               canEditRoster={canEditRoster}
+              showTrafficLight={showTrafficLight}
               candidateOptions={candidateOptions}
               onChanged={onChanged}
               onAssigned={moveToAssigned}
@@ -488,6 +510,7 @@ function StaffingLineCard({
   canAssignCrew,
   readOnlyStaffing,
   canEditRoster,
+  showTrafficLight,
   candidateOptions,
   onChanged,
   onAssigned,
@@ -517,6 +540,7 @@ function StaffingLineCard({
   canAssignCrew: boolean;
   readOnlyStaffing: boolean;
   canEditRoster: boolean;
+  showTrafficLight: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
@@ -646,6 +670,7 @@ function StaffingLineCard({
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
                   canEditRoster={canEditRoster}
+                  showTrafficLight={showTrafficLight}
                   candidateOptions={candidateOptions}
                   onChanged={onChanged}
                   onAssigned={onAssigned}
@@ -677,6 +702,7 @@ function StaffingLineCard({
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
                   canEditRoster={canEditRoster}
+                  showTrafficLight={showTrafficLight}
                   candidateOptions={candidateOptions}
                   onChanged={onChanged}
                   onAssigned={onAssigned}
@@ -709,6 +735,7 @@ function CandidateRow({
   showAssignCol,
   showUnassignCol,
   canEditRoster,
+  showTrafficLight,
   candidateOptions,
   onChanged,
   onAssigned,
@@ -725,16 +752,34 @@ function CandidateRow({
   showAssignCol: boolean;
   showUnassignCol: boolean;
   canEditRoster: boolean;
+  showTrafficLight: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
 }) {
   const badge = completenessColors(completeness);
+  // Phase 17 (traffic light) — green when this row isn't carrying a staged,
+  // not-yet-applied roster change on this version; amber (with the change's
+  // reason on hover) when it is. See StaffingCrew.rosterChangeNote's
+  // comment in lib/staffing-plan-shared.ts for exactly what sets it.
+  const changed = !!person.rosterChangeNote;
   return (
     <tr className="border-t" style={{ borderColor: "var(--ch-line)" }}>
       <td className="px-3 py-2 whitespace-nowrap">
         <div className="flex items-center gap-1.5">
+          {showTrafficLight && (
+            <span
+              className="rounded-full shrink-0"
+              style={{
+                width: 8,
+                height: 8,
+                background: changed ? "#b45309" : "#16a34a",
+                boxShadow: changed ? "0 0 0 3px #fff7ed" : "0 0 0 3px #eafaf0",
+              }}
+              title={changed ? (person.rosterChangeNote as string) : "No change on this version"}
+            />
+          )}
           {view === "available" && (
             <span
               className="rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0"
@@ -746,6 +791,9 @@ function CandidateRow({
           )}
           <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>{person.full_name}</span>
         </div>
+        {showTrafficLight && changed && (
+          <div className="text-[10px] mt-0.5" style={{ color: "#b45309" }}>{person.rosterChangeNote}</div>
+        )}
         {view === "available" && person.availability_date && (
           <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
         )}

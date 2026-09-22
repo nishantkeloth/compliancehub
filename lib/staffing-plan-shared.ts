@@ -55,6 +55,20 @@ export type StaffingCrew = {
   assignment_start_date?: string | null;
   assignment_planned_end_date?: string | null;
   documents: Record<string, { document_number: string | null; issue_date: string | null; expiry_date: string | null; custom_fields: Record<string, unknown> | null }>;
+  // Phase 17 (traffic light) — Assigned-view only, and only ever set on a
+  // new-version draft/under-review matrix that still has staged-but-
+  // unapplied roster_change_requests (see page.tsx's overlay). Set when
+  // this person's presence on the Assigned list comes from one of those
+  // staged changes rather than a real, already-applied crew_assignments
+  // row — i.e. they were assigned/replaced-in while composing this
+  // version, and it hasn't gone live yet. rosterChangeNote is a short,
+  // human label ("Replacing <name> — <reason>" / "New assignment — <reason>")
+  // for the amber dot's tooltip. Left undefined for every unaffected row
+  // (the vast majority), which is what makes it read as "green" in the UI —
+  // and undefined for every row everywhere once the version is Activated,
+  // since applyApprovedRosterChanges marks those requests applied and
+  // page.tsx's overlay only ever surfaces the still-unapplied ones.
+  rosterChangeNote?: string | null;
 };
 
 // Phase 16 — "how much of this rank's required documentation does this

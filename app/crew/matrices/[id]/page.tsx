@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import MatrixDetail from "./matrix-detail";
+import { REASON_CODES } from "./roster-change-shared";
 
 export default async function CrewMatrixDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -111,7 +112,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     // roster-change-actions.ts for why this preview exists at all.
     supabase
       .from("roster_change_requests")
-      .select("change_type, outgoing_crew_id, incoming_crew_id, effective_date")
+      .select("change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes")
       .eq("crew_matrix_id", id)
       .eq("org_id", access.orgId)
       .eq("status", "approved")
@@ -212,6 +213,31 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         : Promise.resolve({ data: [] }),
     ]);
 
+  // Phase 17 (traffic light) — a short, human note per staged-incoming crew
+  // member, for the amber dot's tooltip on the Assigned view. Built here
+  // (rather than back where stagedIncoming/stagedOutgoingIds were computed)
+  // because a "replace"'s note names the outgoing person, and their name
+  // only becomes available once roleMatchedCrew comes back — it's an
+  // org-wide, role-matched, unfiltered-by-assignment lookup, so it already
+  // contains anyone who was staffing a matching rank before being replaced
+  // out, with no extra query needed. Falls back to a generic phrase on the
+  // rare case their role doesn't match any of this matrix's lines.
+  const crewNameById = new Map<string, string>();
+  for (const c of roleMatchedCrew ?? []) crewNameById.set(c.id as string, c.full_name as string);
+  for (const c of matchedCrew ?? []) crewNameById.set(c.id as string, c.full_name as string);
+  const reasonLabel = (code: string | null) => REASON_CODES.find((r) => r.value === code)?.label ?? "reason not set";
+  const stagedIncomingNote = new Map<string, string>();
+  for (const r of stagedChanges ?? []) {
+    const incomingId = r.incoming_crew_id as string | null;
+    if (!incomingId) continue;
+    if (r.change_type === "assign") {
+      stagedIncomingNote.set(incomingId, `New assignment — ${reasonLabel(r.reason_code as string | null)}`);
+    } else if (r.change_type === "replace") {
+      const outgoingName = r.outgoing_crew_id ? crewNameById.get(r.outgoing_crew_id as string) : null;
+      stagedIncomingNote.set(incomingId, `Replacing ${outgoingName ?? "previous crew"} — ${reasonLabel(r.reason_code as string | null)}`);
+    }
+  }
+
   const usedDocTypeIds = Array.from(new Set((lineDocuments ?? []).map((d) => d.document_type_id as string)));
   const matchedCrewIds = (matchedCrew ?? []).map((c) => c.id as string);
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -276,6 +302,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       assignment_start_date: assignmentDates?.start_date ?? null,
       assignment_planned_end_date: assignmentDates?.planned_end_date ?? null,
       documents,
+      rosterChangeNote: stagedIncomingNote.get(c.id as string) ?? null,
     };
   });
 
