@@ -343,9 +343,19 @@ export default function RosterTimeline({
       ? [{ id: "created", at: matrixCreatedAt, kind: "circle" as const, tone: "done" as const, label: "Draft created", sub: new Date(matrixCreatedAt).toLocaleDateString() }]
       : [];
 
+  // "Superseded" isn't something anyone did — it's a side effect the DB
+  // trigger stamps on the OLD version's status the instant a newer version
+  // goes Active (see supersede_previous_active_matrix in
+  // 0002_phase2_crew_matrix.sql). On a merged, multi-version timeline that
+  // reads as a confusing extra step right after "Activated" on the old
+  // version, so it's dropped from this walk — the old version's own status
+  // pill (Versions tab, header) still says Superseded, this is just the
+  // step-by-step ledger not narrating it as an event.
+  const visibleHistory = history.filter((h) => h.new_status !== "superseded");
+
   const allNodes: Node[] = [
     ...draftCreatedNodes,
-    ...history.map((h) => statusHistoryToNode(h, versionLabelFor(h.crew_matrix_id))),
+    ...visibleHistory.map((h) => statusHistoryToNode(h, versionLabelFor(h.crew_matrix_id))),
     ...requests.flatMap((r) => requestToNodes(r, versionLabelFor(r.crew_matrix_id))),
     ...sendNodes,
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
