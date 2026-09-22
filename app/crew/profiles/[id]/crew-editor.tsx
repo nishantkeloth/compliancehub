@@ -35,6 +35,7 @@ import { DocumentReadModal } from "@/components/document-read-modal";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { REGIONS } from "@/lib/regions";
+import { COUNTRIES } from "@/lib/countries";
 
 type Crew = {
   id: string;
@@ -457,7 +458,24 @@ function GeneralForm({
         <input className={inputCls} style={inputStyle} placeholder="Email" value={email} onChange={(e) => { setEmail(e.target.value); setSaved(false); }} disabled={disabled} />
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
-        <input className={inputCls} style={inputStyle} placeholder="Home country" value={homeCountry} onChange={(e) => { setHomeCountry(e.target.value); setSaved(false); }} disabled={disabled} />
+        <select
+          className={inputCls}
+          style={inputStyle}
+          value={homeCountry}
+          onChange={(e) => { setHomeCountry(e.target.value); setSaved(false); }}
+          disabled={disabled}
+        >
+          <option value="">Home country…</option>
+          {/* A previously-typed free-text value that doesn't match the
+              fixed list below stays selectable rather than silently
+              dropping it the moment this form loads. */}
+          {homeCountry && !COUNTRIES.includes(homeCountry as (typeof COUNTRIES)[number]) && (
+            <option value={homeCountry}>{homeCountry} (unmatched — pick below)</option>
+          )}
+          {COUNTRIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Current location
           <select

@@ -10,6 +10,7 @@ import {
   deleteManningRequirement,
 } from "@/app/crew/setup/actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import { COUNTRIES } from "@/lib/countries";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
 type Client = { id: string; name: string };
@@ -332,7 +333,18 @@ function OffshoreSiteForm({
             <option key={p.id} value={p.id}>{p.project_name}</option>
           ))}
         </select>
-        <input className={inputCls} style={inputStyle} placeholder="Country" value={country} onChange={(e) => setCountry(e.target.value)} />
+        <select className={inputCls} style={inputStyle} value={country} onChange={(e) => setCountry(e.target.value)}>
+          <option value="">Country…</option>
+          {/* A previously-typed free-text value that doesn't match the
+              fixed list below stays selectable rather than silently
+              dropping it the moment this form loads. */}
+          {country && !COUNTRIES.includes(country as (typeof COUNTRIES)[number]) && (
+            <option value={country}>{country} (unmatched — pick below)</option>
+          )}
+          {COUNTRIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
         <input className={inputCls} style={inputStyle} placeholder="Operating region" value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)} />

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { intakeAvailability, extractCrewIntake, saveCrewIntake, discardCrewIntake, type MappedIntakeProposal } from "./intake-actions";
+import { COUNTRIES } from "@/lib/countries";
 
 // Phase 12 — "Fill from documents" intake panel. Mirrors the review/map/
 // save UI pattern of app/crew/matrices/new/ai-generate.tsx, scoped to a
@@ -377,7 +378,18 @@ export default function IntakePanel() {
             </label>
             <label className={lbl} style={lblStyle}>
               Home country
-              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={homeCountry} onChange={(e) => setHomeCountry(e.target.value)} />
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={homeCountry} onChange={(e) => setHomeCountry(e.target.value)}>
+                <option value="">Home country…</option>
+                {/* AI-extracted text (e.g. from a passport) may not match
+                    the fixed list below — keep it selectable rather than
+                    silently dropping what was read. */}
+                {homeCountry && !COUNTRIES.includes(homeCountry as (typeof COUNTRIES)[number]) && (
+                  <option value={homeCountry}>{homeCountry} (unmatched — pick below)</option>
+                )}
+                {COUNTRIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </label>
             <label className={lbl} style={lblStyle}>
               Phone
