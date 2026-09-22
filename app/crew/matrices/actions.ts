@@ -659,6 +659,34 @@ export async function rejectClient(id: string, reason: string) {
   return {};
 }
 
+// Phase 18 — when a matrix version goes live, every crew member now
+// assigned to its site gets their Current Location updated to that
+// site's Country (offshore_sites.country — see lib/countries.ts), so the
+// Crew Master reflects where people actually are once a mobilization is
+// real rather than wherever they happened to be beforehand. Called right
+// after activation, and after any staged roster changes for this version
+// have been applied to crew_assignments (see applyApprovedRosterChanges
+// below), so it reads the final, just-activated set of assigned crew —
+// not a stale one. Best-effort: a site with no Country set, or an update
+// failure, is silently skipped rather than undoing the activation.
+async function syncAssignedCrewLocationToSiteCountry(supabase: Supa, matrixId: string) {
+  const { data: matrix } = await supabase.from("crew_matrices").select("offshore_site_id").eq("id", matrixId).single();
+  if (!matrix?.offshore_site_id) return;
+
+  const { data: site } = await supabase.from("offshore_sites").select("country").eq("id", matrix.offshore_site_id).single();
+  if (!site?.country) return;
+
+  const { data: assignments } = await supabase
+    .from("crew_assignments")
+    .select("crew_id")
+    .eq("offshore_site_id", matrix.offshore_site_id)
+    .is("end_date", null);
+  const crewIds = Array.from(new Set((assignments ?? []).map((a) => a.crew_id as string)));
+  if (crewIds.length === 0) return;
+
+  await supabase.from("crew_profiles").update({ current_location: site.country }).in("id", crewIds);
+}
+
 export async function activateCrewMatrix(id: string) {
   const { supabase, access, userId } = await requireManage();
   const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
@@ -682,6 +710,12 @@ export async function activateCrewMatrix(id: string) {
   // undone by a problem applying one of these.
   try {
     await applyApprovedRosterChanges(supabase, access, userId, id);
+  } catch {
+    // best-effort — activation itself already succeeded
+  }
+
+  try {
+    await syncAssignedCrewLocationToSiteCountry(supabase, id);
   } catch {
     // best-effort — activation itself already succeeded
   }
