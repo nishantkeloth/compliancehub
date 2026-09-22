@@ -176,8 +176,15 @@ export default function StaffingPlanView({
   const router = useRouter();
   const searchParams = useSearchParams();
   const viewFromUrl = searchParams.get("staffingView");
-  const [view, setViewState] = useState<"assigned" | "available">(viewFromUrl === "available" ? "available" : "assigned");
-  const setView = (v: "assigned" | "available") => {
+  // Third view — "Other Location Candidates" — split out from what used to
+  // be a same-tab "Other region" divider inside Available Candidates (see
+  // sameRegion below). Now a real tab of its own: candidates who match the
+  // rank but whose current_location does NOT match this matrix's site/
+  // project region, rather than a collapsed sub-section under Available.
+  const [view, setViewState] = useState<"assigned" | "available" | "other_location">(
+    viewFromUrl === "available" ? "available" : viewFromUrl === "other_location" ? "other_location" : "assigned"
+  );
+  const setView = (v: "assigned" | "available" | "other_location") => {
     setViewState(v);
     const params = new URLSearchParams(searchParams.toString());
     if (v === "assigned") params.delete("staffingView");
@@ -253,7 +260,22 @@ export default function StaffingPlanView({
     );
   }
 
-  const activeCrew = view === "assigned" ? localCrew : localCandidateCrew;
+  // Phase 16/18 — Available candidates vs Other Location Candidates split
+  // by current_location vs this matrix's site/project region (matrixRegion,
+  // free text — see its comment in page.tsx). Computed once, here, so both
+  // the on-screen per-line rows below and the Excel export use exactly the
+  // same filtered set — a candidate view without a matrixRegion set at all
+  // has nothing to compare against, so Available shows everyone (unchanged
+  // prior behavior) and Other Location Candidates shows nobody rather than
+  // guessing.
+  const isCandidateView = view === "available" || view === "other_location";
+  const activeCrew = !isCandidateView
+    ? localCrew
+    : !matrixRegion
+      ? view === "available"
+        ? localCandidateCrew
+        : []
+      : localCandidateCrew.filter((c) => (view === "available" ? sameRegion(c.current_location, matrixRegion) : !sameRegion(c.current_location, matrixRegion)));
 
   // Phase 17 (revised) — crew_assignments rows aren't scoped to a specific
   // matrix or version at all (they're keyed by crew_id + offshore_site_id,
@@ -399,7 +421,7 @@ export default function StaffingPlanView({
         </button>
         {candidateCrew !== undefined && (
           <div className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--ch-line)" }}>
-            {(["assigned", "available"] as const).map((v) => (
+            {(["assigned", "available", "other_location"] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -410,16 +432,28 @@ export default function StaffingPlanView({
                     : { color: "var(--ch-sub)" }
                 }
               >
-                {v === "assigned" ? "Assigned" : "Available candidates"}
+                {v === "assigned" ? "Assigned" : v === "available" ? "Available candidates" : "Other Location Candidates"}
               </button>
             ))}
           </div>
         )}
       </div>
       <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-        {view === "assigned"
-          ? <>One row per crew member currently assigned to this site, grouped by rank.</>
-          : <>One row per crew member who matches the rank, holds no active assignment anywhere, and is free today — a preview for staffing before any mobilization request exists.</>}
+        {view === "assigned" ? (
+          <>One row per crew member currently assigned to this site, grouped by rank.</>
+        ) : view === "available" ? (
+          <>
+            One row per crew member who matches the rank, holds no active assignment anywhere, and is free today — a preview for
+            staffing before any mobilization request exists.{matrixRegion ? <> Limited to crew whose current location matches this site&apos;s region ({matrixRegion}).</> : null}
+          </>
+        ) : (
+          <>
+            Same pool as Available candidates, but limited to crew whose current location does{" "}
+            <span className="font-semibold">not</span> match this site&apos;s region
+            {matrixRegion ? <> ({matrixRegion})</> : null} — candidates you&apos;d need to bring in from elsewhere.
+            {!matrixRegion && <> This matrix&apos;s site/project has no Operating Region set, so there&apos;s nothing to compare against — set one under Sites or Projects to use this tab.</>}
+          </>
+        )}
         {" "}Each rank only shows the document types required for that rank, grouped by category —{" "}
         &quot;Missing&quot; means it&apos;s required and no record exists yet, and{" "}
         <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>*</span> marks a document that&apos;s mandatory for that rank.
@@ -443,23 +477,17 @@ export default function StaffingPlanView({
 
           // Phase 16 — completeness is computed for every row regardless of
           // view (cheap, and Assigned rows may still want it later); only
-          // Available candidates actually sorts/splits by it, per the
-          // requirement that closer, more-complete candidates surface
-          // first for staffing decisions.
-          const rowsForLine: CrewRow[] = activeCrew
+          // the candidate views actually sort by it, per the requirement
+          // that closer, more-complete candidates surface first for
+          // staffing decisions. activeCrew is already filtered to the
+          // current view (region included — see its comment above), so
+          // this is just a per-rank slice of it now, not a further split.
+          let rows: CrewRow[] = activeCrew
             .filter((c) => c.job_role_id === line.job_role_id)
             .map((c) => ({ person: c, completeness: computeCompleteness(line.documents, documentTypes, c.documents) }));
-
-          const splitByRegion = view === "available" && !!matrixRegion;
-          let matchedRows: CrewRow[] = splitByRegion ? rowsForLine.filter((r) => sameRegion(r.person.current_location, matrixRegion)) : rowsForLine;
-          let otherRows: CrewRow[] = splitByRegion ? rowsForLine.filter((r) => !sameRegion(r.person.current_location, matrixRegion)) : [];
-
-          const sortRows = (rows: CrewRow[]) =>
-            view === "available"
-              ? [...rows].sort((a, b) => b.completeness - a.completeness || a.person.full_name.localeCompare(b.person.full_name))
-              : [...rows].sort((a, b) => a.person.full_name.localeCompare(b.person.full_name));
-          matchedRows = sortRows(matchedRows);
-          otherRows = sortRows(otherRows);
+          rows = isCandidateView
+            ? [...rows].sort((a, b) => b.completeness - a.completeness || a.person.full_name.localeCompare(b.person.full_name))
+            : [...rows].sort((a, b) => a.person.full_name.localeCompare(b.person.full_name));
 
           // For the Assigned view's "Replace" picker — who else already
           // matches this rank and is free, regardless of which view tab
@@ -474,8 +502,8 @@ export default function StaffingPlanView({
               key={line.id}
               line={line}
               view={view}
-              matchedRows={matchedRows}
-              otherRows={otherRows}
+              rows={rows}
+              showLocationColumn={isCandidateView}
               lineDisplayColumns={lineDisplayColumns}
               lineDocTypeGroups={lineDocTypeGroups}
               lineGroups={lineGroups}
@@ -506,8 +534,8 @@ export default function StaffingPlanView({
 function StaffingLineCard({
   line,
   view,
-  matchedRows,
-  otherRows,
+  rows,
+  showLocationColumn,
   lineDisplayColumns,
   lineDocTypeGroups,
   lineGroups,
@@ -528,16 +556,16 @@ function StaffingLineCard({
   customFieldDefinitions,
 }: {
   line: Line;
-  view: "assigned" | "available";
-  // Phase 16 — Available candidates splits into region-matched (matchedRows)
-  // and "Other region" (otherRows, only ever non-empty when a matrixRegion
-  // was set) groups, each already sorted by document completeness
-  // descending. Assigned view (and Available with no matrixRegion) puts
-  // everything in matchedRows, alphabetically, and otherRows stays empty —
-  // so the "Other region" divider below only ever renders when it means
-  // something.
-  matchedRows: CrewRow[];
-  otherRows: CrewRow[];
+  view: "assigned" | "available" | "other_location";
+  // Already filtered to this view (including the region split for the two
+  // candidate views — see activeCrew's comment in StaffingPlanView) and
+  // sorted, for just this rank.
+  rows: CrewRow[];
+  // "Available candidates" and "Other Location Candidates" both show a
+  // Current Location column (that's the whole point of the split); the
+  // Assigned view doesn't — its own Start Date/Roll Off Date columns take
+  // that slot instead.
+  showLocationColumn: boolean;
   lineDisplayColumns: DisplayColumn[];
   lineDocTypeGroups: { docType: DocTypeRef; count: number }[];
   lineGroups: CategoryGroup[];
@@ -557,18 +585,17 @@ function StaffingLineCard({
   onUnassigned: (crewId: string) => void;
   customFieldDefinitions: FieldDef[];
 }) {
-  const allRows = matchedRows.length || otherRows.length ? [...matchedRows, ...otherRows] : [];
-
-  // Assign only makes sense from Available candidates; Unassign only from
+  // Assign makes sense from either candidate view; Unassign only from
   // Assigned. The per-row/per-rank "Share link" / "Email profile links"
   // actions (candidate_resource_profile_links) were removed at the
   // client's request — not needed at either the crew or the rank level.
   // A live matrix, or a new version already submitted for review, is
   // read-only regardless of view — see readOnlyStaffing's comment in
   // StaffingPlanView.
-  const showAssignCol = !readOnlyStaffing && view === "available" && canAssignCrew;
+  const showAssignCol = !readOnlyStaffing && (view === "available" || view === "other_location") && canAssignCrew;
   const showUnassignCol = !readOnlyStaffing && view === "assigned" && canAssignCrew;
   const showActionsCol = showAssignCol || showUnassignCol;
+  const viewNoun = view === "assigned" ? "assigned" : view === "available" ? "available" : "in other locations";
 
   return (
     <div className={`${cardCls} overflow-hidden`} style={cardStyle}>
@@ -576,16 +603,17 @@ function StaffingLineCard({
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{line.job_role_name}</span>
           <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
-            Headcount required {line.required_headcount} · {allRows.length} {view === "assigned" ? "assigned" : "available"}
-            {otherRows.length > 0 && ` (${matchedRows.length} in region)`}
+            Headcount required {line.required_headcount} · {rows.length} {viewNoun}
           </span>
         </div>
       </div>
-      {allRows.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
           {view === "assigned"
             ? "No crew currently assigned to this rank at this site."
-            : "No unassigned, available crew match this rank right now."}
+            : view === "available"
+              ? "No unassigned, available crew match this rank right now."
+              : "No unassigned, available crew in another location match this rank right now."}
         </div>
       ) : lineDisplayColumns.length === 0 ? (
         <div className="px-3 py-3 text-sm" style={{ color: "var(--ch-sub)" }}>
@@ -603,6 +631,9 @@ function StaffingLineCard({
                     <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>Start Date</th>
                     <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Roll Off Date</th>
                   </>
+                )}
+                {showLocationColumn && (
+                  <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>Current Location</th>
                 )}
                 {lineGroups.map((g, i) => (
                   <th
@@ -666,7 +697,7 @@ function StaffingLineCard({
               </tr>
             </thead>
             <tbody>
-              {matchedRows.map(({ person, completeness }) => (
+              {rows.map(({ person, completeness }) => (
                 <CandidateRow
                   key={person.crew_id}
                   person={person}
@@ -675,38 +706,7 @@ function StaffingLineCard({
                   lineDisplayColumns={lineDisplayColumns}
                   customFieldDefinitions={customFieldDefinitions}
                   showActionsCol={showActionsCol}
-                  crewMatrixId={crewMatrixId}
-                  lineId={line.id}
-                  showAssignCol={showAssignCol}
-                  showUnassignCol={showUnassignCol}
-                  canEditRoster={canEditRoster}
-                  showTrafficLight={showTrafficLight}
-                  candidateOptions={candidateOptions}
-                  onChanged={onChanged}
-                  onAssigned={onAssigned}
-                  onUnassigned={onUnassigned}
-                />
-              ))}
-              {otherRows.length > 0 && (
-                <tr>
-                  <td
-                    colSpan={2 + (view === "assigned" ? 2 : 0) + lineDisplayColumns.length + (showActionsCol ? 1 : 0)}
-                    className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide border-t"
-                    style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}
-                  >
-                    Other region ({otherRows.length})
-                  </td>
-                </tr>
-              )}
-              {otherRows.map(({ person, completeness }) => (
-                <CandidateRow
-                  key={person.crew_id}
-                  person={person}
-                  completeness={completeness}
-                  view={view}
-                  lineDisplayColumns={lineDisplayColumns}
-                  customFieldDefinitions={customFieldDefinitions}
-                  showActionsCol={showActionsCol}
+                  showLocationColumn={showLocationColumn}
                   crewMatrixId={crewMatrixId}
                   lineId={line.id}
                   showAssignCol={showAssignCol}
@@ -740,6 +740,7 @@ function CandidateRow({
   lineDisplayColumns,
   customFieldDefinitions,
   showActionsCol,
+  showLocationColumn,
   crewMatrixId,
   lineId,
   showAssignCol,
@@ -753,10 +754,11 @@ function CandidateRow({
 }: {
   person: StaffingCrew;
   completeness: number;
-  view: "assigned" | "available";
+  view: "assigned" | "available" | "other_location";
   lineDisplayColumns: DisplayColumn[];
   customFieldDefinitions: FieldDef[];
   showActionsCol: boolean;
+  showLocationColumn: boolean;
   crewMatrixId: string;
   lineId: string;
   showAssignCol: boolean;
@@ -790,7 +792,7 @@ function CandidateRow({
               title={changed ? (person.rosterChangeNote as string) : "No change on this version"}
             />
           )}
-          {view === "available" && (
+          {view !== "assigned" && (
             <span
               className="rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0"
               style={{ background: badge.bg, color: badge.fg }}
@@ -804,7 +806,7 @@ function CandidateRow({
         {showTrafficLight && changed && (
           <div className="text-[10px] mt-0.5" style={{ color: "#b45309" }}>{person.rosterChangeNote}</div>
         )}
-        {view === "available" && person.availability_date && (
+        {view !== "assigned" && person.availability_date && (
           <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>Free since {formatDate(person.availability_date)}</div>
         )}
       </td>
@@ -818,6 +820,11 @@ function CandidateRow({
             {person.assignment_planned_end_date ? formatDate(person.assignment_planned_end_date) : "Not set"}
           </td>
         </>
+      )}
+      {showLocationColumn && (
+        <td className="px-3 py-2 whitespace-nowrap border-l" style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}>
+          {person.current_location ?? "—"}
+        </td>
       )}
       {lineDisplayColumns.map((dc) => (
         <DocCell
