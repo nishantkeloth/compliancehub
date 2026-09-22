@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { applyApprovedRosterChanges } from "./[id]/roster-change-actions";
 
 type Supa = Awaited<ReturnType<typeof createClient>>;
 
@@ -659,7 +660,7 @@ export async function rejectClient(id: string, reason: string) {
 }
 
 export async function activateCrewMatrix(id: string) {
-  const { supabase, userId } = await requireManage();
+  const { supabase, access, userId } = await requireManage();
   const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
   if (fetchError || !matrix) return { error: "Could not find that crew matrix." };
   if (matrix.status !== "approved") return { error: `This matrix is ${matrix.status.replace(/_/g, " ")}, not approved — it must be approved before it can be activated.` };
@@ -671,6 +672,20 @@ export async function activateCrewMatrix(id: string) {
     }
     return { error: error.message };
   }
+
+  // This matrix may carry approved-but-staged roster change requests
+  // (raised while it was still a new-version draft — see
+  // roster-change-actions.ts's "staged, not applied on approval" design).
+  // Now that it's actually going live and superseding whichever matrix was
+  // active before, apply them to the real, shared crew_assignments rows.
+  // Best-effort: activation itself already succeeded above and must not be
+  // undone by a problem applying one of these.
+  try {
+    await applyApprovedRosterChanges(supabase, access, userId, id);
+  } catch {
+    // best-effort — activation itself already succeeded
+  }
+
   revalidateMatrix(id);
   return {};
 }

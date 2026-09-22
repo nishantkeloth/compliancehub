@@ -246,17 +246,30 @@ export default function StaffingPlanView({
 
   const activeCrew = view === "assigned" ? localCrew : localCandidateCrew;
 
-  // Phase 17 — once a matrix is Active (meaning it's a live, client-facing
-  // roster rather than something still being composed), assign/replace/
-  // unassign stop being instant writes and become roster change requests
-  // that need internal sign-off first. See roster-change-actions.ts for
-  // why: the whole point of the request+approval trail is to build the
-  // expanding timeline on the History tab, and that only makes sense once
-  // there's an activated matrix to hang it off. Draft/pending/approved
-  // (not-yet-active) matrices keep today's direct-write behavior
-  // unchanged — they haven't gone live yet, so there's nothing for an
-  // approval step to protect.
-  const requiresApproval = matrixStatus === "active";
+  // Phase 17 (revised) — crew_assignments rows aren't scoped to a specific
+  // matrix or version at all (they're keyed by crew_id + offshore_site_id,
+  // live across every version of a site's matrix — see requestRosterChange's
+  // comment in roster-change-actions.ts). That means editing "the active
+  // matrix" was really always editing the one shared, client-facing site
+  // roster, with no isolation and no review step protecting it. So:
+  //  - Once a matrix is Active (isLiveMatrix below) — whatever version —
+  //    its Staffing Plan is read-only. No Assign/Replace/Unassign/Request
+  //    Change at all. The only way to change crew is Create New Version.
+  //  - Assign/replace/unassign on a NEW version (version_number > 1,
+  //    meaning it was created via Create New Version) go through the
+  //    Request Change + approval flow instead of writing instantly — but
+  //    approving one doesn't touch the live roster yet either; it's staged
+  //    and only applied when that new version itself is Activated (see
+  //    applyApprovedRosterChanges in roster-change-actions.ts), so the
+  //    still-active previous version stays exactly as the client last saw
+  //    it until the new version has gone through its own full approval
+  //    pipeline and formally goes live.
+  //  - A matrix's very first version (version 1, never yet active) keeps
+  //    today's plain instant assign/unassign — nothing is live for a
+  //    client yet, so there's nothing for an approval step to protect.
+  const isLiveMatrix = matrixStatus === "active";
+  const isNewVersion = (matrixVersion ?? 1) > 1;
+  const requiresApproval = isNewVersion && !isLiveMatrix;
 
   const exportExcel = async () => {
     setExporting(true);
@@ -286,6 +299,11 @@ export default function StaffingPlanView({
 
   return (
     <div>
+      {isLiveMatrix && (
+        <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+          This matrix is live, so its Staffing Plan is read-only. To change crew, use <strong>Create new version</strong> above.
+        </div>
+      )}
       {/* Phase 17 — roster change/approval timeline, folded into the top
           of the Assigned view (collapsed by default, one row tall) rather
           than living on its own top-level tab — this is where the
@@ -421,6 +439,7 @@ export default function StaffingPlanView({
               matrixTitle={matrixTitle}
               canManage={canManage}
               canAssignCrew={canAssignCrew}
+              isLiveMatrix={isLiveMatrix}
               requiresApproval={requiresApproval}
               candidateOptions={candidateOptions}
               onChanged={onChanged}
@@ -451,6 +470,7 @@ function StaffingLineCard({
   matrixTitle,
   canManage,
   canAssignCrew,
+  isLiveMatrix,
   requiresApproval,
   candidateOptions,
   onChanged,
@@ -479,6 +499,7 @@ function StaffingLineCard({
   matrixTitle?: string;
   canManage: boolean;
   canAssignCrew: boolean;
+  isLiveMatrix: boolean;
   requiresApproval: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
   onChanged?: () => void;
@@ -492,8 +513,10 @@ function StaffingLineCard({
   // Assigned. The per-row/per-rank "Share link" / "Email profile links"
   // actions (candidate_resource_profile_links) were removed at the
   // client's request — not needed at either the crew or the rank level.
-  const showAssignCol = view === "available" && canAssignCrew;
-  const showUnassignCol = view === "assigned" && canAssignCrew;
+  // A live (Active) matrix is read-only regardless of view — see
+  // isLiveMatrix's comment in StaffingPlanView.
+  const showAssignCol = !isLiveMatrix && view === "available" && canAssignCrew;
+  const showUnassignCol = !isLiveMatrix && view === "assigned" && canAssignCrew;
   const showActionsCol = showAssignCol || showUnassignCol;
 
   return (

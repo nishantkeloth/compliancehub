@@ -52,6 +52,11 @@ type RosterChangeRequestRow = {
   decided_by: string | null;
   decided_at: string | null;
   decision_comment: string | null;
+  // Staged, not applied on approval — see roster-change-actions.ts. Null
+  // means an approved request hasn't been applied to crew_assignments yet
+  // (it happens once, together with every other approved request on this
+  // matrix, when the matrix itself is Activated).
+  applied_assignment_id: string | null;
   outgoing?: { full_name?: string } | { full_name?: string }[] | null;
   incoming?: { full_name?: string } | { full_name?: string }[] | null;
 };
@@ -104,7 +109,8 @@ function changeDetail(r: RosterChangeRequestRow) {
 
 function requestToNodes(r: RosterChangeRequestRow): Node[] {
   const tone = r.status === "approved" ? "done" : r.status === "rejected" || r.status === "cancelled" ? "fail" : "pending";
-  const statusWord = r.status === "pending_approval" ? "Pending your review" : r.status === "approved" ? "Approved" : r.status === "rejected" ? "Rejected" : "Withdrawn";
+  const approvedWord = r.applied_assignment_id ? "Approved — applied" : "Approved — will apply when this version goes live";
+  const statusWord = r.status === "pending_approval" ? "Pending your review" : r.status === "approved" ? approvedWord : r.status === "rejected" ? "Rejected" : "Withdrawn";
   const nodes: Node[] = [
     {
       id: `change-${r.id}`,

@@ -16,22 +16,49 @@
 //    links elsewhere in this module, so it reuses the app's own
 //    sign-in + RBAC instead of inventing an unauthenticated write
 //    surface for it). Gated on crew.manage, same as a direct
-//    assign/unassign today.
+//    assign/unassign today. Only allowed on a matrix that's a NEW
+//    VERSION (status draft, version_number > 1, i.e. created via Create
+//    New Version) and not yet Active — see the revised design note
+//    below.
 //  - decideRosterChangeRequest: approve or reject a pending request.
-//    Approve applies the change in the same shapes assignCandidateTo
-//    Matrix / unassignCandidateFromMatrix already use (soft-close via
-//    end_date/planned_end_date/assignment_status, insert with
-//    start_date/planned_start_date/actual_start_date), stamping
-//    whichever crew_assignments row(s) it touches with
-//    roster_change_request_id so the timeline can trace the change back
-//    to its request. Gated on crew.matrix.approve_internal, the same
-//    permission that already decides internal approval on the matrix
-//    itself.
+//    Approving no longer writes to crew_assignments at all — it just
+//    records the decision. See "staged, not applied" below for why.
+//    Gated on crew.matrix.approve_internal, the same permission that
+//    already decides internal approval on the matrix itself.
+//  - applyApprovedRosterChanges: called once, from activateCrewMatrix
+//    (app/crew/matrices/actions.ts), at the moment a new-version matrix
+//    actually goes live. Applies every approved-but-not-yet-applied
+//    request for that matrix to the real crew_assignments rows, in the
+//    same insert/soft-close shapes assignCandidateToMatrix /
+//    unassignCandidateFromMatrix already use, stamping whichever row(s)
+//    it touches with roster_change_request_id so the timeline can trace
+//    the change back to its request.
 //  - cancelRosterChangeRequest: lets the original requester withdraw
 //    their own still-pending request.
 //  - listRosterChangeRequests: every request for a matrix (any status),
 //    newest first, with crew names resolved — feeds both the pending-
 //    approvals panel and the expanding timeline.
+//
+// Revised design — staged, not applied on approval: crew_assignments rows
+// aren't scoped to a specific crew_matrix or version at all (crew_id +
+// offshore_site_id only — see assignCandidateToMatrix in
+// staffing-actions.ts). That means every version of a site's matrix shares
+// the exact same live roster. Originally (first Phase 17 build) Request
+// Change lived on the Active matrix and applied immediately on approval.
+// That's wrong: editing "the active matrix" was really always editing the
+// one shared, client-facing roster with no review step actually
+// protecting it, and a still-Active OLD version's Assigned tab would
+// change the instant a request was approved on some other matrix touching
+// the same site. So the flow moved: Request Change now only exists on a
+// NEW VERSION (a draft created via Create New Version, before it's been
+// activated) — see staffing-plan.tsx's isNewVersion/requiresApproval — and
+// approving one stages the change instead of applying it. The staged
+// changes are only applied, all together, when that new version is
+// Activated (the same moment it supersedes the previously-active
+// version), so the live roster the client sees never moves until the new
+// version has gone through its own full approval pipeline. The currently
+// Active matrix itself is read-only (no Request Change, no direct
+// assign/unassign) — see isLiveMatrix in staffing-plan.tsx.
 
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -107,11 +134,17 @@ export async function requestRosterChange(input: {
 
   const { data: matrix, error: matrixErr } = await supabase
     .from("crew_matrices")
-    .select("id, title, matrix_number, offshore_site_id, offshore_sites(name)")
+    .select("id, title, matrix_number, status, version_number, offshore_site_id, offshore_sites(name)")
     .eq("id", input.crewMatrixId)
     .eq("org_id", access.orgId)
     .single();
   if (matrixErr || !matrix) return { error: "Matrix not found." };
+  if (matrix.status === "active") {
+    return { error: "This matrix is live and read-only. Use Create New Version to change crew." };
+  }
+  if ((matrix.version_number ?? 1) <= 1) {
+    return { error: "Roster change requests are only for a new version of the matrix (Create New Version first)." };
+  }
 
   const { data: request, error: insertErr } = await supabase
     .from("roster_change_requests")
@@ -196,97 +229,129 @@ export async function decideRosterChangeRequest(requestId: string, decision: "ap
   if (fetchErr || !request || request.org_id !== access.orgId) return { error: "Request not found." };
   if (request.status !== "pending_approval") return { error: "This request has already been decided." };
 
-  const { data: matrix, error: matrixErr } = await supabase
-    .from("crew_matrices")
-    .select("id, offshore_site_id")
-    .eq("id", request.crew_matrix_id)
-    .single();
-  if (matrixErr || !matrix) return { error: "Matrix not found." };
-
-  if (decision === "rejected") {
-    const { error } = await supabase
-      .from("roster_change_requests")
-      .update({ status: "rejected", decided_by: userId, decided_at: new Date().toISOString(), decision_comment: comment?.trim() || null, updated_at: new Date().toISOString() })
-      .eq("id", requestId);
-    if (error) return { error: error.message };
-    revalidateMatrix(request.crew_matrix_id as string);
-    return {};
-  }
-
-  // Approved — apply the change using the same insert/soft-close shapes
-  // as assignCandidateToMatrix / unassignCandidateFromMatrix in
-  // staffing-actions.ts, stamped with roster_change_request_id.
-  const effectiveDate = request.effective_date as string;
-  let appliedAssignmentId: string | null = null;
-
-  if (request.change_type === "unassign" || request.change_type === "replace") {
-    const { data: assignment, error: findErr } = await supabase
-      .from("crew_assignments")
-      .select("id, offshore_site_id, start_date")
-      .eq("crew_id", request.outgoing_crew_id)
-      .is("end_date", null)
-      .limit(1)
-      .maybeSingle();
-    if (findErr) return { error: findErr.message };
-    if (!assignment) return { error: "The outgoing crew member no longer has an active assignment — refresh and try again." };
-
-    const { error: closeErr } = await supabase
-      .from("crew_assignments")
-      .update({
-        end_date: effectiveDate,
-        planned_end_date: effectiveDate,
-        assignment_status: "cancelled",
-        roster_change_request_id: requestId,
-        updated_by: userId,
-      })
-      .eq("id", assignment.id);
-    if (closeErr) return { error: closeErr.message };
-    await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", request.outgoing_crew_id);
-    appliedAssignmentId = assignment.id as string;
-  }
-
-  if (request.change_type === "assign" || request.change_type === "replace") {
-    const { data: stillActive } = await supabase.from("crew_assignments").select("id").eq("crew_id", request.incoming_crew_id).is("end_date", null).limit(1);
-    if (stillActive && stillActive.length > 0) {
-      return { error: "The incoming crew member already has another active assignment — refresh and try again." };
-    }
-    const { data: newAssignment, error: insertErr } = await supabase
-      .from("crew_assignments")
-      .insert({
-        org_id: access.orgId,
-        crew_id: request.incoming_crew_id,
-        offshore_site_id: matrix.offshore_site_id,
-        start_date: effectiveDate,
-        planned_start_date: effectiveDate,
-        actual_start_date: effectiveDate,
-        assignment_status: "active",
-        roster_change_request_id: requestId,
-        notes: "Assigned via an approved roster change request.",
-        created_by: userId,
-        updated_by: userId,
-      })
-      .select("id")
-      .single();
-    if (insertErr || !newAssignment) return { error: insertErr?.message ?? "Could not create the new assignment." };
-    await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", request.incoming_crew_id);
-    appliedAssignmentId = newAssignment.id as string;
-  }
-
-  const { error: decideErr } = await supabase
+  // Approving no longer touches crew_assignments here — see this file's
+  // top comment ("staged, not applied on approval"). It just records the
+  // decision; applyApprovedRosterChanges (below) does the actual
+  // crew_assignments write, once, when this matrix is Activated.
+  const { error } = await supabase
     .from("roster_change_requests")
     .update({
-      status: "approved",
+      status: decision,
       decided_by: userId,
       decided_at: new Date().toISOString(),
       decision_comment: comment?.trim() || null,
-      applied_assignment_id: appliedAssignmentId,
       updated_at: new Date().toISOString(),
     })
     .eq("id", requestId);
-  if (decideErr) return { error: decideErr.message };
+  if (error) return { error: error.message };
 
   revalidateMatrix(request.crew_matrix_id as string);
   return {};
+}
+
+// Called from activateCrewMatrix (app/crew/matrices/actions.ts) right
+// after a new-version matrix's status flips to "active" — applies every
+// approved-but-not-yet-applied roster change request for that matrix to
+// the real, shared crew_assignments rows, in the same insert/soft-close
+// shapes assignCandidateToMatrix / unassignCandidateFromMatrix use,
+// stamping whichever row(s) it touches with roster_change_request_id.
+// Deliberately takes the caller's own already-authenticated supabase
+// client/access/userId rather than re-deriving them — this only ever runs
+// as the last step of an activation that has already been permission-
+// checked (crew.matrix.manage) and already committed the status change;
+// re-authenticating here would just be a second, redundant check.
+// Best-effort per request: one request failing (e.g. someone else already
+// moved that crew member elsewhere in the meantime) is skipped, not
+// thrown — it must never block or partially-undo the activation that
+// already succeeded before this runs.
+export async function applyApprovedRosterChanges(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  access: { orgId: string | null },
+  userId: string,
+  crewMatrixId: string
+): Promise<{ applied: number; skipped: string[] }> {
+  const { data: matrix } = await supabase.from("crew_matrices").select("id, offshore_site_id").eq("id", crewMatrixId).single();
+  if (!matrix) return { applied: 0, skipped: [] };
+
+  const { data: requests } = await supabase
+    .from("roster_change_requests")
+    .select("*")
+    .eq("crew_matrix_id", crewMatrixId)
+    .eq("status", "approved")
+    .is("applied_assignment_id", null);
+
+  let applied = 0;
+  const skipped: string[] = [];
+
+  for (const request of requests ?? []) {
+    const effectiveDate = request.effective_date as string;
+    let appliedAssignmentId: string | null = null;
+
+    if (request.change_type === "unassign" || request.change_type === "replace") {
+      const { data: assignment } = await supabase
+        .from("crew_assignments")
+        .select("id")
+        .eq("crew_id", request.outgoing_crew_id)
+        .is("end_date", null)
+        .limit(1)
+        .maybeSingle();
+      if (!assignment) {
+        skipped.push(request.id as string);
+        continue;
+      }
+      await supabase
+        .from("crew_assignments")
+        .update({
+          end_date: effectiveDate,
+          planned_end_date: effectiveDate,
+          assignment_status: "cancelled",
+          roster_change_request_id: request.id,
+          updated_by: userId,
+        })
+        .eq("id", assignment.id);
+      await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", request.outgoing_crew_id);
+      appliedAssignmentId = assignment.id as string;
+    }
+
+    if (request.change_type === "assign" || request.change_type === "replace") {
+      const { data: stillActive } = await supabase.from("crew_assignments").select("id").eq("crew_id", request.incoming_crew_id).is("end_date", null).limit(1);
+      if (stillActive && stillActive.length > 0) {
+        skipped.push(request.id as string);
+        continue;
+      }
+      const { data: newAssignment } = await supabase
+        .from("crew_assignments")
+        .insert({
+          org_id: access.orgId,
+          crew_id: request.incoming_crew_id,
+          offshore_site_id: matrix.offshore_site_id,
+          start_date: effectiveDate,
+          planned_start_date: effectiveDate,
+          actual_start_date: effectiveDate,
+          assignment_status: "active",
+          roster_change_request_id: request.id,
+          notes: "Assigned when this crew matrix version was activated (approved roster change).",
+          created_by: userId,
+          updated_by: userId,
+        })
+        .select("id")
+        .single();
+      if (!newAssignment) {
+        skipped.push(request.id as string);
+        continue;
+      }
+      await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", request.incoming_crew_id);
+      appliedAssignmentId = newAssignment.id as string;
+    }
+
+    await supabase
+      .from("roster_change_requests")
+      .update({ applied_assignment_id: appliedAssignmentId, updated_at: new Date().toISOString() })
+      .eq("id", request.id);
+    applied++;
+  }
+
+  return { applied, skipped };
 }
 
 export async function listRosterChangeRequests(crewMatrixId: string) {
@@ -295,7 +360,7 @@ export async function listRosterChangeRequests(crewMatrixId: string) {
   const { data, error } = await supabase
     .from("roster_change_requests")
     .select(
-      "id, change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes, status, requested_by, requested_at, decided_by, decided_at, decision_comment, crew_matrix_line_id, " +
+      "id, change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes, status, requested_by, requested_at, decided_by, decided_at, decision_comment, applied_assignment_id, crew_matrix_line_id, " +
         "outgoing:crew_profiles!outgoing_crew_id(full_name), incoming:crew_profiles!incoming_crew_id(full_name)"
     )
     .eq("crew_matrix_id", crewMatrixId)
