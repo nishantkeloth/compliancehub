@@ -608,7 +608,6 @@ function StaffingLineCard({
   // StaffingPlanView.
   const showAssignCol = !readOnlyStaffing && (view === "available" || view === "other_location") && canAssignCrew;
   const showUnassignCol = !readOnlyStaffing && view === "assigned" && canAssignCrew;
-  const showActionsCol = showAssignCol || showUnassignCol;
   const viewNoun = view === "assigned" ? "assigned" : view === "available" ? "available" : "in other locations";
 
   return (
@@ -646,6 +645,17 @@ function StaffingLineCard({
                     <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom" style={{ color: "var(--ch-sub)", background: "var(--ch-paper)" }}>Roll Off Date</th>
                   </>
                 )}
+                {showAssignCol && (
+                  // Kept up near Name/Nationality (instead of after every
+                  // document column, at the far right of what's often a very
+                  // wide, horizontally-scrolling table) so it's visible
+                  // without scrolling — this is the only action on the
+                  // Available/Other Location views, so it can live here
+                  // instead of tucked away as a generic "Actions" column.
+                  <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
+                    Start Date &amp; Planned End Date
+                  </th>
+                )}
                 {showLocationColumn && (
                   <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>Current Location</th>
                 )}
@@ -659,7 +669,7 @@ function StaffingLineCard({
                     {formatCategoryLabel(g.category)}
                   </th>
                 ))}
-                {showActionsCol && (
+                {showUnassignCol && (
                   <th rowSpan={3} className="text-left font-semibold px-3 py-2 whitespace-nowrap align-bottom border-l" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
                     Actions
                   </th>
@@ -719,7 +729,6 @@ function StaffingLineCard({
                   view={view}
                   lineDisplayColumns={lineDisplayColumns}
                   customFieldDefinitions={customFieldDefinitions}
-                  showActionsCol={showActionsCol}
                   showLocationColumn={showLocationColumn}
                   crewMatrixId={crewMatrixId}
                   lineId={line.id}
@@ -753,7 +762,6 @@ function CandidateRow({
   view,
   lineDisplayColumns,
   customFieldDefinitions,
-  showActionsCol,
   showLocationColumn,
   crewMatrixId,
   lineId,
@@ -771,7 +779,6 @@ function CandidateRow({
   view: "assigned" | "available" | "other_location";
   lineDisplayColumns: DisplayColumn[];
   customFieldDefinitions: FieldDef[];
-  showActionsCol: boolean;
   showLocationColumn: boolean;
   crewMatrixId: string;
   lineId: string;
@@ -835,6 +842,23 @@ function CandidateRow({
           </td>
         </>
       )}
+      {showAssignCol && (
+        // Placed here (right after Name/Nationality) rather than after
+        // every document column — see the matching header comment above.
+        <RowActions
+          crewId={person.crew_id}
+          crewMatrixId={crewMatrixId}
+          lineId={lineId}
+          personName={person.full_name}
+          showAssign={showAssignCol}
+          showUnassign={showUnassignCol}
+          canEditRoster={canEditRoster}
+          candidateOptions={candidateOptions}
+          onChanged={onChanged}
+          onAssigned={onAssigned}
+          onUnassigned={onUnassigned}
+        />
+      )}
       {showLocationColumn && (
         <td className="px-3 py-2 whitespace-nowrap border-l" style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}>
           {person.current_location ?? "—"}
@@ -849,7 +873,7 @@ function CandidateRow({
           fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === dc.docType.id || f.applies_to_document_type_id === null)}
         />
       ))}
-      {showActionsCol && (
+      {showUnassignCol && (
         <RowActions
           crewId={person.crew_id}
           crewMatrixId={crewMatrixId}
