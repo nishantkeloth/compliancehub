@@ -35,6 +35,7 @@ export const STATUS_PILLS: Record<string, { bg: string; fg: string }> = {
   // Crew matrix workflow statuses (app/crew/matrices)
   pending_internal_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
   pending_client_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  pending_approval: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
   approved: { bg: "var(--ch-pass-bg)", fg: "var(--ch-pass)" },
   superseded: { bg: "var(--ch-paper)", fg: "var(--ch-sub)" },
   rejected: { bg: "var(--ch-fail-bg)", fg: "var(--ch-fail)" },

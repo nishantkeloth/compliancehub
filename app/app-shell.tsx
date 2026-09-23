@@ -112,6 +112,9 @@ export default async function AppShell({
   if (can(access, "ai.configure")) {
     adminItems.push({ href: "/team/ai", key: "ai-settings", label: "AI Settings" });
   }
+  if (can(access, "workflows.manage")) {
+    adminItems.push({ href: "/team/workflows", key: "workflows", label: "Approval Workflows" });
+  }
 
   const navSections: NavSection[] = [
     { title: "Contracts & Projects", items: contractItems },

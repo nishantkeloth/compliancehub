@@ -12,6 +12,9 @@ import {
   returnForCorrection,
   approveClient,
   rejectClient,
+  approveCurrentStage,
+  rejectCurrentStage,
+  returnCurrentStageForCorrection,
   activateCrewMatrix,
   cancelCrewMatrix,
   createNewVersion,
@@ -44,6 +47,7 @@ type Matrix = {
 };
 type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
 type VersionRow = { id: string; version_number: number; status: string; created_at: string };
+type WorkflowStage = { name: string; sequence: number; totalStages: number; requiredPermission: string };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
@@ -69,6 +73,8 @@ export default function MatrixDetail({
   canSubmit,
   canApproveInternal,
   canApproveClient,
+  workflowStage,
+  canActCurrentStage,
   aiVisible = false,
 }: {
   matrix: Matrix;
@@ -89,6 +95,8 @@ export default function MatrixDetail({
   canSubmit: boolean;
   canApproveInternal: boolean;
   canApproveClient: boolean;
+  workflowStage: WorkflowStage | null;
+  canActCurrentStage: boolean;
   aiVisible?: boolean;
 }) {
   const router = useRouter();
@@ -228,6 +236,11 @@ export default function MatrixDetail({
             )}
             <h1 className="text-lg font-semibold" style={{ color: "var(--ch-ink)" }}>{matrix.title}</h1>
             <StatusPill status={matrix.status} />
+            {matrix.status === "pending_approval" && workflowStage && (
+              <span className="text-xs font-medium" style={{ color: "var(--ch-sub)" }}>
+                Stage {workflowStage.sequence} of {workflowStage.totalStages}: {workflowStage.name}
+              </span>
+            )}
           </div>
           <div className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>
             {matrix.site_name} · {matrix.project_name}
@@ -287,6 +300,8 @@ export default function MatrixDetail({
         canSubmit={canSubmit}
         canApproveInternal={canApproveInternal}
         canApproveClient={canApproveClient}
+        pendingApprovalStage={workflowStage}
+        canActCurrentStage={canActCurrentStage}
         busy={busy}
         hasLines={lines.length > 0}
         onSubmit={() => run(() => submitForApproval(matrix.id))}
@@ -295,6 +310,9 @@ export default function MatrixDetail({
         onReturnForCorrection={(comment) => run(() => returnForCorrection(matrix.id, comment))}
         onApproveClient={(ref) => run(() => approveClient(matrix.id, ref))}
         onRejectClient={(reason) => run(() => rejectClient(matrix.id, reason))}
+        onApproveStage={(comment) => run(() => approveCurrentStage(matrix.id, comment))}
+        onRejectStage={(reason) => run(() => rejectCurrentStage(matrix.id, reason))}
+        onReturnStage={(comment) => run(() => returnCurrentStageForCorrection(matrix.id, comment))}
         onActivate={() => run(() => activateCrewMatrix(matrix.id))}
         onCancel={() => run(() => cancelCrewMatrix(matrix.id))}
         onNewVersion={submitNewVersion}
@@ -521,6 +539,8 @@ function WorkflowActions({
   canSubmit,
   canApproveInternal,
   canApproveClient,
+  pendingApprovalStage,
+  canActCurrentStage,
   busy,
   hasLines,
   onSubmit,
@@ -529,6 +549,9 @@ function WorkflowActions({
   onReturnForCorrection,
   onApproveClient,
   onRejectClient,
+  onApproveStage,
+  onRejectStage,
+  onReturnStage,
   onActivate,
   onCancel,
   onNewVersion,
@@ -538,6 +561,8 @@ function WorkflowActions({
   canSubmit: boolean;
   canApproveInternal: boolean;
   canApproveClient: boolean;
+  pendingApprovalStage: { name: string; sequence: number; totalStages: number } | null;
+  canActCurrentStage: boolean;
   busy: boolean;
   hasLines: boolean;
   onSubmit: () => void;
@@ -546,6 +571,9 @@ function WorkflowActions({
   onReturnForCorrection: (comment: string) => void;
   onApproveClient: (ref: string) => void;
   onRejectClient: (reason: string) => void;
+  onApproveStage: (comment: string) => void;
+  onRejectStage: (reason: string) => void;
+  onReturnStage: (comment: string) => void;
   onActivate: () => void;
   onCancel: () => void;
   onNewVersion: () => void;
@@ -593,6 +621,13 @@ function WorkflowActions({
     }
     if (canApproveInternal && canApproveClient) {
       buttons.push(btn("Return for correction", () => setOpenAction("return")));
+    }
+  }
+  if (status === "pending_approval" && pendingApprovalStage) {
+    if (canActCurrentStage) {
+      buttons.push(btn(`Approve — ${pendingApprovalStage.name}`, () => setOpenAction("approveStage"), "primary"));
+      buttons.push(btn("Reject", () => setOpenAction("rejectStage"), "danger"));
+      buttons.push(btn("Return for correction", () => setOpenAction("returnStage")));
     }
   }
   if (status === "approved") {
@@ -682,6 +717,51 @@ function WorkflowActions({
               setText={setText}
               onConfirm={() => {
                 onRejectClient(text);
+                close();
+              }}
+              onCancel={close}
+            />
+          )}
+          {openAction === "approveStage" && (
+            <ActionForm
+              label={`Comment for "${pendingApprovalStage?.name ?? "this stage"}" (optional)`}
+              placeholder="Optional comment"
+              required={false}
+              confirmLabel="Confirm approval"
+              text={text}
+              setText={setText}
+              onConfirm={() => {
+                onApproveStage(text);
+                close();
+              }}
+              onCancel={close}
+            />
+          )}
+          {openAction === "rejectStage" && (
+            <ActionForm
+              label="Rejection reason (required)"
+              placeholder="Why is this being rejected?"
+              required
+              confirmLabel="Confirm rejection"
+              text={text}
+              setText={setText}
+              onConfirm={() => {
+                onRejectStage(text);
+                close();
+              }}
+              onCancel={close}
+            />
+          )}
+          {openAction === "returnStage" && (
+            <ActionForm
+              label="Correction comment (optional)"
+              placeholder="What needs to be corrected?"
+              required={false}
+              confirmLabel="Return to draft"
+              text={text}
+              setText={setText}
+              onConfirm={() => {
+                onReturnStage(text);
                 close();
               }}
               onCancel={close}

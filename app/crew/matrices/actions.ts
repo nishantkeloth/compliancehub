@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { applyApprovedRosterChanges } from "./[id]/roster-change-actions";
+import { startWorkflowInstance, getCurrentStage, actOnCurrentStage, cancelCurrentInstance } from "@/lib/workflow";
 
 type Supa = Awaited<ReturnType<typeof createClient>>;
 
@@ -538,15 +539,183 @@ export async function removeLineClientRequirement(id: string, crewMatrixId: stri
 
 /* ================= Workflow ================= */
 
+// NEW submissions go through the generic workflow engine (see lib/
+// workflow.ts) and land in 'pending_approval', walking through however
+// many stages the org's active Crew Matrix template defines (1, 2, or
+// any other number — configurable from the Approval Workflows admin
+// screen). approveInternal/rejectInternal/returnForCorrection/
+// approveClient/rejectClient below are UNCHANGED and keep servicing any
+// matrix that was already sitting in pending_internal_approval/pending_
+// client_approval before this shipped — they are not reachable from a
+// fresh submission anymore, but stay in place for backward compatibility.
 export async function submitForApproval(id: string) {
-  const { supabase, userId } = await requireSubmit();
+  const { supabase, access, userId } = await requireSubmit();
   const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
   if (fetchError || !matrix) return { error: "Could not find that crew matrix." };
   if (matrix.status !== "draft") return { error: `This matrix is ${matrix.status.replace(/_/g, " ")}, not draft — it can't be submitted again.` };
 
+  const result = await startWorkflowInstance(supabase, {
+    orgId: access.orgId!,
+    entityType: "crew_matrix",
+    entityId: id,
+    userId,
+    // Fallback gate if an org somehow has no active template at all
+    // (see startWorkflowInstance's lazy-create path) — same permission
+    // that used to gate the internal-approval stage.
+    managePermission: "crew.matrix.approve_internal",
+  });
+  if ("error" in result) return { error: result.error };
+
+  const update: Record<string, unknown> = { submitted_by: userId, updated_by: userId };
+  if (result.autoApproved) {
+    update.status = "approved";
+    update.approved_by = userId;
+    update.approved_at = new Date().toISOString();
+  } else {
+    update.status = "pending_approval";
+  }
+  const { error } = await supabase.from("crew_matrices").update(update).eq("id", id);
+  if (error) return { error: error.message };
+  revalidateMatrix(id);
+  return {};
+}
+
+// ---- Generic-engine actions for the new 'pending_approval' status ----
+// (see submitForApproval above). Permission to act is dynamic — it comes
+// from whatever the current stage names, not a single fixed permission —
+// so these check `can()` against the stage's required_permission directly
+// instead of going through requirePermission()/requireApproveInternal().
+
+export async function approveCurrentStage(id: string, comment?: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+  const access = await getEffectiveAccess(supabase, user.id);
+  if (!access.orgId) return { error: "No company context." };
+
+  const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
+  if (fetchError || !matrix) return { error: "Could not find that crew matrix." };
+  if (matrix.status !== "pending_approval") return { error: `This matrix is ${matrix.status.replace(/_/g, " ")}, not pending approval.` };
+
+  const stage = await getCurrentStage(supabase, "crew_matrix", id);
+  if (!stage) return { error: "There's no approval currently pending on this matrix." };
+  if (!can(access, stage.requiredPermission)) return { error: `You don't have permission to approve the "${stage.name}" stage.` };
+
+  const trimmed = comment?.trim() || null;
+  const result = await actOnCurrentStage(supabase, {
+    orgId: access.orgId,
+    entityType: "crew_matrix",
+    entityId: id,
+    instanceId: stage.instanceId,
+    stageId: stage.stageId,
+    stageSequence: stage.sequence,
+    stageName: stage.name,
+    userId: user.id,
+    decision: "approve",
+    comment: trimmed,
+  });
+
+  if (result.outcome === "completed") {
+    // Preserve client_approval_reference's role as "the reference/comment
+    // the final approval step was recorded with", regardless of what that
+    // final stage happens to be named.
+    const { error } = await supabase
+      .from("crew_matrices")
+      .update({
+        status: "approved",
+        approved_by: user.id,
+        approved_at: new Date().toISOString(),
+        client_approval_reference: trimmed,
+        rejection_reason: null,
+        updated_by: user.id,
+      })
+      .eq("id", id);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase.from("crew_matrices").update({ rejection_reason: trimmed, updated_by: user.id }).eq("id", id);
+    if (error) return { error: error.message };
+  }
+
+  revalidateMatrix(id);
+  return {};
+}
+
+export async function rejectCurrentStage(id: string, reason: string) {
+  reason = reason.trim();
+  if (!reason) return { error: "A rejection reason is required." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+  const access = await getEffectiveAccess(supabase, user.id);
+  if (!access.orgId) return { error: "No company context." };
+
+  const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
+  if (fetchError || !matrix) return { error: "Could not find that crew matrix." };
+  if (matrix.status !== "pending_approval") return { error: `This matrix is ${matrix.status.replace(/_/g, " ")}, not pending approval.` };
+
+  const stage = await getCurrentStage(supabase, "crew_matrix", id);
+  if (!stage) return { error: "There's no approval currently pending on this matrix." };
+  if (!can(access, stage.requiredPermission)) return { error: `You don't have permission to reject the "${stage.name}" stage.` };
+
+  await actOnCurrentStage(supabase, {
+    orgId: access.orgId,
+    entityType: "crew_matrix",
+    entityId: id,
+    instanceId: stage.instanceId,
+    stageId: stage.stageId,
+    stageSequence: stage.sequence,
+    stageName: stage.name,
+    userId: user.id,
+    decision: "reject",
+    comment: reason,
+  });
+
+  const { error } = await supabase.from("crew_matrices").update({ status: "rejected", rejection_reason: reason, updated_by: user.id }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidateMatrix(id);
+  return {};
+}
+
+// Returning to draft is allowed to whoever can act on the CURRENT stage —
+// a simpler, generic stand-in for the old hardcoded rule (only someone
+// with client-approval permission could return a matrix that had already
+// reached the client stage). With an arbitrary number of configurable
+// stages there's no fixed "more senior" stage to special-case.
+export async function returnCurrentStageForCorrection(id: string, comment: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+  const access = await getEffectiveAccess(supabase, user.id);
+  if (!access.orgId) return { error: "No company context." };
+
+  const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
+  if (fetchError || !matrix) return { error: "Could not find that crew matrix." };
+  if (matrix.status !== "pending_approval") return { error: `This matrix is ${matrix.status.replace(/_/g, " ")}, not pending approval.` };
+
+  const stage = await getCurrentStage(supabase, "crew_matrix", id);
+  if (!stage) return { error: "There's no approval currently pending on this matrix." };
+  if (!can(access, stage.requiredPermission)) return { error: "You don't have permission to return this matrix for correction." };
+
+  const trimmed = comment?.trim() || null;
+  await cancelCurrentInstance(supabase, {
+    orgId: access.orgId,
+    entityType: "crew_matrix",
+    entityId: id,
+    userId: user.id,
+    comment: trimmed,
+    eventType: "returned",
+  });
+
   const { error } = await supabase
     .from("crew_matrices")
-    .update({ status: "pending_internal_approval", submitted_by: userId, updated_by: userId })
+    .update({ status: "draft", rejection_reason: trimmed, submitted_by: null, updated_by: user.id })
     .eq("id", id);
   if (error) return { error: error.message };
   revalidateMatrix(id);
@@ -725,7 +894,7 @@ export async function activateCrewMatrix(id: string) {
 }
 
 export async function cancelCrewMatrix(id: string) {
-  const { supabase, userId } = await requireManage();
+  const { supabase, access, userId } = await requireManage();
   const { data: matrix, error: fetchError } = await supabase.from("crew_matrices").select("status").eq("id", id).single();
   if (fetchError || !matrix) return { error: "Could not find that crew matrix." };
   if (["active", "superseded", "cancelled"].includes(matrix.status)) {
@@ -734,6 +903,18 @@ export async function cancelCrewMatrix(id: string) {
 
   const { error } = await supabase.from("crew_matrices").update({ status: "cancelled", updated_by: userId }).eq("id", id);
   if (error) return { error: error.message };
+
+  // Best-effort: close out any workflow instance still in progress (only
+  // relevant for a matrix cancelled while pending_approval) so it doesn't
+  // linger as "in_progress" forever.
+  try {
+    if (access.orgId) {
+      await cancelCurrentInstance(supabase, { orgId: access.orgId, entityType: "crew_matrix", entityId: id, userId, eventType: "cancelled" });
+    }
+  } catch {
+    // non-fatal — the matrix is already cancelled above
+  }
+
   revalidateMatrix(id);
   return {};
 }

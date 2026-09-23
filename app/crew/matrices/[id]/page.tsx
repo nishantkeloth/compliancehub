@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { getCurrentStage } from "@/lib/workflow";
 import MatrixDetail from "./matrix-detail";
 import { REASON_CODES } from "./roster-change-shared";
 
@@ -41,18 +42,22 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   //   4) the two crew_documents lookups, which need both a crew-id list
   //      from stage 3 and the required document-type-id list from stage 3
   const [
-    { data: lines },
-    { data: versions },
-    { data: jobRoles },
-    { data: skills },
-    { data: rotationTemplates },
-    { data: documentTypes },
-    { data: aiSettings },
-    { data: siteAssignments },
-    { data: allActiveAssignments },
-    { data: fieldDefs },
-    { data: stagedChanges },
+    [
+      { data: lines },
+      { data: versions },
+      { data: jobRoles },
+      { data: skills },
+      { data: rotationTemplates },
+      { data: documentTypes },
+      { data: aiSettings },
+      { data: siteAssignments },
+      { data: allActiveAssignments },
+      { data: fieldDefs },
+      { data: stagedChanges },
+    ],
+    workflowStage,
   ] = await Promise.all([
+    Promise.all([
     supabase
       .from("crew_matrix_lines")
       .select("*, job_roles(name), rotation_templates(name)")
@@ -117,9 +122,17 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       .eq("org_id", access.orgId)
       .eq("status", "approved")
       .is("applied_assignment_id", null),
+    ]),
+    // The current stage of this matrix's in-progress approval workflow
+    // (see lib/workflow.ts) — null once it's approved/rejected/cancelled,
+    // or if it was submitted before this feature shipped and is still
+    // sitting in the old pending_internal_approval/pending_client_approval
+    // path, which doesn't use workflow_instances at all.
+    getCurrentStage(supabase, "crew_matrix", id),
   ]);
 
   const aiVisible = aiSettings?.ai_enabled ?? true;
+  const canActCurrentStage = workflowStage ? can(access, workflowStage.requiredPermission) : false;
 
   const lineIds = (lines ?? []).map((l) => l.id as string);
   // Staffing Plan (real crew, by rank): matched to a line by
@@ -468,6 +481,12 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       canSubmit={can(access, "crew.matrix.submit")}
       canApproveInternal={can(access, "crew.matrix.approve_internal")}
       canApproveClient={can(access, "crew.matrix.approve_client")}
+      workflowStage={
+        workflowStage
+          ? { name: workflowStage.name, sequence: workflowStage.sequence, totalStages: workflowStage.totalStages, requiredPermission: workflowStage.requiredPermission }
+          : null
+      }
+      canActCurrentStage={canActCurrentStage}
       aiVisible={aiVisible}
     />
   );
