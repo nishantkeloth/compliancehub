@@ -65,8 +65,23 @@ export default function AcceptInviteForm({ token }: { token: string }) {
           window.location.href = "/";
           return;
         }
+        // Anything else redeeming can fail on here means the CURRENT
+        // session isn't a good one to be signed in as — most commonly a
+        // stale session this browser cached from an account that's since
+        // been deleted (auth.uid() then points at a user id that no
+        // longer exists, which is exactly what trips the
+        // invites_redeemed_by foreign key). Sign it out rather than
+        // leaving the visitor stuck logged in as a broken session, and
+        // reset the attempt flag so a fresh sign-up/sign-in actually gets
+        // retried instead of silently doing nothing.
+        await supabase.auth.signOut().catch(() => {});
+        redeemAttempted.current = false;
         setFinishing(false);
-        setError(redeemError.message);
+        setError(
+          /foreign key|violates/i.test(redeemError.message)
+            ? "Your browser had a stale login cached from an earlier attempt — signed you out of it. Please try again."
+            : redeemError.message
+        );
         return;
       }
       window.location.href = "/";
