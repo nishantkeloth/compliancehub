@@ -155,25 +155,33 @@ export async function createOffshoreSite(formData: FormData) {
   const name = str(formData, "name");
   if (!name) return { error: "Name is required." };
 
-  const { error } = await supabase.from("offshore_sites").insert({
-    org_id: access.orgId,
-    contractor_id: optStr(formData, "contractorId"),
-    project_id: optStr(formData, "projectId"),
-    name,
-    code: optStr(formData, "code"),
-    site_type: str(formData, "siteType") || "other",
-    country: optStr(formData, "country"),
-    operating_region: optStr(formData, "operatingRegion"),
-    port_or_heliport: optStr(formData, "portOrHeliport"),
-    crew_change_location: optStr(formData, "crewChangeLocation"),
-    standard_rotation_template_id: optStr(formData, "standardRotationTemplateId"),
-    notes: optStr(formData, "notes"),
-    created_by: userId,
-    updated_by: userId,
-  });
+  const { data, error } = await supabase
+    .from("offshore_sites")
+    .insert({
+      org_id: access.orgId,
+      contractor_id: optStr(formData, "contractorId"),
+      project_id: optStr(formData, "projectId"),
+      name,
+      code: optStr(formData, "code"),
+      site_type: str(formData, "siteType") || "other",
+      country: optStr(formData, "country"),
+      operating_region: optStr(formData, "operatingRegion"),
+      port_or_heliport: optStr(formData, "portOrHeliport"),
+      crew_change_location: optStr(formData, "crewChangeLocation"),
+      standard_rotation_template_id: optStr(formData, "standardRotationTemplateId"),
+      notes: optStr(formData, "notes"),
+      created_by: userId,
+      updated_by: userId,
+    })
+    .select("id")
+    .single();
   if (error) return { error: error.message };
   revalidateSetup();
-  return {};
+  // id is new — existing callers (Sites page) ignored the return value
+  // before, so this is additive. The New Crew Matrix form's inline
+  // "+ New site" quick-add uses it to select the site it just created
+  // without a full page reload.
+  return { id: data?.id as string | undefined };
 }
 
 export async function updateOffshoreSite(id: string, formData: FormData) {

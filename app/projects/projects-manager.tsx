@@ -125,6 +125,11 @@ export default function ProjectsManager({
               {p.expected_pob != null && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>POB {p.expected_pob}</span>}
               {isTempId(p.id) && <span className="text-xs ml-2 italic" style={{ color: "var(--ch-sub)" }}>Saving…</span>}
             </div>
+            {canManage && !isTempId(p.id) && (
+              <Link href={`/projects/${p.id}?edit=1`} className="text-xs font-semibold ch-link-navy">
+                Edit
+              </Link>
+            )}
             {canManage && (
               <button onClick={() => submitDelete(p, i)} disabled={isTempId(p.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>
                 Delete

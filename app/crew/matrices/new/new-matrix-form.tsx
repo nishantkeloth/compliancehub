@@ -3,6 +3,9 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewMatrix, generateDraftFromManning } from "../actions";
+import { createOffshoreSite } from "@/app/crew/setup/actions";
+import { COUNTRIES } from "@/lib/countries";
+import { REGIONS } from "@/lib/regions";
 import AiGenerate from "./ai-generate";
 
 type Project = {
@@ -14,6 +17,8 @@ type Project = {
 };
 type Site = { id: string; name: string; project_id: string | null };
 
+const SITE_TYPES = ["vessel", "rig", "platform", "barge", "camp", "fpso", "other"];
+
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
@@ -21,7 +26,7 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 
 type Mode = "blank" | "generate" | "ai";
 
-export default function NewMatrixForm({ projects, sites, aiVisible }: { projects: Project[]; sites: Site[]; aiVisible: boolean }) {
+export default function NewMatrixForm({ projects, sites: initialSites, aiVisible }: { projects: Project[]; sites: Site[]; aiVisible: boolean }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [mode, setMode] = useState<Mode>("blank");
@@ -29,6 +34,17 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
   const [projectId, setProjectId] = useState(defaultProject?.id ?? "");
   const [offshoreSiteId, setOffshoreSiteId] = useState("");
   const [title, setTitle] = useState("");
+  // Sites created inline below (via "+ New site") are appended here so the
+  // dropdown picks them up immediately — no full page reload needed just to
+  // create the site a matrix is going to be built for.
+  const [sites, setSites] = useState<Site[]>(initialSites);
+  const [addingSite, setAddingSite] = useState(false);
+  const [newSiteName, setNewSiteName] = useState("");
+  const [newSiteType, setNewSiteType] = useState("vessel");
+  const [newSiteCountry, setNewSiteCountry] = useState("");
+  const [newSiteRegion, setNewSiteRegion] = useState("");
+  const [siteSubmitting, setSiteSubmitting] = useState(false);
+  const [siteError, setSiteError] = useState<string | null>(null);
   // Pre-filled from the selected project's own planned dates / expected POB
   // (see onProjectChange) — still just a starting point, freely editable.
   const [effectiveFrom, setEffectiveFrom] = useState(defaultProject?.planned_start_date ?? "");
@@ -43,10 +59,41 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
   const onProjectChange = (id: string) => {
     setProjectId(id);
     setOffshoreSiteId("");
+    setAddingSite(false);
+    setSiteError(null);
     const project = projects.find((p) => p.id === id);
     setEffectiveFrom(project?.planned_start_date ?? "");
     setEffectiveTo(project?.planned_end_date ?? "");
     setExpectedPob(project?.expected_pob?.toString() ?? "");
+  };
+
+  const submitNewSite = () => {
+    if (!projectId || !newSiteName.trim() || siteSubmitting) return;
+    setSiteError(null);
+    setSiteSubmitting(true);
+    const fd = new FormData();
+    fd.set("projectId", projectId);
+    fd.set("name", newSiteName.trim());
+    fd.set("siteType", newSiteType);
+    fd.set("country", newSiteCountry);
+    fd.set("operatingRegion", newSiteRegion);
+    startTransition(async () => {
+      const res = await createOffshoreSite(fd);
+      setSiteSubmitting(false);
+      if (res?.error) {
+        setSiteError(res.error);
+        return;
+      }
+      if (res?.id) {
+        setSites((cur) => [...cur, { id: res.id as string, name: newSiteName.trim(), project_id: projectId }]);
+        setOffshoreSiteId(res.id);
+      }
+      setAddingSite(false);
+      setNewSiteName("");
+      setNewSiteType("vessel");
+      setNewSiteCountry("");
+      setNewSiteRegion("");
+    });
   };
 
   const submitBlank = () => {
@@ -142,11 +189,79 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
-          {projectId && eligibleSites.length === 0 && (
+          {projectId && eligibleSites.length === 0 && !addingSite && (
             <span className="block mt-1" style={{ color: "var(--ch-sub)" }}>This project has no offshore sites yet.</span>
+          )}
+          {projectId && !addingSite && (
+            <button type="button" onClick={() => setAddingSite(true)} className="block mt-1 text-xs font-semibold ch-link-navy">
+              + New site
+            </button>
           )}
         </label>
       </div>
+
+      {addingSite && (
+        <div className="rounded-lg border p-3 mb-3" style={{ borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
+          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-navy)" }}>New offshore site</div>
+          {siteError && (
+            <div className="text-xs mb-2 rounded-lg px-2.5 py-1.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{siteError}</div>
+          )}
+          <div className="grid gap-2 sm:grid-cols-2 mb-2">
+            <input
+              className={`${inputCls} w-full`}
+              style={inputStyle}
+              placeholder="Site name, e.g. MV Ocean Guardian"
+              value={newSiteName}
+              onChange={(e) => setNewSiteName(e.target.value)}
+              autoFocus
+            />
+            <select className={`${inputCls} w-full`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
+              {SITE_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 mb-2">
+            <select className={`${inputCls} w-full`} style={inputStyle} value={newSiteCountry} onChange={(e) => setNewSiteCountry(e.target.value)}>
+              <option value="">Country…</option>
+              {COUNTRIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <select className={`${inputCls} w-full`} style={inputStyle} value={newSiteRegion} onChange={(e) => setNewSiteRegion(e.target.value)}>
+              <option value="">Operating region…</option>
+              {REGIONS.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>
+            Setting the operating region now is what lets Staffing Plan tell &ldquo;available&rdquo; crew
+            from &ldquo;other location&rdquo; ones later — you can also add it afterward from Offshore Sites.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={submitNewSite}
+              disabled={siteSubmitting || !newSiteName.trim()}
+              className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+            >
+              {siteSubmitting ? "Creating…" : "Create site"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAddingSite(false);
+                setSiteError(null);
+              }}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold border"
+              style={{ borderColor: "var(--ch-line)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {mode === "blank" ? (
         <>

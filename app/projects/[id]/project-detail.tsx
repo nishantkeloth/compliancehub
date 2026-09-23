@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { updateProject, deleteProject } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
@@ -65,10 +65,23 @@ export default function ProjectDetail({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
-  const [editing, setEditing] = useState(false);
+  // Jumping in from the Projects list "Edit" link (?edit=1) opens straight
+  // into the edit form — a project is editable at any time regardless of
+  // status, this just skips the extra "open project → click Edit" step.
+  const [editing, setEditing] = useState(canManage && searchParams.get("edit") === "1");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("edit") === "1") {
+      router.replace(`/projects/${project.id}`, { scroll: false });
+    }
+    // Only run once on mount — this just cleans the ?edit=1 param out of the
+    // URL bar after opening the form, it shouldn't re-fire on later state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submitDelete = () => {
     if (!window.confirm(`Delete "${project.project_name}"? This can't be undone.`)) return;
