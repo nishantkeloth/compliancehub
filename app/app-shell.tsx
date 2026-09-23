@@ -65,7 +65,10 @@ export default async function AppShell({
   const crewItems: NavItem[] = [];
   if (can(access, "crew.view")) {
     crewItems.push({ href: "/crew/profiles", key: "crew-profiles", label: "Crew Register" });
-    crewItems.push({ href: "/crew/roster", key: "crew-roster", label: "Vessel Roster" });
+    // Vessel Roster removed from the sidebar per Nishant's request — same
+    // treatment as Contractors above: page and data untouched, still
+    // reachable directly at /crew/roster, just not linked in day-to-day
+    // navigation anymore.
   }
   if (can(access, "crew.matrix.view")) {
     crewItems.push({ href: "/crew/matrices", key: "crew-matrices", label: "Crew Matrices" });
@@ -76,7 +79,10 @@ export default async function AppShell({
   }
   if (can(access, "crew.manage")) {
     crewItems.push({ href: "/crew/clients", key: "crew-clients", label: "Clients" });
-    crewItems.push({ href: "/crew/contractors", key: "crew-contractors", label: "Contractors" });
+    // Contractors removed from the sidebar per Nishant's request — the
+    // page, its data, and the contractor field on Contracts/Projects are
+    // all untouched, still reachable directly at /crew/contractors, just
+    // not linked from day-to-day navigation anymore.
     crewItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
   }
 
