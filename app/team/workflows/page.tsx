@@ -31,15 +31,29 @@ export default async function WorkflowsPage() {
   const { data: stageRows } = definitionIds.length
     ? await supabase
         .from("workflow_stages")
-        .select("id, workflow_definition_id, sequence, name, required_permission, skip_condition")
+        .select("id, workflow_definition_id, sequence, name, approver_type, required_permission, approver_user_id, skip_condition")
         .in("workflow_definition_id", definitionIds)
         .order("sequence", { ascending: true })
-    : { data: [] as { id: string; workflow_definition_id: string; sequence: number; name: string; required_permission: string; skip_condition: string | null }[] };
+    : {
+        data: [] as {
+          id: string;
+          workflow_definition_id: string;
+          sequence: number;
+          name: string;
+          approver_type: string;
+          required_permission: string | null;
+          approver_user_id: string | null;
+          skip_condition: string | null;
+        }[],
+      };
 
   // Restricted to crew.matrix.* since that's the only entity type wired
   // up today — widen this filter (or make it per-entity-type) once a
   // second document type is added.
   const { data: permissions } = await supabase.from("permissions").select("key, label").like("key", "crew.matrix.%").order("key");
+
+  // For the "assign to a specific person" approver option.
+  const { data: members } = await supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).eq("status", "active").order("full_name");
 
   return (
     <>
@@ -57,10 +71,13 @@ export default async function WorkflowsPage() {
           definitionId: s.workflow_definition_id as string,
           sequence: s.sequence as number,
           name: s.name as string,
-          requiredPermission: s.required_permission as string,
+          approverType: (s.approver_type as "permission" | "user") ?? "permission",
+          requiredPermission: s.required_permission as string | null,
+          approverUserId: s.approver_user_id as string | null,
           skipCondition: s.skip_condition as string | null,
         }))}
         permissions={permissions ?? []}
+        members={(members ?? []).map((m) => ({ id: m.id as string, fullName: m.full_name as string }))}
       />
     </>
   );

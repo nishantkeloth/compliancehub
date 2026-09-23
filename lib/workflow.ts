@@ -14,9 +14,16 @@
 // snapshotted into workflow_instance_stages at submit time, permission-
 // based stage gating, RLS mirrored via workflow_can_act()).
 
+import { can, type EffectiveAccess } from "./rbac";
+
 type Supa = {
   from: (table: string) => any;
 };
+
+// A stage's approver is either "whoever holds this permission" (the
+// original design) or one specific named person — see
+// supabase/migrations/0023_phase20_workflow_named_approver.sql.
+export type ApproverType = "permission" | "user";
 
 export type CurrentStageInfo = {
   instanceId: string;
@@ -24,8 +31,22 @@ export type CurrentStageInfo = {
   sequence: number;
   totalStages: number;
   name: string;
-  requiredPermission: string;
+  approverType: ApproverType;
+  requiredPermission: string | null;
+  approverUserId: string | null;
 };
+
+// Does `userId` (with `access`'s permissions) get to act on this stage?
+// Shared by app/crew/matrices/actions.ts (permission-checking a stage
+// action) and its [id]/page.tsx (deciding whether to show the buttons).
+export function canActOnStage(
+  stage: { approverType: ApproverType; requiredPermission: string | null; approverUserId: string | null },
+  userId: string,
+  access: EffectiveAccess
+): boolean {
+  if (stage.approverType === "user") return stage.approverUserId === userId;
+  return stage.requiredPermission ? can(access, stage.requiredPermission) : false;
+}
 
 // Skip-condition evaluators, keyed by entity_type. v1 recognizes exactly
 // one literal condition, for crew_matrix: 'no_lines_require_client_
@@ -98,7 +119,7 @@ export async function startWorkflowInstance(
 
   const { data: stages } = await supabase
     .from("workflow_stages")
-    .select("sequence, name, required_permission, skip_condition")
+    .select("sequence, name, approver_type, required_permission, approver_user_id, skip_condition")
     .eq("workflow_definition_id", definitionId)
     .order("sequence", { ascending: true });
 
@@ -128,7 +149,9 @@ export async function startWorkflowInstance(
         entity_id: entityId,
         sequence: s.sequence,
         name: s.name,
+        approver_type: s.approver_type,
         required_permission: s.required_permission,
+        approver_user_id: s.approver_user_id,
         skip_condition: s.skip_condition,
         status: skip ? "skipped" : "pending",
       })
@@ -180,7 +203,11 @@ export async function getCurrentStage(supabase: Supa, entityType: string, entity
   if (!instance?.current_stage_id) return null;
 
   const [{ data: stage }, { count: totalStages }] = await Promise.all([
-    supabase.from("workflow_instance_stages").select("id, sequence, name, required_permission").eq("id", instance.current_stage_id).single(),
+    supabase
+      .from("workflow_instance_stages")
+      .select("id, sequence, name, approver_type, required_permission, approver_user_id")
+      .eq("id", instance.current_stage_id)
+      .single(),
     supabase.from("workflow_instance_stages").select("id", { count: "exact", head: true }).eq("workflow_instance_id", instance.id),
   ]);
   if (!stage) return null;
@@ -191,7 +218,9 @@ export async function getCurrentStage(supabase: Supa, entityType: string, entity
     sequence: stage.sequence as number,
     totalStages: (totalStages as number | null) ?? (stage.sequence as number),
     name: stage.name as string,
-    requiredPermission: stage.required_permission as string,
+    approverType: (stage.approver_type as ApproverType) ?? "permission",
+    requiredPermission: (stage.required_permission as string | null) ?? null,
+    approverUserId: (stage.approver_user_id as string | null) ?? null,
   };
 }
 

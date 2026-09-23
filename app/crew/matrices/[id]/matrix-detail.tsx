@@ -47,7 +47,7 @@ type Matrix = {
 };
 type HistoryRow = { id: string; old_status: string | null; new_status: string; changed_at: string; comment: string | null };
 type VersionRow = { id: string; version_number: number; status: string; created_at: string };
-type WorkflowStage = { name: string; sequence: number; totalStages: number; requiredPermission: string };
+type WorkflowStage = { name: string; sequence: number; totalStages: number; approverLabel: string | null };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
@@ -239,6 +239,7 @@ export default function MatrixDetail({
             {matrix.status === "pending_approval" && workflowStage && (
               <span className="text-xs font-medium" style={{ color: "var(--ch-sub)" }}>
                 Stage {workflowStage.sequence} of {workflowStage.totalStages}: {workflowStage.name}
+                {workflowStage.approverLabel && ` — assigned to ${workflowStage.approverLabel}`}
               </span>
             )}
           </div>
@@ -561,7 +562,7 @@ function WorkflowActions({
   canSubmit: boolean;
   canApproveInternal: boolean;
   canApproveClient: boolean;
-  pendingApprovalStage: { name: string; sequence: number; totalStages: number } | null;
+  pendingApprovalStage: WorkflowStage | null;
   canActCurrentStage: boolean;
   busy: boolean;
   hasLines: boolean;

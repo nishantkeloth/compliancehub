@@ -37,15 +37,32 @@ export async function ensureWorkflowDefinition(entityType: string, name: string)
   return { error: null };
 }
 
-export async function addStage(definitionId: string, name: string, requiredPermission: string, skipCondition: string | null) {
+async function validateApproverUser(supabase: Awaited<ReturnType<typeof requireManageWorkflows>>["supabase"], orgId: string, userId: string) {
+  const { data: profile } = await supabase.from("profiles").select("org_id").eq("id", userId).maybeSingle();
+  if (!profile || profile.org_id !== orgId) return "Choose someone from your company.";
+  return null;
+}
+
+export async function addStage(
+  definitionId: string,
+  name: string,
+  approverType: "permission" | "user",
+  approverValue: string, // a permission key when approverType is "permission", a profile id when "user"
+  skipCondition: string | null
+) {
   name = name.trim();
   if (!name) return { error: "Stage name is required." };
-  if (!requiredPermission) return { error: "Choose which permission unlocks this stage." };
+  if (!approverValue) return { error: approverType === "permission" ? "Choose which permission unlocks this stage." : "Choose who approves this stage." };
 
   const { supabase, access } = await requireManageWorkflows();
 
   const { data: def } = await supabase.from("workflow_definitions").select("id").eq("id", definitionId).eq("org_id", access.orgId).maybeSingle();
   if (!def) return { error: "Could not find that workflow." };
+
+  if (approverType === "user") {
+    const validationError = await validateApproverUser(supabase, access.orgId!, approverValue);
+    if (validationError) return { error: validationError };
+  }
 
   const { count } = await supabase.from("workflow_stages").select("id", { count: "exact", head: true }).eq("workflow_definition_id", definitionId);
 
@@ -54,7 +71,9 @@ export async function addStage(definitionId: string, name: string, requiredPermi
     org_id: access.orgId,
     sequence: (count ?? 0) + 1,
     name,
-    required_permission: requiredPermission,
+    approver_type: approverType,
+    required_permission: approverType === "permission" ? approverValue : null,
+    approver_user_id: approverType === "user" ? approverValue : null,
     skip_condition: skipCondition || null,
   });
   if (error) return { error: error.message };
@@ -63,7 +82,10 @@ export async function addStage(definitionId: string, name: string, requiredPermi
   return { error: null };
 }
 
-export async function updateStage(stageId: string, fields: { name?: string; requiredPermission?: string; skipCondition?: string | null }) {
+export async function updateStage(
+  stageId: string,
+  fields: { name?: string; approverType?: "permission" | "user"; requiredPermission?: string | null; approverUserId?: string | null; skipCondition?: string | null }
+) {
   const { supabase, access } = await requireManageWorkflows();
 
   const update: Record<string, unknown> = {};
@@ -72,10 +94,39 @@ export async function updateStage(stageId: string, fields: { name?: string; requ
     if (!name) return { error: "Stage name is required." };
     update.name = name;
   }
-  if (fields.requiredPermission !== undefined) {
-    if (!fields.requiredPermission) return { error: "Choose which permission unlocks this stage." };
-    update.required_permission = fields.requiredPermission;
+
+  if (fields.approverType !== undefined) {
+    // Switching approver type — both required_permission and
+    // approver_user_id must be set together to satisfy workflow_stages_
+    // approver_shape (see 0023's check constraint).
+    if (fields.approverType === "permission") {
+      if (!fields.requiredPermission) return { error: "Choose which permission unlocks this stage." };
+      update.approver_type = "permission";
+      update.required_permission = fields.requiredPermission;
+      update.approver_user_id = null;
+    } else {
+      if (!fields.approverUserId) return { error: "Choose who approves this stage." };
+      const validationError = await validateApproverUser(supabase, access.orgId!, fields.approverUserId);
+      if (validationError) return { error: validationError };
+      update.approver_type = "user";
+      update.approver_user_id = fields.approverUserId;
+      update.required_permission = null;
+    }
+  } else {
+    // Staying on the same approver type — just changing which permission
+    // or which person, without touching the other column.
+    if (fields.requiredPermission !== undefined) {
+      if (!fields.requiredPermission) return { error: "Choose which permission unlocks this stage." };
+      update.required_permission = fields.requiredPermission;
+    }
+    if (fields.approverUserId !== undefined) {
+      if (!fields.approverUserId) return { error: "Choose who approves this stage." };
+      const validationError = await validateApproverUser(supabase, access.orgId!, fields.approverUserId);
+      if (validationError) return { error: validationError };
+      update.approver_user_id = fields.approverUserId;
+    }
   }
+
   if (fields.skipCondition !== undefined) update.skip_condition = fields.skipCondition || null;
   if (Object.keys(update).length === 0) return { error: null };
 

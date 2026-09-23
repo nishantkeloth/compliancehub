@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import { getCurrentStage } from "@/lib/workflow";
+import { getCurrentStage, canActOnStage } from "@/lib/workflow";
 import MatrixDetail from "./matrix-detail";
 import { REASON_CODES } from "./roster-change-shared";
 
@@ -132,7 +132,15 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   ]);
 
   const aiVisible = aiSettings?.ai_enabled ?? true;
-  const canActCurrentStage = workflowStage ? can(access, workflowStage.requiredPermission) : false;
+  const canActCurrentStage = workflowStage ? canActOnStage(workflowStage, user.id, access) : false;
+  // A friendly name for a stage assigned to one specific person (rather
+  // than "whoever holds this permission") — shown next to the stage
+  // progress badge so it's obvious who's being waited on.
+  let workflowStageApproverLabel: string | null = null;
+  if (workflowStage?.approverType === "user" && workflowStage.approverUserId) {
+    const { data: approverProfile } = await supabase.from("profiles").select("full_name").eq("id", workflowStage.approverUserId).maybeSingle();
+    workflowStageApproverLabel = (approverProfile?.full_name as string | null) ?? null;
+  }
 
   const lineIds = (lines ?? []).map((l) => l.id as string);
   // Staffing Plan (real crew, by rank): matched to a line by
@@ -483,7 +491,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       canApproveClient={can(access, "crew.matrix.approve_client")}
       workflowStage={
         workflowStage
-          ? { name: workflowStage.name, sequence: workflowStage.sequence, totalStages: workflowStage.totalStages, requiredPermission: workflowStage.requiredPermission }
+          ? { name: workflowStage.name, sequence: workflowStage.sequence, totalStages: workflowStage.totalStages, approverLabel: workflowStageApproverLabel }
           : null
       }
       canActCurrentStage={canActCurrentStage}

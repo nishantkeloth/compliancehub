@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { applyApprovedRosterChanges } from "./[id]/roster-change-actions";
-import { startWorkflowInstance, getCurrentStage, actOnCurrentStage, cancelCurrentInstance } from "@/lib/workflow";
+import { startWorkflowInstance, getCurrentStage, actOnCurrentStage, cancelCurrentInstance, canActOnStage } from "@/lib/workflow";
 
 type Supa = Awaited<ReturnType<typeof createClient>>;
 
@@ -601,7 +601,14 @@ export async function approveCurrentStage(id: string, comment?: string) {
 
   const stage = await getCurrentStage(supabase, "crew_matrix", id);
   if (!stage) return { error: "There's no approval currently pending on this matrix." };
-  if (!can(access, stage.requiredPermission)) return { error: `You don't have permission to approve the "${stage.name}" stage.` };
+  if (!canActOnStage(stage, user.id, access)) {
+    return {
+      error:
+        stage.approverType === "user"
+          ? `Only the assigned approver can act on the "${stage.name}" stage.`
+          : `You don't have permission to approve the "${stage.name}" stage.`,
+    };
+  }
 
   const trimmed = comment?.trim() || null;
   const result = await actOnCurrentStage(supabase, {
@@ -660,7 +667,14 @@ export async function rejectCurrentStage(id: string, reason: string) {
 
   const stage = await getCurrentStage(supabase, "crew_matrix", id);
   if (!stage) return { error: "There's no approval currently pending on this matrix." };
-  if (!can(access, stage.requiredPermission)) return { error: `You don't have permission to reject the "${stage.name}" stage.` };
+  if (!canActOnStage(stage, user.id, access)) {
+    return {
+      error:
+        stage.approverType === "user"
+          ? `Only the assigned approver can act on the "${stage.name}" stage.`
+          : `You don't have permission to reject the "${stage.name}" stage.`,
+    };
+  }
 
   await actOnCurrentStage(supabase, {
     orgId: access.orgId,
@@ -701,7 +715,7 @@ export async function returnCurrentStageForCorrection(id: string, comment: strin
 
   const stage = await getCurrentStage(supabase, "crew_matrix", id);
   if (!stage) return { error: "There's no approval currently pending on this matrix." };
-  if (!can(access, stage.requiredPermission)) return { error: "You don't have permission to return this matrix for correction." };
+  if (!canActOnStage(stage, user.id, access)) return { error: "You don't have permission to return this matrix for correction." };
 
   const trimmed = comment?.trim() || null;
   await cancelCurrentInstance(supabase, {

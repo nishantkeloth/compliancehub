@@ -5,8 +5,19 @@ import { useRouter } from "next/navigation";
 import { ensureWorkflowDefinition, addStage, updateStage, deleteStage, moveStage } from "./actions";
 
 type Definition = { id: string; entityType: string; name: string };
-type Stage = { id: string; definitionId: string; sequence: number; name: string; requiredPermission: string; skipCondition: string | null };
+type ApproverType = "permission" | "user";
+type Stage = {
+  id: string;
+  definitionId: string;
+  sequence: number;
+  name: string;
+  approverType: ApproverType;
+  requiredPermission: string | null;
+  approverUserId: string | null;
+  skipCondition: string | null;
+};
 type Permission = { key: string; label: string };
+type Member = { id: string; fullName: string };
 
 // v1 recognizes exactly one skip condition literal (see lib/workflow.ts's
 // evaluateSkipCondition) — this maps it to a human label for the one
@@ -22,11 +33,13 @@ export default function WorkflowsManager({
   definitions,
   stages,
   permissions,
+  members,
 }: {
   entityTypes: { value: string; label: string }[];
   definitions: Definition[];
   stages: Stage[];
   permissions: Permission[];
+  members: Member[];
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -51,7 +64,16 @@ export default function WorkflowsManager({
         const definition = definitions.find((d) => d.entityType === et.value) ?? null;
         const ownStages = definition ? stages.filter((s) => s.definitionId === definition.id).sort((a, b) => a.sequence - b.sequence) : [];
         return (
-          <EntityWorkflowCard key={et.value} entityType={et.value} entityLabel={et.label} definition={definition} stages={ownStages} permissions={permissions} run={run} />
+          <EntityWorkflowCard
+            key={et.value}
+            entityType={et.value}
+            entityLabel={et.label}
+            definition={definition}
+            stages={ownStages}
+            permissions={permissions}
+            members={members}
+            run={run}
+          />
         );
       })}
     </div>
@@ -64,6 +86,7 @@ function EntityWorkflowCard({
   definition,
   stages,
   permissions,
+  members,
   run,
 }: {
   entityType: string;
@@ -71,10 +94,13 @@ function EntityWorkflowCard({
   definition: Definition | null;
   stages: Stage[];
   permissions: Permission[];
+  members: Member[];
   run: RunFn;
 }) {
   const [newName, setNewName] = useState("");
+  const [newApproverType, setNewApproverType] = useState<ApproverType>("permission");
   const [newPermission, setNewPermission] = useState(permissions[0]?.key ?? "");
+  const [newMemberId, setNewMemberId] = useState(members[0]?.id ?? "");
   const [newSkip, setNewSkip] = useState(false);
   const skipOptions = SKIP_CONDITIONS[entityType] ?? [];
 
@@ -98,6 +124,8 @@ function EntityWorkflowCard({
     );
   }
 
+  const newApproverValue = newApproverType === "permission" ? newPermission : newMemberId;
+
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
       <h2 className="font-semibold mb-3" style={{ color: "var(--ch-ink)" }}>
@@ -112,7 +140,7 @@ function EntityWorkflowCard({
 
       <div className="space-y-2 mb-4">
         {stages.map((stage, i) => (
-          <StageRow key={stage.id} stage={stage} permissions={permissions} isFirst={i === 0} isLast={i === stages.length - 1} run={run} />
+          <StageRow key={stage.id} stage={stage} permissions={permissions} members={members} isFirst={i === 0} isLast={i === stages.length - 1} run={run} />
         ))}
       </div>
 
@@ -128,17 +156,29 @@ function EntityWorkflowCard({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
           />
-          <select className="border rounded-lg px-2 py-2 text-sm" style={{ borderColor: "var(--ch-line)" }} value={newPermission} onChange={(e) => setNewPermission(e.target.value)}>
-            {permissions.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <ApproverTypeToggle value={newApproverType} onChange={setNewApproverType} />
+          {newApproverType === "permission" ? (
+            <select className="border rounded-lg px-2 py-2 text-sm" style={{ borderColor: "var(--ch-line)" }} value={newPermission} onChange={(e) => setNewPermission(e.target.value)}>
+              {permissions.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select className="border rounded-lg px-2 py-2 text-sm" style={{ borderColor: "var(--ch-line)" }} value={newMemberId} onChange={(e) => setNewMemberId(e.target.value)}>
+              {members.length === 0 && <option value="">No active team members</option>}
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.fullName}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             onClick={() =>
               run(async () => {
-                const res = await addStage(definition.id, newName, newPermission, newSkip && skipOptions[0] ? skipOptions[0].value : null);
+                const res = await addStage(definition.id, newName, newApproverType, newApproverValue, newSkip && skipOptions[0] ? skipOptions[0].value : null);
                 if (!res?.error) {
                   setNewName("");
                   setNewSkip(false);
@@ -146,7 +186,7 @@ function EntityWorkflowCard({
                 return res;
               })
             }
-            disabled={!newName.trim() || !newPermission}
+            disabled={!newName.trim() || !newApproverValue}
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             Add stage
@@ -163,9 +203,54 @@ function EntityWorkflowCard({
   );
 }
 
-function StageRow({ stage, permissions, isFirst, isLast, run }: { stage: Stage; permissions: Permission[]; isFirst: boolean; isLast: boolean; run: RunFn }) {
+// A small "Permission | Person" segmented toggle, reused by both the
+// add-stage form and each existing StageRow's inline editor.
+function ApproverTypeToggle({ value, onChange }: { value: ApproverType; onChange: (v: ApproverType) => void }) {
+  const opt = (v: ApproverType, label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(v)}
+      className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border"
+      style={
+        value === v
+          ? { background: "var(--ch-navy)", color: "#fff", borderColor: "var(--ch-navy)" }
+          : { background: "transparent", color: "var(--ch-sub)", borderColor: "var(--ch-line)" }
+      }
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex items-center gap-1">
+      {opt("permission", "By permission")}
+      {opt("user", "By person")}
+    </div>
+  );
+}
+
+function StageRow({
+  stage,
+  permissions,
+  members,
+  isFirst,
+  isLast,
+  run,
+}: {
+  stage: Stage;
+  permissions: Permission[];
+  members: Member[];
+  isFirst: boolean;
+  isLast: boolean;
+  run: RunFn;
+}) {
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(stage.name);
+  // Local draft of the approver type/value, so switching the toggle
+  // doesn't save anything until a value is actually picked below it.
+  const [approverType, setApproverType] = useState<ApproverType>(stage.approverType);
+
+  const memberName = stage.approverUserId ? members.find((m) => m.id === stage.approverUserId)?.fullName ?? "Unknown person" : null;
+  const permissionLabel = stage.requiredPermission ? permissions.find((p) => p.key === stage.requiredPermission)?.label ?? stage.requiredPermission : null;
 
   return (
     <div className="flex items-center gap-2 flex-wrap border rounded-lg px-3 py-2" style={{ borderColor: "var(--ch-line)" }}>
@@ -201,20 +286,56 @@ function StageRow({ stage, permissions, isFirst, isLast, run }: { stage: Stage; 
         </button>
       )}
 
-      <select
-        className="border rounded-lg px-2 py-1 text-sm"
-        style={{ borderColor: "var(--ch-line)" }}
-        value={stage.requiredPermission}
-        onChange={(e) => run(() => updateStage(stage.id, { requiredPermission: e.target.value }))}
-      >
-        {permissions.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.label}
-          </option>
-        ))}
-      </select>
+      <ApproverTypeToggle
+        value={approverType}
+        onChange={(next) => {
+          setApproverType(next);
+          // Switching type needs a value picked before it can save — for
+          // "by permission" default straight to the first permission (a
+          // safe, always-valid choice); for "by person" wait for the
+          // dropdown below to be touched, since there's no safe default.
+          if (next === "permission" && permissions[0]) {
+            run(() => updateStage(stage.id, { approverType: "permission", requiredPermission: permissions[0].key }));
+          }
+        }}
+      />
 
-      {stage.skipCondition && (
+      {approverType === "permission" ? (
+        <select
+          className="border rounded-lg px-2 py-1 text-sm"
+          style={{ borderColor: "var(--ch-line)" }}
+          value={stage.approverType === "permission" ? stage.requiredPermission ?? "" : ""}
+          onChange={(e) => run(() => updateStage(stage.id, { approverType: "permission", requiredPermission: e.target.value }))}
+        >
+          {stage.approverType !== "permission" && <option value="">Choose a permission…</option>}
+          {permissions.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <select
+          className="border rounded-lg px-2 py-1 text-sm"
+          style={{ borderColor: "var(--ch-line)" }}
+          value={stage.approverType === "user" ? stage.approverUserId ?? "" : ""}
+          onChange={(e) => run(() => updateStage(stage.id, { approverType: "user", approverUserId: e.target.value }))}
+        >
+          <option value="">Choose a person…</option>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.fullName}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {stage.approverType === "user" && memberName && (
+        <span className="text-[10px] italic" style={{ color: "var(--ch-sub)" }}>
+          assigned to {memberName}
+        </span>
+      )}
+      {stage.approverType === "permission" && permissionLabel && stage.skipCondition && (
         <span className="text-[10px] italic" style={{ color: "var(--ch-sub)" }}>
           conditional
         </span>
