@@ -11,6 +11,7 @@ import {
 } from "@/app/crew/setup/actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { COUNTRIES } from "@/lib/countries";
+import { REGIONS } from "@/lib/regions";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
 type Client = { id: string; name: string };
@@ -347,7 +348,19 @@ function OffshoreSiteForm({
         </select>
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Operating region" value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)} />
+        <select className={inputCls} style={inputStyle} value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)}>
+          <option value="">Operating region…</option>
+          {/* A previously-typed free-text value that doesn't match the
+              fixed list below (the same list crew's Current Location
+              dropdown uses — see lib/regions.ts) stays selectable rather
+              than silently dropping it the moment this form loads. */}
+          {operatingRegion && !REGIONS.includes(operatingRegion) && (
+            <option value={operatingRegion}>{operatingRegion} (unmatched — pick below)</option>
+          )}
+          {REGIONS.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
         <input className={inputCls} style={inputStyle} placeholder="Port / heliport" value={portOrHeliport} onChange={(e) => setPortOrHeliport(e.target.value)} />
         <input className={inputCls} style={inputStyle} placeholder="Crew-change location" value={crewChangeLocation} onChange={(e) => setCrewChangeLocation(e.target.value)} />
         <select className={inputCls} style={inputStyle} value={rotationTemplateId} onChange={(e) => setRotationTemplateId(e.target.value)}>
