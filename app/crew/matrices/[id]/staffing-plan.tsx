@@ -86,13 +86,27 @@ export type { StaffingCrew, FieldDef };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
+// lib/regions.ts lists these three emirates as their own selectable
+// entries alongside "United Arab Emirates" as a country — a site can be
+// set to one specific emirate while crew are recorded at the country
+// level (or vice versa). Without this, a site set to "Abu Dhabi" shows
+// zero "Available candidates" even when the company's UAE crew are all
+// there, just recorded as "United Arab Emirates" — exactly what
+// happened after the current_location cleanup consolidated crew onto
+// the country-level value. Treat any of the four as the same region.
+const UAE_REGION_ALIASES = new Set(["abu dhabi", "dubai", "sharjah", "united arab emirates"]);
+function normalizeRegion(value: string): string {
+  const v = value.trim().toLowerCase();
+  return UAE_REGION_ALIASES.has(v) ? "united arab emirates" : v;
+}
+
 // Phase 16 — case-insensitive, whitespace-tolerant match between a crew
 // member's current_location (constrained to lib/regions.ts) and a matrix's
 // site/project operating_region (still free text) — see matrixRegion's
 // comment in page.tsx for why these can't be guaranteed to line up exactly.
 function sameRegion(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return normalizeRegion(a) === normalizeRegion(b);
 }
 
 type CrewRow = { person: StaffingCrew; completeness: number };
