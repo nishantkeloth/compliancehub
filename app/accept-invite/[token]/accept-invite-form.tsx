@@ -12,6 +12,7 @@ export default function AcceptInviteForm({ token }: { token: string }) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,6 +110,10 @@ export default function AcceptInviteForm({ token }: { token: string }) {
     }
     if (password.length < 6) {
       setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords don't match.");
       return;
     }
     setBusy(true);
@@ -243,12 +248,21 @@ export default function AcceptInviteForm({ token }: { token: string }) {
           disabled={!!preview.email}
         />
         <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-4"
+          className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
           style={{ borderColor: "var(--ch-line)" }}
           placeholder="Choose a password (min 6 characters)"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <input
+          className="w-full border rounded-lg px-3 py-2 text-sm mb-4"
+          style={{ borderColor: "var(--ch-line)" }}
+          placeholder="Confirm password"
+          type="password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
 
