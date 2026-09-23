@@ -135,6 +135,13 @@ export default function MatrixDetail({
   const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
 
   const isDraft = matrix.status === "draft";
+  // "Send Matrix to Client" — only once this version has actually been
+  // through the approval workflow (or is the currently-active version),
+  // not while it's still draft/pending. Matches FINAL_STATUSES in
+  // share-actions.ts (which still lets a share already in flight for an
+  // older, since-superseded matrix render its history correctly — this
+  // only gates starting a NEW send from here).
+  const canSendToClient = matrix.status === "approved" || matrix.status === "active";
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
 
   const totalHeadcount = lines.reduce((sum, l) => sum + (l.required_headcount ?? 0), 0);
@@ -252,7 +259,9 @@ export default function MatrixDetail({
             <>
               <button
                 onClick={() => setShareModal("send")}
-                className="text-sm font-semibold rounded-lg px-4 py-2 border"
+                disabled={!canSendToClient}
+                title={canSendToClient ? undefined : "Available once this matrix is Approved or Active."}
+                className="text-sm font-semibold rounded-lg px-4 py-2 border disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
               >
                 Send Matrix to Client
