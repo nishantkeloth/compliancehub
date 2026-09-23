@@ -69,6 +69,7 @@ export default async function AppShell({
   }
   if (can(access, "crew.matrix.view")) {
     crewItems.push({ href: "/crew/matrices", key: "crew-matrices", label: "Crew Matrices" });
+    crewItems.push({ href: "/crew/matrices/approvals", key: "crew-matrices-approvals", label: "My Approval Queue" });
   }
   if (can(access, "crew.documents.view")) {
     crewItems.push({ href: "/crew/documents", key: "crew-documents", label: "Crew Documents" });
