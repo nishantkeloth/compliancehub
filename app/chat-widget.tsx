@@ -269,7 +269,7 @@ export default function ChatWidget() {
 
       {open && (
         <div
-          className="fixed top-0 right-0 h-screen w-full sm:w-[380px] z-30 flex flex-col bg-white border-l shadow-2xl"
+          className="fixed top-0 right-0 h-[50vh] w-full sm:w-[380px] z-30 flex flex-col bg-white border-l border-b rounded-bl-2xl shadow-2xl overflow-hidden"
           style={{ borderColor: "var(--ch-line)" }}
         >
           <div className="px-4 py-4 border-b flex items-center gap-2" style={{ borderColor: "var(--ch-line)" }}>
