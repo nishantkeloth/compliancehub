@@ -48,7 +48,7 @@
 // separate, larger "client crew report" feature (multi-client templates,
 // email delivery) this does not attempt to replace.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
@@ -108,6 +108,34 @@ function normalizeRegion(value: string): string {
 function sameRegion(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   return normalizeRegion(a) === normalizeRegion(b);
+}
+
+// Table dividers — approved via table-dividers-sample.html. A thin line
+// marks where a document type's own column group starts (e.g. Food Safety
+// Certificate's Number+Date pair); a heavier, darker line marks where a
+// whole category starts (Certificates -> Travel Documents -> ...), which
+// also covers the very first data column (the boundary between the
+// Name/Nationality/Actions columns and the document data). Previously
+// only the header carried any of this (and only at category boundaries,
+// not document-type ones) — the data rows had no dividers at all, which
+// is what made a wide rank's table read as one undifferentiated block of
+// columns. Shared by the three header rows and every body cell so the
+// same line runs unbroken from the header straight down through the data.
+const DIVIDER_COLOR = "#9ca3af";
+const DIVIDER_COLOR_HEAVY = "#4b5563";
+type DividerKind = "none" | "type" | "category";
+
+function dividerKind(columns: DisplayColumn[], groupIndex: number[], i: number): DividerKind {
+  if (i === 0) return "category";
+  if (groupIndex[i] !== groupIndex[i - 1]) return "category";
+  if (columns[i - 1].docType.id !== columns[i].docType.id) return "type";
+  return "none";
+}
+
+function dividerStyle(kind: DividerKind): CSSProperties {
+  if (kind === "category") return { borderLeftWidth: 2, borderLeftStyle: "solid", borderLeftColor: DIVIDER_COLOR_HEAVY };
+  if (kind === "type") return { borderLeftWidth: 1, borderLeftStyle: "solid", borderLeftColor: DIVIDER_COLOR };
+  return {};
 }
 
 type CrewRow = { person: StaffingCrew; completeness: number };
@@ -623,6 +651,9 @@ function StaffingLineCard({
   const showAssignCol = !readOnlyStaffing && (view === "available" || view === "other_location") && canAssignCrew;
   const showUnassignCol = !readOnlyStaffing && view === "assigned" && canAssignCrew;
   const viewNoun = view === "assigned" ? "assigned" : view === "available" ? "available" : "in other locations";
+  // Computed once per rank, reused by every row's DocCell below — see
+  // dividerKind's own comment for what "category" vs "type" means.
+  const columnDividers = lineDisplayColumns.map((_, i) => dividerKind(lineDisplayColumns, lineGroupIndex, i));
 
   return (
     <div className={`${cardCls} overflow-hidden`} style={cardStyle}>
@@ -677,8 +708,8 @@ function StaffingLineCard({
                   <th
                     key={`${g.category ?? "general"}-${i}`}
                     colSpan={g.count}
-                    className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b border-l"
-                    style={{ color: "var(--ch-ink)", borderColor: "var(--ch-line)", background: colorForCategory(g.category) }}
+                    className="text-center font-semibold px-3 py-1 whitespace-nowrap border-b"
+                    style={{ color: "var(--ch-ink)", borderBottomColor: "var(--ch-line)", background: colorForCategory(g.category), ...dividerStyle("category") }}
                   >
                     {formatCategoryLabel(g.category)}
                   </th>
@@ -695,14 +726,14 @@ function StaffingLineCard({
                   return lineDocTypeGroups.map((g) => {
                     const startIdx = idx;
                     idx += g.count;
-                    const isGroupStart = startIdx === 0 || lineGroupIndex[startIdx - 1] !== lineGroupIndex[startIdx];
+                    const kind = dividerKind(lineDisplayColumns, lineGroupIndex, startIdx);
                     return (
                       <th
                         key={g.docType.id}
                         colSpan={g.count}
                         rowSpan={g.count > 1 ? 1 : 2}
-                        className={`text-center font-semibold px-3 py-2 whitespace-nowrap${isGroupStart ? " border-l" : ""}${g.count > 1 ? "" : " align-bottom"}`}
-                        style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[startIdx]]?.category ?? null) }}
+                        className={`text-center font-semibold px-3 py-2 whitespace-nowrap${g.count > 1 ? "" : " align-bottom"}`}
+                        style={{ color: "var(--ch-sub)", background: colorForCategory(lineGroups[lineGroupIndex[startIdx]]?.category ?? null), ...dividerStyle(kind) }}
                       >
                         {g.docType.name}
                         {mandatoryDocTypeIds.has(g.docType.id) && (
@@ -716,17 +747,17 @@ function StaffingLineCard({
               <tr>
                 {lineDisplayColumns.map((dc, i) => {
                   if (dc.part === "single") return null;
-                  // First sub-column of its document type (Number, or
-                  // Issued when a travel document doesn't track a number)
-                  // gets the divider that separates it from the previous
-                  // document type — not hardcoded to any one part, since a
-                  // document type's leading sub-column now varies.
-                  const isFirstSub = i === 0 || lineDisplayColumns[i - 1].docType.id !== dc.docType.id;
+                  // Divider at the first sub-column of its document type
+                  // (Number, or Issued when a travel document doesn't
+                  // track a number) — see dividerKind's comment above for
+                  // why this line runs through the header AND the data
+                  // rows below.
+                  const kind = dividerKind(lineDisplayColumns, lineGroupIndex, i);
                   return (
                     <th
                       key={dc.key}
-                      className={`text-center font-normal px-3 py-1.5 whitespace-nowrap${isFirstSub ? " border-l" : ""}`}
-                      style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null) }}
+                      className="text-center font-normal px-3 py-1.5 whitespace-nowrap"
+                      style={{ color: "var(--ch-sub)", background: colorForCategory(lineGroups[lineGroupIndex[i]]?.category ?? null), ...dividerStyle(kind) }}
                     >
                       {partLabel(dc.part)}
                     </th>
@@ -742,6 +773,7 @@ function StaffingLineCard({
                   completeness={completeness}
                   view={view}
                   lineDisplayColumns={lineDisplayColumns}
+                  columnDividers={columnDividers}
                   customFieldDefinitions={customFieldDefinitions}
                   showLocationColumn={showLocationColumn}
                   crewMatrixId={crewMatrixId}
@@ -776,6 +808,7 @@ function CandidateRow({
   completeness,
   view,
   lineDisplayColumns,
+  columnDividers,
   customFieldDefinitions,
   showLocationColumn,
   crewMatrixId,
@@ -794,6 +827,7 @@ function CandidateRow({
   completeness: number;
   view: "assigned" | "available" | "other_location";
   lineDisplayColumns: DisplayColumn[];
+  columnDividers: DividerKind[];
   customFieldDefinitions: FieldDef[];
   showLocationColumn: boolean;
   crewMatrixId: string;
@@ -883,13 +917,14 @@ function CandidateRow({
           {person.current_location ?? "—"}
         </td>
       )}
-      {lineDisplayColumns.map((dc) => (
+      {lineDisplayColumns.map((dc, i) => (
         <DocCell
           key={dc.key}
           docType={dc.docType}
           part={dc.part}
           doc={person.documents[dc.docType.id]}
           fieldDefs={customFieldDefinitions.filter((f) => f.applies_to_document_type_id === dc.docType.id || f.applies_to_document_type_id === null)}
+          dividerKind={columnDividers[i]}
         />
       ))}
       {showUnassignCol && (
@@ -1377,11 +1412,16 @@ function DocCell({
   doc,
   fieldDefs,
   part = "single",
+  dividerKind: kind = "none",
 }: {
   docType: DocTypeRef;
   doc: StaffingCrew["documents"][string] | undefined;
   fieldDefs: FieldDef[];
   part?: DisplayColumnPart;
+  // See dividerKind()/dividerStyle() above — carries the same thin
+  // (document-type start) / heavy (category start) rule down from the
+  // header into the data rows, so the columns don't run together.
+  dividerKind?: DividerKind;
 }) {
   // Every column reaching this component is already required for the rank
   // it's rendered under (see lineDisplayColumns) — required is always true
@@ -1389,11 +1429,12 @@ function DocCell({
   // cell renders; "single" (the default) is every other document type,
   // completely unchanged from before the split existed.
   const info = cellInfoPart(true, docType, doc, fieldDefs, part);
+  const tdStyle = dividerStyle(kind);
 
   if (info.kind === "missing") {
     const colors = DOCUMENT_STATUS_COLORS.expired;
     return (
-      <td className="px-3 py-2 whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap" style={tdStyle}>
         <span className="rounded px-1.5 py-0.5 font-semibold" style={{ background: colors.bg, color: colors.fg }}>
           Missing
         </span>
@@ -1404,7 +1445,7 @@ function DocCell({
   if (info.kind === "empty") {
     const colors = DOCUMENT_STATUS_COLORS.none;
     return (
-      <td className="px-3 py-2 whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap" style={tdStyle}>
         <span className="rounded px-1.5 py-0.5" style={{ background: colors.bg, color: colors.fg }}>
           {info.text}
         </span>
@@ -1414,7 +1455,7 @@ function DocCell({
 
   const colors = info.status ? DOCUMENT_STATUS_COLORS[info.status] : null;
   return (
-    <td className="px-3 py-2 whitespace-nowrap">
+    <td className="px-3 py-2 whitespace-nowrap" style={tdStyle}>
       <span className={colors ? "rounded px-1.5 py-0.5" : ""} style={colors ? { background: colors.bg, color: colors.fg } : { color: "var(--ch-ink)" }}>
         {info.text}
       </span>
