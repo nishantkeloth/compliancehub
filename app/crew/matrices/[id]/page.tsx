@@ -4,6 +4,7 @@ import { getEffectiveAccess, can } from "@/lib/rbac";
 import { getCurrentStage, canActOnStage } from "@/lib/workflow";
 import MatrixDetail from "./matrix-detail";
 import { REASON_CODES } from "./roster-change-shared";
+import type { ReservationInfo } from "@/lib/staffing-plan-shared";
 
 export default async function CrewMatrixDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -288,7 +289,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   );
   const candidateCrewIds = candidateCrewProfiles.map((c) => c.id as string);
 
-  const [{ data: crewDocs }, { data: candidateDocs }] = await Promise.all([
+  const [{ data: crewDocs }, { data: candidateDocs }, { data: reservationRows }] = await Promise.all([
     matchedCrewIds.length && usedDocTypeIds.length
       ? supabase
           .from("crew_documents")
@@ -307,7 +308,49 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
           .in("document_type_id", usedDocTypeIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
+    // Reserve/soft-lock (see migration 0026 + staffing-actions.ts) — every
+    // currently-active reservation held by anyone who's also showing up
+    // as a candidate on THIS page, whichever matrix reserved them. Small
+    // and cheap (at most one active row per candidate, org-wide), fetched
+    // here rather than as its own query stage since it only needs
+    // candidateCrewIds, same as candidateDocs above.
+    candidateCrewIds.length
+      ? supabase
+          .from("crew_matrix_line_reservations")
+          .select("id, crew_id, crew_matrix_id, crew_matrix_line_id, notes, expected_ready_date, reserved_by, crew_matrices(matrix_number, title), crew_matrix_lines(job_roles(name))")
+          .eq("org_id", access.orgId)
+          .in("crew_id", candidateCrewIds)
+          .is("released_at", null)
+      : Promise.resolve({ data: [] }),
   ]);
+
+  // Reserved-by names — a second, small lookup (same pattern as
+  // workflowStageApproverLabel above) rather than a nested profiles join,
+  // since profiles isn't a declared FK target of crew_matrix_line_reservations.
+  const reservedByIds = Array.from(new Set((reservationRows ?? []).map((r) => r.reserved_by as string | null).filter((v): v is string => !!v)));
+  const { data: reserverProfiles } = reservedByIds.length ? await supabase.from("profiles").select("id, full_name").in("id", reservedByIds) : { data: [] };
+  const reserverNameById = new Map<string, string>();
+  for (const p of reserverProfiles ?? []) reserverNameById.set(p.id as string, p.full_name as string);
+
+  const reservationByCrewId = new Map<string, ReservationInfo>();
+  for (const r of reservationRows ?? []) {
+    const matrixRel = (Array.isArray(r.crew_matrices) ? r.crew_matrices[0] : r.crew_matrices) as { matrix_number?: string | null; title?: string | null } | null;
+    const lineRel = (Array.isArray(r.crew_matrix_lines) ? r.crew_matrix_lines[0] : r.crew_matrix_lines) as { job_roles?: unknown } | null;
+    const roleRel = lineRel ? ((Array.isArray(lineRel.job_roles) ? lineRel.job_roles[0] : lineRel.job_roles) as { name?: string } | null) : null;
+    const reservedById = r.reserved_by as string | null;
+    reservationByCrewId.set(r.crew_id as string, {
+      id: r.id as string,
+      crewMatrixId: r.crew_matrix_id as string,
+      crewMatrixLineId: r.crew_matrix_line_id as string,
+      notes: r.notes as string | null,
+      expectedReadyDate: r.expected_ready_date as string | null,
+      reservedByLabel: reservedById === user.id ? "you" : reservedById ? (reserverNameById.get(reservedById) ?? "another user") : "another user",
+      isThisMatrix: (r.crew_matrix_id as string) === matrix.id,
+      matrixNumber: (matrixRel?.matrix_number as string | null) ?? null,
+      matrixTitle: (matrixRel?.title as string | null) ?? null,
+      roleName: roleRel?.name ?? null,
+    });
+  }
 
   // Keep only the most recent crew_documents row per (crew_id, document_type_id).
   const latestDocByCrewAndType = new Map<
@@ -381,6 +424,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       availability_date: c.availability_date as string | null,
       current_location: c.current_location as string | null,
       documents,
+      reservation: reservationByCrewId.get(c.id as string) ?? null,
     };
   });
 

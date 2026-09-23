@@ -39,6 +39,17 @@
 //    open without a ComplianceHub account to see one candidate's status
 //    against the document types required for one specific rank on this
 //    matrix — the same row already shown on screen, nothing more.
+//  - reserveCandidateForLine / unreserveCandidate: "soft lock" a
+//    currently-visible Available/Other Location candidate for a specific
+//    rank on this matrix (see migration 0026 + reserve-candidate-sample.html
+//    for the approved mockup), without moving them off that list the way
+//    Assign does. One active reservation per crew member org-wide at a
+//    time — reserving someone who already holds one just moves it over
+//    (see the migration's own comment for why), so this never errors out
+//    from a stale click the way a hard uniqueness conflict would.
+//    Unreserve soft-releases it (released_at/released_by), same pattern
+//    as unassignCandidateFromMatrix's soft-close. Gated on crew.manage,
+//    same as Assign/Unassign.
 
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
@@ -139,6 +150,17 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
 
   await supabase.from("crew_profiles").update({ deployment_status: "onboard" }).eq("id", crewId);
 
+  // A reserved candidate who's now actually being assigned no longer
+  // needs the soft lock — release it automatically (whichever matrix
+  // reserved them, this one or another) so nobody has to remember to
+  // Unreserve separately once someone's confirmed. Best-effort: this
+  // isn't worth failing the assignment over if it doesn't find a row.
+  await supabase
+    .from("crew_matrix_line_reservations")
+    .update({ released_at: new Date().toISOString(), released_by: userId, updated_at: new Date().toISOString() })
+    .eq("crew_id", crewId)
+    .is("released_at", null);
+
   revalidateMatrix(crewMatrixId);
   return {};
 }
@@ -218,4 +240,89 @@ export async function createResourceProfileLink(crewId: string, crewMatrixLineId
 
   const origin = await appOrigin();
   return { url: `${origin}/resource-profile/${token}`, expiresAt };
+}
+
+export async function reserveCandidateForLine(crewId: string, crewMatrixId: string, crewMatrixLineId: string, notes?: string, expectedReadyDate?: string) {
+  const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to reserve crew.");
+
+  const { data: matrix, error: matrixErr } = await supabase
+    .from("crew_matrices")
+    .select("id")
+    .eq("id", crewMatrixId)
+    .eq("org_id", access.orgId)
+    .single();
+  if (matrixErr || !matrix) return { error: "Matrix not found." };
+
+  const { data: line, error: lineErr } = await supabase
+    .from("crew_matrix_lines")
+    .select("id")
+    .eq("id", crewMatrixLineId)
+    .eq("crew_matrix_id", crewMatrixId)
+    .single();
+  if (lineErr || !line) return { error: "Line not found." };
+
+  const { data: crewRow, error: crewErr } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", access.orgId).single();
+  if (crewErr || !crewRow) return { error: "Crew member not found." };
+
+  const readyDate = expectedReadyDate && DATE_RE.test(expectedReadyDate) ? expectedReadyDate : null;
+  const trimmedNotes = notes?.trim() || null;
+  const nowIso = new Date().toISOString();
+
+  // One active reservation per crew member, org-wide (see migration
+  // 0026) — if they already hold one, move it onto this line/matrix
+  // instead of erroring, so clicking Reserve always "just works" from
+  // wherever it's clicked, including taking over a reservation held for
+  // a different matrix (the explicit "override" case from the mockup).
+  const { data: existing } = await supabase.from("crew_matrix_line_reservations").select("id").eq("crew_id", crewId).is("released_at", null).maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("crew_matrix_line_reservations")
+      .update({
+        org_id: access.orgId,
+        crew_matrix_id: crewMatrixId,
+        crew_matrix_line_id: crewMatrixLineId,
+        notes: trimmedNotes,
+        expected_ready_date: readyDate,
+        reserved_by: userId,
+        reserved_at: nowIso,
+        updated_at: nowIso,
+      })
+      .eq("id", existing.id);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase.from("crew_matrix_line_reservations").insert({
+      org_id: access.orgId,
+      crew_id: crewId,
+      crew_matrix_id: crewMatrixId,
+      crew_matrix_line_id: crewMatrixLineId,
+      notes: trimmedNotes,
+      expected_ready_date: readyDate,
+      reserved_by: userId,
+    });
+    if (error) {
+      if (error.message.includes("crew_matrix_line_reservations_one_active_idx")) {
+        return { error: "This crew member was just reserved elsewhere — refresh and try again." };
+      }
+      return { error: error.message };
+    }
+  }
+
+  revalidateMatrix(crewMatrixId);
+  return {};
+}
+
+export async function unreserveCandidate(reservationId: string, crewMatrixId: string) {
+  const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to unreserve crew.");
+
+  const { error } = await supabase
+    .from("crew_matrix_line_reservations")
+    .update({ released_at: new Date().toISOString(), released_by: userId, updated_at: new Date().toISOString() })
+    .eq("id", reservationId)
+    .eq("org_id", access.orgId)
+    .is("released_at", null);
+  if (error) return { error: error.message };
+
+  revalidateMatrix(crewMatrixId);
+  return {};
 }

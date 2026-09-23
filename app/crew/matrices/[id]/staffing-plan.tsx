@@ -52,7 +52,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
-import { assignCandidateToMatrix, unassignCandidateFromMatrix } from "./staffing-actions";
+import { assignCandidateToMatrix, unassignCandidateFromMatrix, reserveCandidateForLine, unreserveCandidate } from "./staffing-actions";
 import { requestRosterChange } from "./roster-change-actions";
 import { REASON_CODES } from "./roster-change-shared";
 import {
@@ -74,6 +74,7 @@ import {
   type DisplayColumnPart,
   type StaffingCrew,
   type FieldDef,
+  type ReservationInfo,
 } from "@/lib/staffing-plan-shared";
 import RosterTimeline, { type HistoryRow } from "./roster-timeline";
 
@@ -81,7 +82,7 @@ import RosterTimeline, { type HistoryRow } from "./roster-timeline";
 // types from this file — the actual definitions now live in
 // lib/staffing-plan-shared.ts so server-side code (share-actions.ts) can
 // use them too without importing a "use client" module.
-export type { StaffingCrew, FieldDef };
+export type { StaffingCrew, FieldDef, ReservationInfo };
 
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
@@ -239,6 +240,16 @@ export default function StaffingPlanView({
       if (person) setLocalCandidateCrew((c) => (c.some((x) => x.crew_id === crewId) ? c : [...c, person]));
       return prev.filter((p) => p.crew_id !== crewId);
     });
+  };
+
+  // Reserve/Unreserve (see RowActions) already succeeded on the server by
+  // the time this is called — patch just that one candidate's reservation
+  // in place, same "feels instant, background refresh resyncs later"
+  // reasoning as moveToAssigned/moveToAvailable above. A candidate never
+  // leaves either list for a reservation change (only Assign/Unassign
+  // move rows between lists), so this only ever updates one field.
+  const updateCandidateReservation = (crewId: string, reservation: ReservationInfo | null) => {
+    setLocalCandidateCrew((prev) => prev.map((p) => (p.crew_id === crewId ? { ...p, reservation } : p)));
   };
 
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
@@ -535,6 +546,7 @@ export default function StaffingPlanView({
               onChanged={onChanged}
               onAssigned={moveToAssigned}
               onUnassigned={moveToAvailable}
+              onReservationChanged={updateCandidateReservation}
               customFieldDefinitions={customFieldDefinitions}
             />
           );
@@ -567,6 +579,7 @@ function StaffingLineCard({
   onChanged,
   onAssigned,
   onUnassigned,
+  onReservationChanged,
   customFieldDefinitions,
 }: {
   line: Line;
@@ -597,6 +610,7 @@ function StaffingLineCard({
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
+  onReservationChanged: (crewId: string, reservation: ReservationInfo | null) => void;
   customFieldDefinitions: FieldDef[];
 }) {
   // Assign makes sense from either candidate view; Unassign only from
@@ -740,6 +754,7 @@ function StaffingLineCard({
                   onChanged={onChanged}
                   onAssigned={onAssigned}
                   onUnassigned={onUnassigned}
+                  onReservationChanged={onReservationChanged}
                 />
               ))}
             </tbody>
@@ -773,6 +788,7 @@ function CandidateRow({
   onChanged,
   onAssigned,
   onUnassigned,
+  onReservationChanged,
 }: {
   person: StaffingCrew;
   completeness: number;
@@ -790,6 +806,7 @@ function CandidateRow({
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
+  onReservationChanged: (crewId: string, reservation: ReservationInfo | null) => void;
 }) {
   const badge = completenessColors(completeness);
   // Phase 17 (traffic light) — green when this row isn't carrying a staged,
@@ -854,9 +871,11 @@ function CandidateRow({
           showUnassign={showUnassignCol}
           canEditRoster={canEditRoster}
           candidateOptions={candidateOptions}
+          reservation={person.reservation}
           onChanged={onChanged}
           onAssigned={onAssigned}
           onUnassigned={onUnassigned}
+          onReservationChanged={onReservationChanged}
         />
       )}
       {showLocationColumn && (
@@ -901,9 +920,11 @@ function RowActions({
   showUnassign,
   canEditRoster,
   candidateOptions,
+  reservation,
   onChanged,
   onAssigned,
   onUnassigned,
+  onReservationChanged,
 }: {
   crewId: string;
   crewMatrixId: string;
@@ -913,13 +934,25 @@ function RowActions({
   showUnassign: boolean;
   canEditRoster: boolean;
   candidateOptions: { crew_id: string; full_name: string }[];
+  // Reserve/soft-lock — only ever passed on the showAssign call site (the
+  // Assigned view's Unassign call site has nothing to reserve). undefined
+  // there is fine, same as it being null here: "not currently reserved".
+  reservation?: ReservationInfo | null;
   onChanged?: () => void;
   onAssigned: (crewId: string, dates?: { assignment_start_date: string; assignment_planned_end_date: string | null }) => void;
   onUnassigned: (crewId: string) => void;
+  onReservationChanged?: (crewId: string, reservation: ReservationInfo | null) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const [busy, setBusy] = useState<"assign" | "unassign" | "request" | null>(null);
+  const [busy, setBusy] = useState<"assign" | "unassign" | "request" | "reserve" | "unreserve" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Reserve/soft-lock — an inline note + expected-ready-date form, same
+  // expand-in-place pattern as the roster-change request form below, kept
+  // separate from it since it applies in a different place (candidate
+  // views only, never the Assigned view's Replace/Unassign form).
+  const [reserveOpen, setReserveOpen] = useState(false);
+  const [reserveNotes, setReserveNotes] = useState("");
+  const [reserveReadyDate, setReserveReadyDate] = useState("");
   // Assign/unassign date inputs default to today but stay editable — AHM
   // calculates on-board day counts and payroll from these dates, so they
   // need to be caller-chosen, not silently stamped to "now". Planned end
@@ -960,6 +993,71 @@ function RowActions({
     // immediately, with the dates just entered, rather than waiting on the
     // slower full-page refresh below to land before the UI reflects it.
     onAssigned(crewId, { assignment_start_date: assignDate, assignment_planned_end_date: plannedEndDate || null });
+    onChanged?.();
+  };
+
+  // Confirm Assign, from an already-reserved row — same insert as the
+  // ordinary Assign above, just today-dated with no planned end date
+  // (matches the approved mockup, which shows this as a single button
+  // with no date inputs to fill in first). assignCandidateToMatrix
+  // releases the reservation server-side once the insert succeeds, so
+  // there's nothing extra to call here for that half.
+  const doConfirmAssign = async () => {
+    setError(null);
+    setBusy("assign");
+    const res = await assignCandidateToMatrix(crewId, crewMatrixId, today, undefined);
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    onAssigned(crewId, { assignment_start_date: today, assignment_planned_end_date: null });
+    onChanged?.();
+  };
+
+  const doReserve = async () => {
+    setError(null);
+    setBusy("reserve");
+    const res = await reserveCandidateForLine(crewId, crewMatrixId, lineId, reserveNotes || undefined, reserveReadyDate || undefined);
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    setReserveOpen(false);
+    setReserveNotes("");
+    setReserveReadyDate("");
+    // Optimistic patch only — we don't get the new reservation row's id
+    // back from the server action, and don't need it until Unreserve is
+    // clicked, by which point the background refresh (onChanged, below)
+    // will have landed with the real row. A non-null placeholder here is
+    // enough to flip the row into the "reserved" treatment immediately.
+    onReservationChanged?.(crewId, {
+      id: "",
+      crewMatrixId,
+      crewMatrixLineId: lineId,
+      notes: reserveNotes || null,
+      expectedReadyDate: reserveReadyDate || null,
+      reservedByLabel: "you",
+      isThisMatrix: true,
+      matrixNumber: null,
+      matrixTitle: null,
+      roleName: null,
+    });
+    onChanged?.();
+  };
+
+  const doUnreserve = async () => {
+    if (!reservation?.id) return;
+    setError(null);
+    setBusy("unreserve");
+    const res = await unreserveCandidate(reservation.id, crewMatrixId);
+    setBusy(null);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    onReservationChanged?.(crewId, null);
     onChanged?.();
   };
 
@@ -1021,76 +1119,179 @@ function RowActions({
   };
 
   const showRequestFlow = canEditRoster && (showAssign || showUnassign);
+  // Reserve/soft-lock only applies to the plain instant-assign path
+  // (canEditRoster's staged roster-change flow is a separate, later-
+  // scoped decision — reserving isn't offered there yet). "Reserved on
+  // THIS matrix" replaces the whole action area with the amber
+  // badge/note/Confirm-Assign/Unreserve treatment from the approved
+  // mockup; "reserved on a different matrix" instead shows a small grey
+  // tag ABOVE the normal, still fully working date inputs + Assign +
+  // Reserve controls — reserving here just moves the hold over (see
+  // reserveCandidateForLine), which is the "override" the mockup called
+  // for.
+  const showReservedHere = showAssign && !showRequestFlow && !!reservation && reservation.isThisMatrix;
 
   return (
     <td className="px-3 py-2 border-l" style={{ borderColor: "var(--ch-line)" }}>
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        {showRequestFlow ? (
-          <button
-            onClick={() => setRequestOpen((o) => !o)}
-            className="text-[11px] font-semibold rounded px-2 py-1 border"
-            style={{ borderColor: "var(--ch-line)", color: showAssign ? "var(--ch-navy)" : "#9d174d" }}
+      {showReservedHere && reservation ? (
+        <div className="flex flex-col gap-1 items-start">
+          <span
+            className="inline-flex items-center gap-1 rounded-full text-[10px] font-semibold px-2 py-0.5"
+            style={{ color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a" }}
           >
-            {showAssign ? "Assign" : "Replace"}
-          </button>
-        ) : (
-          <>
-            {showAssign && (
-              <>
-                <input
-                  type="date"
-                  value={assignDate}
-                  onChange={(e) => setAssignDate(e.target.value)}
-                  disabled={busy !== null}
-                  title="Start date"
-                  className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
-                />
-                <input
-                  type="date"
-                  value={plannedEndDate}
-                  onChange={(e) => setPlannedEndDate(e.target.value)}
-                  min={assignDate}
-                  disabled={busy !== null}
-                  title="Planned end date (optional)"
-                  placeholder="End date"
-                  className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
-                />
-                <button
-                  onClick={doAssign}
-                  disabled={busy !== null}
-                  className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
-                >
-                  {busy === "assign" ? "Assigning…" : "Assign"}
-                </button>
-              </>
-            )}
-            {showUnassign && (
-              <>
-                <input
-                  type="date"
-                  value={unassignDate}
-                  onChange={(e) => setUnassignDate(e.target.value)}
-                  disabled={busy !== null}
-                  title="Unassign date"
-                  className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
-                />
-                <button
-                  onClick={doUnassign}
-                  disabled={busy !== null}
-                  className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
-                >
-                  {busy === "unassign" ? "Unassigning…" : "Unassign"}
-                </button>
-              </>
-            )}
-          </>
-        )}
-      </div>
+            ● Reserved by {reservation.reservedByLabel}
+          </span>
+          {(reservation.notes || reservation.expectedReadyDate) && (
+            <span className="text-[10px]" style={{ color: "#92400e" }}>
+              {[reservation.notes, reservation.expectedReadyDate ? `target ${formatDate(reservation.expectedReadyDate)}` : null].filter(Boolean).join(" — ")}
+            </span>
+          )}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={doConfirmAssign}
+              disabled={busy !== null}
+              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-navy)", color: "var(--ch-navy)" }}
+            >
+              {busy === "assign" ? "Assigning…" : "Confirm Assign"}
+            </button>
+            <button
+              onClick={doUnreserve}
+              disabled={busy !== null || !reservation.id}
+              className="text-[11px] rounded px-2 py-1 border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
+            >
+              {busy === "unreserve" ? "Releasing…" : "Unreserve"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {showRequestFlow ? (
+            <button
+              onClick={() => setRequestOpen((o) => !o)}
+              className="text-[11px] font-semibold rounded px-2 py-1 border"
+              style={{ borderColor: "var(--ch-line)", color: showAssign ? "var(--ch-navy)" : "#9d174d" }}
+            >
+              {showAssign ? "Assign" : "Replace"}
+            </button>
+          ) : (
+            <>
+              {showAssign && (
+                <>
+                  {reservation && !reservation.isThisMatrix && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full text-[10px] font-semibold px-2 py-0.5 w-full"
+                      style={{ color: "#6b7280", background: "#f1f2f4", border: "1px solid var(--ch-line)" }}
+                      title={reservation.expectedReadyDate ? `Expected ready ${formatDate(reservation.expectedReadyDate)}` : undefined}
+                    >
+                      ● Reserved for {reservation.matrixNumber ?? "another matrix"}{reservation.roleName ? ` — ${reservation.roleName}` : ""}
+                    </span>
+                  )}
+                  <input
+                    type="date"
+                    value={assignDate}
+                    onChange={(e) => setAssignDate(e.target.value)}
+                    disabled={busy !== null}
+                    title="Start date"
+                    className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+                    style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+                  />
+                  <input
+                    type="date"
+                    value={plannedEndDate}
+                    onChange={(e) => setPlannedEndDate(e.target.value)}
+                    min={assignDate}
+                    disabled={busy !== null}
+                    title="Planned end date (optional)"
+                    placeholder="End date"
+                    className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+                    style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+                  />
+                  <button
+                    onClick={doAssign}
+                    disabled={busy !== null}
+                    className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+                    style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+                  >
+                    {busy === "assign" ? "Assigning…" : "Assign"}
+                  </button>
+                  <button
+                    onClick={() => setReserveOpen((o) => !o)}
+                    disabled={busy !== null}
+                    className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+                    style={{ borderColor: "#fde68a", color: "#92400e" }}
+                  >
+                    Reserve
+                  </button>
+                </>
+              )}
+              {showUnassign && (
+                <>
+                  <input
+                    type="date"
+                    value={unassignDate}
+                    onChange={(e) => setUnassignDate(e.target.value)}
+                    disabled={busy !== null}
+                    title="Unassign date"
+                    className="text-[11px] rounded px-1 py-1 border disabled:opacity-50"
+                    style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "8.5rem" }}
+                  />
+                  <button
+                    onClick={doUnassign}
+                    disabled={busy !== null}
+                    className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+                    style={{ borderColor: "var(--ch-line)", color: "var(--ch-fail)" }}
+                  >
+                    {busy === "unassign" ? "Unassigning…" : "Unassign"}
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {reserveOpen && (
+        <div className="mt-2 p-2.5 rounded-lg border space-y-1.5" style={{ borderColor: "#fde68a", background: "#fffbf0", width: "14rem" }}>
+          <div className="text-[10px]" style={{ color: "#92400e" }}>
+            Keeps {personName} on this list with a &quot;Reserved&quot; tag — doesn&apos;t assign them yet.
+          </div>
+          <textarea
+            value={reserveNotes}
+            onChange={(e) => setReserveNotes(e.target.value)}
+            placeholder="Note (optional) — e.g. waiting on Passport"
+            rows={2}
+            className="text-[11px] rounded px-1.5 py-1 border w-full resize-none"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+          />
+          <input
+            type="date"
+            value={reserveReadyDate}
+            onChange={(e) => setReserveReadyDate(e.target.value)}
+            title="Expected ready date (optional)"
+            className="text-[11px] rounded px-1.5 py-1 border w-full"
+            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+          />
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={doReserve}
+              disabled={busy !== null}
+              className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
+              style={{ borderColor: "#fde68a", color: "#92400e" }}
+            >
+              {busy === "reserve" ? "Reserving…" : "Confirm Reserve"}
+            </button>
+            <button
+              onClick={() => setReserveOpen(false)}
+              disabled={busy !== null}
+              className="text-[11px] rounded px-2 py-1"
+              style={{ color: "var(--ch-sub)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {requestOpen && (
         <div className="mt-2 p-2.5 rounded-lg border space-y-1.5" style={{ borderColor: "var(--ch-line)", background: "var(--ch-paper)", width: "15rem" }}>
           <div className="text-[10px]" style={{ color: "var(--ch-sub)" }}>

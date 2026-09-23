@@ -69,6 +69,33 @@ export type StaffingCrew = {
   // since applyApprovedRosterChanges marks those requests applied and
   // page.tsx's overlay only ever surfaces the still-unapplied ones.
   rosterChangeNote?: string | null;
+  // Reservation ("soft lock") — Available/Other Location Candidates views
+  // only. Set when this crew member currently holds an active (not yet
+  // released) row in crew_matrix_line_reservations, from whichever matrix
+  // reserved them last (one active reservation per person, org-wide — see
+  // migration 0026). null/undefined means not reserved by anyone right
+  // now. isThisMatrix tells the UI whether to show the full "reserved by
+  // you/them, with notes + Confirm Assign + Unreserve" treatment (reserved
+  // on the matrix currently being viewed) or just a small "Reserved for
+  // <other matrix> — <role>" tag that doesn't block assigning them here
+  // (reserved on a different matrix).
+  reservation?: ReservationInfo | null;
+};
+
+export type ReservationInfo = {
+  id: string;
+  crewMatrixId: string;
+  crewMatrixLineId: string;
+  notes: string | null;
+  expectedReadyDate: string | null;
+  // Precomputed server-side against the viewing user — "you" or the
+  // reserving person's name — so the client component doesn't need its
+  // own copy of the current user id just to render this.
+  reservedByLabel: string;
+  isThisMatrix: boolean;
+  matrixNumber: string | null;
+  matrixTitle: string | null;
+  roleName: string | null;
 };
 
 // Phase 16 — "how much of this rank's required documentation does this
