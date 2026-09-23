@@ -193,7 +193,7 @@ export default function StaffingPlanView({
     router.replace(`/crew/matrices/${crewMatrixId}${qs ? `?${qs}` : ""}`, { scroll: false });
   };
   const [exporting, setExporting] = useState(false);
-  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(true);
 
   // Assign/Unassign already succeeded on the server by the time these are
   // called (see RowActions) — the slow part was never that single insert/
