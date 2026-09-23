@@ -251,6 +251,38 @@ export async function deleteManningRequirement(id: string) {
   return {};
 }
 
+// Copies every manning requirement (role + minimum headcount) from one
+// site to another — used by the New Crew Matrix form's "+ New site"
+// quick-add, so a "sister vessel" site can start with the same roles as
+// an existing one instead of the crew matrix coming up with zero lines.
+// Upserts (not plain insert) so re-running it, e.g. after the target
+// picked up a requirement of its own in between, doesn't 23505-conflict.
+export async function copyManningRequirements(fromOffshoreSiteId: string, toOffshoreSiteId: string) {
+  const { supabase, access } = await requireCrewManage();
+  if (fromOffshoreSiteId === toOffshoreSiteId) return { copied: 0 };
+
+  const { data: source, error: sourceError } = await supabase
+    .from("site_manning_requirements")
+    .select("job_role_id, minimum_headcount")
+    .eq("offshore_site_id", fromOffshoreSiteId)
+    .eq("org_id", access.orgId);
+  if (sourceError) return { error: sourceError.message };
+  if (!source || source.length === 0) return { copied: 0 };
+
+  const { error } = await supabase.from("site_manning_requirements").upsert(
+    source.map((r) => ({
+      org_id: access.orgId,
+      offshore_site_id: toOffshoreSiteId,
+      job_role_id: r.job_role_id,
+      minimum_headcount: r.minimum_headcount,
+    })),
+    { onConflict: "offshore_site_id,job_role_id" }
+  );
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return { copied: source.length };
+}
+
 /* ---------------- Document types ---------------- */
 
 export async function createDocumentType(formData: FormData) {
