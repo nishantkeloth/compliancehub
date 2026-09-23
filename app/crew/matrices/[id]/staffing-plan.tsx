@@ -110,19 +110,18 @@ function sameRegion(a: string | null | undefined, b: string | null | undefined):
   return normalizeRegion(a) === normalizeRegion(b);
 }
 
-// Table dividers — approved via table-dividers-sample.html. A thin line
-// marks where a document type's own column group starts (e.g. Food Safety
-// Certificate's Number+Date pair); a heavier, darker line marks where a
-// whole category starts (Certificates -> Travel Documents -> ...), which
-// also covers the very first data column (the boundary between the
-// Name/Nationality/Actions columns and the document data). Previously
-// only the header carried any of this (and only at category boundaries,
-// not document-type ones) — the data rows had no dividers at all, which
-// is what made a wide rank's table read as one undifferentiated block of
-// columns. Shared by the three header rows and every body cell so the
-// same line runs unbroken from the header straight down through the data.
-const DIVIDER_COLOR = "#9ca3af";
-const DIVIDER_COLOR_HEAVY = "#4b5563";
+// Table dividers — approved via table-dividers-sample.html, then softened
+// per feedback on the live page (the category-boundary line read as a
+// hard black rule, not a divider). Both tiers are now a plain 1px line —
+// a light one at a document type's own column group (e.g. Food Safety
+// Certificate's Number+Date pair), a very slightly darker (but still
+// soft, not bold/black) one at a category boundary (Certificates ->
+// Travel Documents -> ...) and the very first data column (the boundary
+// between the Name/Nationality/Actions columns and the document data).
+// Shared by the three header rows and every body cell so the same line
+// runs unbroken from the header straight down through the data.
+const DIVIDER_COLOR = "#e5e7eb";
+const DIVIDER_COLOR_HEAVY = "#d1d5db";
 type DividerKind = "none" | "type" | "category";
 
 function dividerKind(columns: DisplayColumn[], groupIndex: number[], i: number): DividerKind {
@@ -133,7 +132,7 @@ function dividerKind(columns: DisplayColumn[], groupIndex: number[], i: number):
 }
 
 function dividerStyle(kind: DividerKind): CSSProperties {
-  if (kind === "category") return { borderLeftWidth: 2, borderLeftStyle: "solid", borderLeftColor: DIVIDER_COLOR_HEAVY };
+  if (kind === "category") return { borderLeftWidth: 1, borderLeftStyle: "solid", borderLeftColor: DIVIDER_COLOR_HEAVY };
   if (kind === "type") return { borderLeftWidth: 1, borderLeftStyle: "solid", borderLeftColor: DIVIDER_COLOR };
   return {};
 }
