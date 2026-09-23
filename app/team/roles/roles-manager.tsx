@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createRole, renameRole, deleteRole, setRolePermission } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import { buildPermissionGroups, type Permission } from "./permission-groups";
 
 type Role = { id: string; name: string; isSystem: boolean; systemKey: string | null };
-type Permission = { key: string; label: string; description: string | null };
 
 const BASE_RANK_OPTIONS = [
   { value: "inspector", label: "Inspector (baseline access)" },
@@ -33,6 +33,8 @@ export default function RolesManager({
     restoreOptimistic: restoreOptimisticRole,
   } = useOptimisticList(roles);
 
+  const permissionGroups = buildPermissionGroups(permissions);
+
   const [localGrants, setLocalGrants] = useState<Record<string, Set<string>>>(() =>
     Object.fromEntries(roles.map((r) => [r.id, new Set(grants[r.id] ?? [])]))
   );
@@ -51,6 +53,27 @@ export default function RolesManager({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<{ roleId: string; message: string } | null>(null);
   const [, startDeleting] = useTransition();
+
+  // Which role's tab is showing. Tracked separately from roleItems so a
+  // freshly-created role (still on its temp id) stays selected across the
+  // optimistic->real id swap that happens once createRole()'s
+  // router.refresh() lands new props.
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(roles[0]?.id ?? null);
+  const [pendingNewRoleName, setPendingNewRoleName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedRoleId && roleItems.some((r) => r.id === selectedRoleId)) return;
+    if (pendingNewRoleName) {
+      const match = roleItems.find((r) => r.name === pendingNewRoleName && !isTempId(r.id));
+      if (match) {
+        setSelectedRoleId(match.id);
+        setPendingNewRoleName(null);
+        return;
+      }
+    }
+    setSelectedRoleId(roleItems[0]?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleItems]);
 
   const toggle = (roleId: string, permissionKey: string, next: boolean) => {
     setRowError(null);
@@ -78,20 +101,24 @@ export default function RolesManager({
     if (!newName.trim()) return;
     setCreateError(null);
     const fd = new FormData();
-    fd.set("name", newName.trim());
+    const trimmedName = newName.trim();
+    fd.set("name", trimmedName);
     fd.set("baseRank", newBaseRank);
 
-    const optimisticRole: Role = { id: tempId(), name: newName.trim(), isSystem: false, systemKey: null };
+    const optimisticRole: Role = { id: tempId(), name: trimmedName, isSystem: false, systemKey: null };
     addOptimisticRole(optimisticRole);
     setLocalGrants((prev) => ({ ...prev, [optimisticRole.id]: new Set() }));
     setNewName("");
     setNewBaseRank("inspector");
+    setSelectedRoleId(optimisticRole.id);
+    setPendingNewRoleName(trimmedName);
 
     startCreating(async () => {
       const res = await createRole(fd);
       if (res?.error) {
         removeOptimisticRole(optimisticRole.id);
         setCreateError(res.error);
+        setPendingNewRoleName(null);
         return;
       }
       router.refresh();
@@ -130,6 +157,9 @@ export default function RolesManager({
       router.refresh();
     });
   };
+
+  const selectedRole = roleItems.find((r) => r.id === selectedRoleId) ?? roleItems[0] ?? null;
+  const roleGrants = selectedRole ? localGrants[selectedRole.id] ?? new Set<string>() : new Set<string>();
 
   return (
     <div className="space-y-6">
@@ -179,13 +209,37 @@ export default function RolesManager({
         )}
       </div>
 
-      <div className="space-y-4">
-        {roleItems.map((role) => {
-          const roleGrants = localGrants[role.id] ?? new Set<string>();
-          return (
-            <div key={role.id} className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                {renamingId === role.id ? (
+      {roleItems.length === 0 ? (
+        <div className="bg-white border rounded-xl p-5 text-sm" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
+          No roles yet — create one above.
+        </div>
+      ) : (
+        <div>
+          <div className="flex items-center gap-1.5 flex-wrap border-b mb-0" style={{ borderColor: "var(--ch-line)" }}>
+            {roleItems.map((role) => {
+              const active = selectedRole?.id === role.id;
+              return (
+                <button
+                  key={role.id}
+                  onClick={() => setSelectedRoleId(role.id)}
+                  className="text-sm font-semibold px-3.5 py-2 rounded-t-lg border border-b-0 -mb-px transition-colors"
+                  style={
+                    active
+                      ? { borderColor: "var(--ch-line)", background: "#fff", color: "var(--ch-navy)" }
+                      : { borderColor: "transparent", background: "transparent", color: "var(--ch-sub)" }
+                  }
+                >
+                  {role.name}
+                  {isTempId(role.id) && <span className="italic font-normal"> · saving…</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedRole && (
+            <div className="bg-white border rounded-b-xl rounded-tr-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+                {renamingId === selectedRole.id ? (
                   <div className="flex items-center gap-2">
                     <input
                       className="border rounded-lg px-2 py-1.5 text-sm font-semibold"
@@ -195,7 +249,7 @@ export default function RolesManager({
                       autoFocus
                     />
                     <button
-                      onClick={() => submitRename(role.id)}
+                      onClick={() => submitRename(selectedRole.id)}
                       className="text-xs font-semibold border rounded-lg px-2.5 py-1.5"
                       style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
                     >
@@ -211,10 +265,10 @@ export default function RolesManager({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <div className="font-semibold" style={{ color: "var(--ch-ink)" }}>
-                      {role.name}
+                    <div className="text-base font-semibold" style={{ color: "var(--ch-ink)" }}>
+                      {selectedRole.name}
                     </div>
-                    {role.isSystem && (
+                    {selectedRole.isSystem && (
                       <span
                         className="text-[10px] font-bold uppercase rounded-full px-2 py-0.5"
                         style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
@@ -222,17 +276,17 @@ export default function RolesManager({
                         Built-in
                       </span>
                     )}
-                    {isTempId(role.id) && (
+                    {isTempId(selectedRole.id) && (
                       <span className="text-xs italic" style={{ color: "var(--ch-sub)" }}>
                         Saving…
                       </span>
                     )}
                     <button
                       onClick={() => {
-                        setRenamingId(role.id);
-                        setRenameValue(role.name);
+                        setRenamingId(selectedRole.id);
+                        setRenameValue(selectedRole.name);
                       }}
-                      disabled={isTempId(role.id)}
+                      disabled={isTempId(selectedRole.id)}
                       className="text-xs disabled:opacity-40"
                       style={{ color: "var(--ch-sub)" }}
                     >
@@ -241,10 +295,10 @@ export default function RolesManager({
                   </div>
                 )}
 
-                {!role.isSystem && (
+                {!selectedRole.isSystem && (
                   <button
-                    onClick={() => submitDelete(role.id)}
-                    disabled={deletingId === role.id || isTempId(role.id)}
+                    onClick={() => submitDelete(selectedRole.id)}
+                    disabled={deletingId === selectedRole.id || isTempId(selectedRole.id)}
                     className="text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-50"
                     style={{ color: "var(--ch-fail)" }}
                   >
@@ -253,42 +307,89 @@ export default function RolesManager({
                 )}
               </div>
 
-              <div className="grid gap-2 sm:grid-cols-2">
-                {permissions.map((p) => (
-                  <label key={p.key} className="flex items-start gap-2 text-sm" style={{ color: "var(--ch-ink)" }}>
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={roleGrants.has(p.key)}
-                      disabled={isTempId(role.id)}
-                      onChange={(e) => toggle(role.id, p.key, e.target.checked)}
-                    />
-                    <span>
-                      <span className="font-medium">{p.label}</span>
-                      {p.description && (
-                        <span className="block text-xs" style={{ color: "var(--ch-sub)" }}>
-                          {p.description}
-                        </span>
+              <div className="space-y-5">
+                {permissionGroups.map((group) => {
+                  const gateChecked = group.gate ? roleGrants.has(group.gate.key) : false;
+                  const anyChildChecked = group.items.some((p) => roleGrants.has(p.key));
+                  const showChildren = !group.gate || gateChecked || anyChildChecked;
+
+                  return (
+                    <div key={group.label}>
+                      <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--ch-sub)" }}>
+                        {group.label}
+                      </div>
+
+                      {group.gate && (
+                        <label className="flex items-start gap-2 text-sm mb-2" style={{ color: "var(--ch-ink)" }}>
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={gateChecked}
+                            disabled={isTempId(selectedRole.id)}
+                            onChange={(e) => toggle(selectedRole.id, group.gate!.key, e.target.checked)}
+                          />
+                          <span>
+                            <span className="font-medium">{group.gate.label}</span>
+                            {group.gate.description && (
+                              <span className="block text-xs" style={{ color: "var(--ch-sub)" }}>
+                                {group.gate.description}
+                              </span>
+                            )}
+                          </span>
+                        </label>
                       )}
-                    </span>
-                  </label>
-                ))}
+
+                      {group.items.length > 0 && showChildren && (
+                        <div
+                          className="grid gap-2 sm:grid-cols-2"
+                          style={group.gate ? { marginLeft: "1.5rem", paddingLeft: "0.75rem", borderLeft: "2px solid var(--ch-line)" } : undefined}
+                        >
+                          {group.items.map((p) => (
+                            <label key={p.key} className="flex items-start gap-2 text-sm" style={{ color: "var(--ch-ink)" }}>
+                              <input
+                                type="checkbox"
+                                className="mt-0.5"
+                                checked={roleGrants.has(p.key)}
+                                disabled={isTempId(selectedRole.id)}
+                                onChange={(e) => toggle(selectedRole.id, p.key, e.target.checked)}
+                              />
+                              <span>
+                                <span className="font-medium">{p.label}</span>
+                                {p.description && (
+                                  <span className="block text-xs" style={{ color: "var(--ch-sub)" }}>
+                                    {p.description}
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      {group.gate && !showChildren && (
+                        <div className="text-xs italic" style={{ marginLeft: "1.5rem", color: "var(--ch-sub)" }}>
+                          Check &ldquo;{group.gate.label}&rdquo; to allow specific {group.label.toLowerCase()} permissions.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
-              {rowError?.roleId === role.id && (
-                <div className="text-sm mt-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+              {rowError?.roleId === selectedRole.id && (
+                <div className="text-sm mt-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
                   {rowError.message}
                 </div>
               )}
-              {deleteError?.roleId === role.id && (
-                <div className="text-sm mt-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+              {deleteError?.roleId === selectedRole.id && (
+                <div className="text-sm mt-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
                   {deleteError.message}
                 </div>
               )}
             </div>
-          );
-        })}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
