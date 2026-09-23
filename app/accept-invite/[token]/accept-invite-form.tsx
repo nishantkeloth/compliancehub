@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type Preview =
@@ -15,7 +15,8 @@ export default function AcceptInviteForm({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const redeemAttempted = useRef(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -27,6 +28,61 @@ export default function AcceptInviteForm({ token }: { token: string }) {
       setPreview(data as Preview);
       if (data.email) setEmail(data.email);
     });
+  }, [token]);
+
+  // Redeeming needs an authenticated session, but that session doesn't
+  // always exist the moment this page first loads:
+  //  - it's there immediately if the Supabase project doesn't require
+  //    email confirmation (signUp() below returns a session right away)
+  //  - otherwise it only shows up once the person clicks the confirmation
+  //    link in their email — which now redirects back to this exact page
+  //    (see the emailRedirectTo option in submit() below), so Supabase's
+  //    client picks the session up from the URL after this page reloads
+  //  - or a moment later still, if they come back and sign in normally
+  // Rather than only trying once right after signUp(), this watches for
+  // a session however it arrives and redeems as soon as one shows up —
+  // that's what actually closes the gap that left org_id/role_id null.
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+
+    const tryRedeem = async () => {
+      if (redeemAttempted.current || cancelled) return;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session || cancelled) return;
+      redeemAttempted.current = true;
+      setFinishing(true);
+      setError(null);
+      const { error: redeemError } = await supabase.rpc("redeem_invite", { p_token: token });
+      if (cancelled) return;
+      if (redeemError) {
+        // "already been used" means an earlier attempt in this same flow
+        // already redeemed it (e.g. a duplicate SIGNED_IN event) — that's
+        // success, not a failure, so just continue on to the app.
+        if (/already been used/i.test(redeemError.message)) {
+          window.location.href = "/";
+          return;
+        }
+        setFinishing(false);
+        setError(redeemError.message);
+        return;
+      }
+      window.location.href = "/";
+    };
+
+    tryRedeem();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN") tryRedeem();
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, [token]);
 
   const submit = async () => {
@@ -42,34 +98,56 @@ export default function AcceptInviteForm({ token }: { token: string }) {
     }
     setBusy(true);
     const supabase = createClient();
+    // Send them right back to this invite link after confirming their
+    // email, instead of wherever the project's default redirect points —
+    // that's what lets the effect above pick up the new session and
+    // finish redeeming automatically.
+    const emailRedirectTo = `${window.location.origin}/accept-invite/${token}`;
 
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
-      options: { data: { full_name: fullName.trim() } },
+      options: { data: { full_name: fullName.trim() }, emailRedirectTo },
     });
+
     if (signUpError) {
+      // Most likely: this account was already created on an earlier
+      // attempt (e.g. they closed the tab after "check your email" and
+      // never came back), but the invite was never redeemed. Sign in
+      // with the password they just entered instead of dead-ending here.
+      if (/already registered|already exists/i.test(signUpError.message)) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (signInError) {
+          setBusy(false);
+          setError(
+            "An account with this email already exists. Enter the password you used when you first signed up, then try again."
+          );
+          return;
+        }
+        // Signed in — the effect above will pick up the new session and
+        // redeem the invite; leave the button in its busy state until the
+        // "Finishing setup…" screen takes over.
+        return;
+      }
       setBusy(false);
       setError(signUpError.message);
       return;
     }
 
     if (!signUpData.session) {
-      // Email confirmation is required before there's an active session —
-      // redeem_invite needs auth.uid(), so it can't run yet.
+      // Email confirmation is required before there's an active session.
       setBusy(false);
-      setInfo("Account created — check your email to confirm it, then reopen this invite link to finish joining.");
+      setInfo(
+        "Account created — check your email and click the confirmation link to finish joining. It'll bring you right back here."
+      );
       return;
     }
 
-    const { error: redeemError } = await supabase.rpc("redeem_invite", { p_token: token });
-    setBusy(false);
-    if (redeemError) {
-      setError(redeemError.message);
-      return;
-    }
-    setDone(true);
-    window.location.href = "/";
+    // A session came back immediately (this project doesn't require email
+    // confirmation) — the effect above will redeem it.
   };
 
   if (preview === null) {
@@ -101,6 +179,17 @@ export default function AcceptInviteForm({ token }: { token: string }) {
             to send a new one.
           </p>
         </div>
+      </main>
+    );
+  }
+
+  if (finishing) {
+    return (
+      <main
+        className="min-h-screen flex items-center justify-center p-4"
+        style={{ background: "var(--ch-paper)" }}
+      >
+        <p style={{ color: "var(--ch-sub)" }}>Finishing setup…</p>
       </main>
     );
   }
@@ -167,10 +256,10 @@ export default function AcceptInviteForm({ token }: { token: string }) {
 
         <button
           onClick={submit}
-          disabled={busy || done}
+          disabled={busy}
           className="w-full ch-btn-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
         >
-          {busy ? "Setting up…" : done ? "Done — redirecting…" : "Create account & join"}
+          {busy ? "Setting up…" : "Create account & join"}
         </button>
       </div>
     </main>
