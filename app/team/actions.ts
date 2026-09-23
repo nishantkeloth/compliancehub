@@ -6,6 +6,7 @@ import { can, getEffectiveAccess } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import crypto from "crypto";
+import { sendEmail, companyFromAddress } from "@/lib/email";
 
 function randomTempPassword() {
   return crypto.randomBytes(9).toString("base64").replace(/[+/=]/g, "x") + "!1";
@@ -76,8 +77,32 @@ export async function inviteTeamMember(formData: FormData) {
     const protocol = host.startsWith("localhost") ? "http" : "https";
     const acceptUrl = `${protocol}://${host}/accept-invite/${token}`;
 
+    // Best-effort email — the link is always shown in the UI too (below),
+    // so a delivery failure here (e.g. RESEND_API_KEY missing, or the
+    // recipient's mail server rejecting it) never blocks the invite
+    // itself, it just means the admin has to send the link manually.
+    let emailSent = false;
+    let emailError: string | null = null;
+    const { data: company } = await supabase.from("companies").select("name, notify_prefix").eq("id", access.orgId).single();
+    const companyDisplayName = company?.name ?? access.companyName ?? "ComplianceHub";
+    const from = companyFromAddress(companyDisplayName, company?.notify_prefix ?? null);
+    const { error: sendErr } = await sendEmail({
+      from,
+      to: email,
+      subject: `You've been invited to ${companyDisplayName} on ComplianceHub`,
+      html: `
+        <p>Hi ${name},</p>
+        <p>${companyDisplayName} has invited you to join their ComplianceHub workspace.</p>
+        <p><a href="${acceptUrl}">${acceptUrl}</a></p>
+        <p>Open the link to set your password and get started. It expires in 7 days.</p>
+      `,
+      text: `Hi ${name},\n\n${companyDisplayName} has invited you to join their ComplianceHub workspace.\n\n${acceptUrl}\n\nOpen the link to set your password and get started. It expires in 7 days.`,
+    });
+    if (sendErr) emailError = sendErr;
+    else emailSent = true;
+
     revalidatePath("/team");
-    return { error: null, invite: { email, acceptUrl } };
+    return { error: null, invite: { email, acceptUrl, emailSent, emailError } };
   }
 
   // mode === "direct"
