@@ -122,6 +122,9 @@ export default async function AppShell({
   if (can(access, "workflows.manage")) {
     adminItems.push({ href: "/team/workflows", key: "workflows", label: "Approval Workflows" });
   }
+  if (can(access, "crew.bulk_intake.manage")) {
+    adminItems.push({ href: "/team/bulk-intake", key: "bulk-intake", label: "Bulk Data Migration" });
+  }
 
   const navSections: NavSection[] = [
     { title: "Contracts & Projects", items: contractItems },
