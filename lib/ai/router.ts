@@ -26,14 +26,15 @@ import { decryptSecret } from "./crypto";
 // ai_usage_log.
 
 export type Provider = "anthropic" | "openai" | "google" | "groq" | "openrouter" | "ollama";
-// "crew_assistant" (Phase 11 — conversational side panel) and
-// "crew_intake" (Phase 12 — CV/ID scan onboarding intake) intentionally
-// have no row in ai_task_settings: that table's `task` column is
-// check-constrained to the three matrix tasks above, so these tasks
-// always fall back to the company's default routing_mode. They log to
-// ai_usage_log fine (that table's `task` column is plain text,
-// unconstrained).
-export type AiTask = "matrix_from_document" | "matrix_from_context" | "matrix_review" | "crew_assistant" | "crew_intake";
+// "crew_assistant" (Phase 11 — conversational side panel), "crew_intake"
+// (Phase 12 — CV/ID scan onboarding intake) and "document_digest" (Phase
+// 14 — the document-expiry notification digest, composed by the daily
+// cron job) intentionally have no row in ai_task_settings: that table's
+// `task` column is check-constrained to the three matrix tasks above, so
+// these tasks always fall back to the company's default routing_mode.
+// They log to ai_usage_log fine (that table's `task` column is plain
+// text, unconstrained).
+export type AiTask = "matrix_from_document" | "matrix_from_context" | "matrix_review" | "crew_assistant" | "crew_intake" | "document_digest";
 
 export type AiModelRow = {
   id: string;
@@ -288,7 +289,11 @@ export type RunAgentResult = {
 export async function runAgent(
   supabase: Supa,
   ctx: AiContext,
-  args: { task: AiTask; system: string; messages: ModelMessage[]; tools: ToolSet; userId: string; maxSteps?: number }
+  // userId is nullable so the Phase 14 document-digest cron job (which has
+  // no signed-in user) can call this the same way app/assistant/actions.ts
+  // does — ai_usage_log.user_id is a nullable FK, so null just logs the
+  // usage row without attributing it to anyone.
+  args: { task: AiTask; system: string; messages: ModelMessage[]; tools: ToolSet; userId: string | null; maxSteps?: number }
 ): Promise<RunAgentResult | { error: string; attempts: { model: string; outcome: string }[] }> {
   if (!ctx.settings.ai_enabled) return { error: "AI features are disabled for this company (Settings → AI).", attempts: [] };
   const { chain, skipped, mode } = resolveChain(ctx, args.task, false);

@@ -37,6 +37,7 @@ const GROUP_RULES: { prefix: string; label: string }[] = [
   { prefix: "templates.", label: "Templates" },
   { prefix: "schedules.", label: "Schedules" },
   { prefix: "actions.", label: "Corrective Actions" },
+  { prefix: "notifications.", label: "Notifications & Dashboard" },
 ];
 
 function groupLabelFor(key: string): string {

@@ -38,6 +38,15 @@ export default async function AppShell({
   const access = await getEffectiveAccess(supabase, user.id);
   const companyName = access.companyName ?? "—";
 
+  const insightsItems: NavItem[] = [];
+  if (access.orgId) {
+    // Visible to every company member (not permission-gated) — same bar
+    // as "/" and Inspection Schedules below; each module inside the page
+    // itself still respects the org's dashboard_module_settings toggles
+    // and each row's own RLS.
+    insightsItems.push({ href: "/ops-dashboard", key: "ops-dashboard", label: "Operations Dashboard" });
+  }
+
   const complianceItems: NavItem[] = [
     { href: "/", key: "dashboard", label: "Dashboard" },
     { href: "/actions", key: "actions", label: "Corrective Actions" },
@@ -125,8 +134,12 @@ export default async function AppShell({
   if (can(access, "crew.bulk_intake.manage")) {
     adminItems.push({ href: "/team/bulk-intake", key: "bulk-intake", label: "Bulk Data Migration" });
   }
+  if (can(access, "notifications.manage")) {
+    adminItems.push({ href: "/team/notifications", key: "notification-settings", label: "Notification Settings" });
+  }
 
   const navSections: NavSection[] = [
+    { title: "Insights", items: insightsItems },
     { title: "Contracts & Projects", items: contractItems },
     { title: "Crew Matrix", items: crewItems },
     { title: "Mobilization", items: mobilizationItems },
