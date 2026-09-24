@@ -282,7 +282,7 @@ function ProjectForm({
     <div className={`${cardCls} p-4`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Contract
+          Contract <span style={{ color: "var(--ch-fail)" }}>*</span>
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.contractId} onChange={set("contractId")}>
             {contracts.map((c) => (
               <option key={c.id} value={c.id}>{c.contract_title}</option>
@@ -309,7 +309,7 @@ function ProjectForm({
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
         <label className={lbl} style={lblStyle}>
-          Project name
+          Project name <span style={{ color: "var(--ch-fail)" }}>*</span>
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Project / campaign name" value={values.projectName} onChange={set("projectName")} />
         </label>
         {field("Client reference", "clientReference")}
