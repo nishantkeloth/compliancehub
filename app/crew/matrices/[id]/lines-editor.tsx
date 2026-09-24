@@ -53,6 +53,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 type LineFormValues = {
   jobRoleId: string;
@@ -416,7 +418,10 @@ function LineForm({
           <input type="number" min="0" className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.mobilizationLeadDays} onChange={setField("mobilizationLeadDays")} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Remarks" rows={2} value={values.remarks} onChange={setField("remarks")} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Remarks
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.remarks} onChange={setField("remarks")} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={() => onSubmit(values)} disabled={busy || !values.jobRoleId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save manning line
@@ -742,9 +747,9 @@ function CompetenciesPanel({
       </div>
       {canEdit && (
         <div className="flex items-center gap-2 flex-wrap">
-          <input placeholder="Competency" className={`${inputCls} w-40`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="Min. grade" className={`${inputCls} w-28`} style={inputStyle} value={grade} onChange={(e) => setGrade(e.target.value)} />
-          <input placeholder="Notes" className={`${inputCls} flex-1`} style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <label className={lbl} style={lblStyle}>Competency<input className={`${inputCls} w-40 mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <label className={lbl} style={lblStyle}>Min. grade<input className={`${inputCls} w-28 mt-1`} style={inputStyle} value={grade} onChange={(e) => setGrade(e.target.value)} /></label>
+          <label className={`${lbl} flex-1`} style={lblStyle}>Notes<input className={`${inputCls} w-full mt-1`} style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
           <button onClick={add} disabled={!name.trim()} className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
@@ -791,7 +796,7 @@ function ClientRequirementsPanel({
       </div>
       {canEdit && (
         <div className="flex items-center gap-2 flex-wrap">
-          <input placeholder="Requirement" className={`${inputCls} flex-1`} style={inputStyle} value={text} onChange={(e) => setText(e.target.value)} />
+          <label className={`${lbl} flex-1`} style={lblStyle}>Requirement<input className={`${inputCls} w-full mt-1`} style={inputStyle} value={text} onChange={(e) => setText(e.target.value)} /></label>
           <label className="flex items-center gap-1 text-xs" style={{ color: "var(--ch-sub)" }}>
             <input type="checkbox" checked={mandatory} onChange={(e) => setMandatory(e.target.checked)} /> Mandatory
           </label>

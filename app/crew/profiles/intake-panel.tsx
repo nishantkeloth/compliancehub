@@ -422,7 +422,10 @@ export default function IntakePanel() {
                   </select>
                   {d.method === "fuzzy" && d.id && pill("fuzzy match", "#fef3e2", "#b45309")}
                   {d.method === "alias" && pill("alias", "var(--ch-paper)", "var(--ch-sub)")}
-                  <input className={`${inputCls} w-32`} style={inputStyle} placeholder="Document #" value={d.documentNumber} onChange={(e) => updateDoc(i, { documentNumber: e.target.value })} />
+                  <label className="text-xs flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                    Document #
+                    <input className={`${inputCls} w-32`} style={inputStyle} value={d.documentNumber} onChange={(e) => updateDoc(i, { documentNumber: e.target.value })} />
+                  </label>
                   <label className="text-xs flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
                     Issued
                     <input type="date" className={`${inputCls} w-36`} style={inputStyle} value={d.issueDate} onChange={(e) => updateDoc(i, { issueDate: e.target.value })} />

@@ -19,6 +19,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
@@ -212,15 +214,24 @@ function ContractorForm({
         </div>
       )}
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Contractor name, e.g. Allianz Marine Service" value={name} onChange={(e) => setName(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-          <option value="">Select client…</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Contractor name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Allianz Marine Service" />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Client
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
+            <option value="">Select client…</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active

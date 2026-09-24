@@ -21,6 +21,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 export const STATUS_PILLS: Record<string, { bg: string; fg: string }> = {
   draft: { bg: "var(--ch-paper)", fg: "var(--ch-sub)" },
@@ -253,8 +255,14 @@ function ContractForm({
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Contract title" value={title} onChange={(e) => setTitle(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Contract number" value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} />
+        <label className={lbl} style={lblStyle}>
+          Contract title
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Contract number
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} />
+        </label>
       </div>
       <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
         You&rsquo;ll fill in dates, value, service scope, and team on the contract page after saving.

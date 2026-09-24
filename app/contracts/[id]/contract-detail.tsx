@@ -59,6 +59,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 function daysUntil(dateStr: string | null): number | null {
   if (!dateStr) return null;
@@ -397,7 +399,10 @@ function ContractForm({
         {field("Contract number", "contractNumber")}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Contract title" value={values.contractTitle} onChange={set("contractTitle")} />
+        <label className={lbl} style={lblStyle}>
+          Contract title
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.contractTitle} onChange={set("contractTitle")} />
+        </label>
         {field("Award date", "awardDate", "date")}
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
@@ -433,8 +438,14 @@ function ContractForm({
           </select>
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Description" rows={2} value={values.description} onChange={set("description")} />
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={values.notes} onChange={set("notes")} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Description
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.description} onChange={set("description")} />
+      </label>
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={submitted || !values.contractTitle.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
@@ -556,10 +567,19 @@ function DocumentsPanel({
         (adding ? (
           <div className={`${cardCls} p-4`} style={cardStyle}>
             <div className="grid gap-3 sm:grid-cols-2 mb-3">
-              <input className={inputCls} style={inputStyle} placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
-              <input className={inputCls} style={inputStyle} placeholder="Link / URL" value={url} onChange={(e) => setUrl(e.target.value)} />
+              <label className={lbl} style={lblStyle}>
+                Title
+                <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} />
+              </label>
+              <label className={lbl} style={lblStyle}>
+                Link / URL
+                <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={url} onChange={(e) => setUrl(e.target.value)} />
+              </label>
             </div>
-            <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <label className={`${lbl} block mb-3`} style={lblStyle}>
+              Notes
+              <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </label>
             <div className="flex items-center gap-2">
               <button onClick={add} disabled={!title.trim() || !url.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Save</button>
               <button onClick={() => setAdding(false)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

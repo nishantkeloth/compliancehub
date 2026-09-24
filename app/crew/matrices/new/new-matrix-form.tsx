@@ -23,6 +23,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 type Mode = "blank" | "generate" | "ai";
 
@@ -226,33 +228,45 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
             <div className="text-xs mb-2 rounded-lg px-2.5 py-1.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{siteError}</div>
           )}
           <div className="grid gap-2 sm:grid-cols-2 mb-2">
-            <input
-              className={`${inputCls} w-full`}
-              style={inputStyle}
-              placeholder="Site name, e.g. MV Ocean Guardian"
-              value={newSiteName}
-              onChange={(e) => setNewSiteName(e.target.value)}
-              autoFocus
-            />
-            <select className={`${inputCls} w-full`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
-              {SITE_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
+            <label className={lbl} style={lblStyle}>
+              Site name
+              <input
+                className={`${inputCls} w-full mt-1`}
+                style={inputStyle}
+                placeholder="e.g. MV Ocean Guardian"
+                value={newSiteName}
+                onChange={(e) => setNewSiteName(e.target.value)}
+                autoFocus
+              />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Site type
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
+                {SITE_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </label>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 mb-2">
-            <select className={`${inputCls} w-full`} style={inputStyle} value={newSiteCountry} onChange={(e) => setNewSiteCountry(e.target.value)}>
-              <option value="">Country…</option>
-              {COUNTRIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <select className={`${inputCls} w-full`} style={inputStyle} value={newSiteRegion} onChange={(e) => setNewSiteRegion(e.target.value)}>
-              <option value="">Operating region…</option>
-              {REGIONS.map((r) => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-            </select>
+            <label className={lbl} style={lblStyle}>
+              Country
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={newSiteCountry} onChange={(e) => setNewSiteCountry(e.target.value)}>
+                <option value="">Country…</option>
+                {COUNTRIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Operating region
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={newSiteRegion} onChange={(e) => setNewSiteRegion(e.target.value)}>
+                <option value="">Operating region…</option>
+                {REGIONS.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </label>
           </div>
           <label className="text-xs block mb-2" style={{ color: "var(--ch-sub)" }}>
             Copy roles from an existing site (optional)

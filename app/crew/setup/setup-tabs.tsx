@@ -71,6 +71,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
@@ -232,9 +234,15 @@ function JobRolesPanel({ jobRoles }: { jobRoles: JobRole[] }) {
     <div>
       <BgErrorBanner error={bgError} />
       <div className={`${cardCls} p-4 mb-4`} style={cardStyle}>
-        <div className="flex items-center gap-2 flex-wrap">
-          <input className={`${inputCls} flex-1 min-w-[160px]`} style={inputStyle} placeholder="Role name, e.g. Head Chef" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className={`${inputCls} w-48`} style={inputStyle} placeholder="Category (optional)" value={category} onChange={(e) => setCategory(e.target.value)} />
+        <div className="flex items-end gap-2 flex-wrap">
+          <label className={`${lbl} flex-1 min-w-[160px]`} style={lblStyle}>
+            Role name
+            <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. Head Chef" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className={lbl} style={lblStyle}>
+            Category (optional)
+            <input className={`${inputCls} w-48 mt-1`} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} />
+          </label>
           <button onClick={add} disabled={!name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
             + Add role
           </button>
@@ -291,9 +299,15 @@ function JobRoleEditRow({
 
   return (
     <div className={`${cardCls} p-3`} style={cardStyle}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <input className={`${inputCls} flex-1 min-w-[160px]`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
-        <input className={`${inputCls} w-48`} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} />
+      <div className="flex items-end gap-2 flex-wrap">
+        <label className={`${lbl} flex-1 min-w-[160px]`} style={lblStyle}>
+          Role name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Category
+          <input className={`${inputCls} w-48 mt-1`} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} />
+        </label>
         <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
         </label>
@@ -350,8 +364,11 @@ function SkillsPanel({ skills }: { skills: Skill[] }) {
     <div>
       <BgErrorBanner error={bgError} />
       <div className={`${cardCls} p-4 mb-4`} style={cardStyle}>
-        <div className="flex items-center gap-2">
-          <input className={`${inputCls} flex-1`} style={inputStyle} placeholder="Skill name, e.g. HACCP Certified" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
+        <div className="flex items-end gap-2">
+          <label className={`${lbl} flex-1`} style={lblStyle}>
+            Skill name
+            <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. HACCP Certified" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
+          </label>
           <button onClick={add} disabled={!name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
             + Add skill
           </button>
@@ -504,20 +521,35 @@ function RotationTemplateForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Name, e.g. 14/14" value={name} onChange={(e) => setName(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={patternType} onChange={(e) => setPatternType(e.target.value)}>
-          <option value="fixed_equal">Fixed equal (X/X)</option>
-          <option value="fixed_custom">Fixed custom (X/Y)</option>
-          <option value="custom">Custom start/end dates</option>
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. 14/14" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Pattern type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={patternType} onChange={(e) => setPatternType(e.target.value)}>
+            <option value="fixed_equal">Fixed equal (X/X)</option>
+            <option value="fixed_custom">Fixed custom (X/Y)</option>
+            <option value="custom">Custom start/end dates</option>
+          </select>
+        </label>
         {showDays && (
           <div className="flex gap-2">
-            <input type="number" min={1} className={`${inputCls} w-full`} style={inputStyle} placeholder="Days on" value={daysOn} onChange={(e) => setDaysOn(e.target.value)} />
-            <input type="number" min={1} className={`${inputCls} w-full`} style={inputStyle} placeholder="Days off" value={daysOff} onChange={(e) => setDaysOff(e.target.value)} />
+            <label className={lbl} style={lblStyle}>
+              Days on
+              <input type="number" min={1} className={`${inputCls} w-full mt-1`} style={inputStyle} value={daysOn} onChange={(e) => setDaysOn(e.target.value)} />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Days off
+              <input type="number" min={1} className={`${inputCls} w-full mt-1`} style={inputStyle} value={daysOff} onChange={(e) => setDaysOff(e.target.value)} />
+            </label>
           </div>
         )}
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs mr-auto" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
@@ -675,12 +707,18 @@ function DocumentTypeForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Document type name, e.g. STCW" value={name} onChange={(e) => setName(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)}>
-          {DOCUMENT_CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>{c.label}</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Document type name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. STCW" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Category
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)}>
+            {DOCUMENT_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
@@ -862,18 +900,27 @@ function CustomFieldDefinitionForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Field label, e.g. Issuing Authority" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={fieldType} onChange={(e) => setFieldType(e.target.value)}>
-          {FIELD_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>{t.label}</option>
-          ))}
-        </select>
-        <select className={inputCls} style={inputStyle} value={appliesTo} onChange={(e) => setAppliesTo(e.target.value)}>
-          <option value="">All document types</option>
-          {documentTypes.map((t) => (
-            <option key={t.id} value={t.id}>{t.name} only</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Field label
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. Issuing Authority" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Field type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={fieldType} onChange={(e) => setFieldType(e.target.value)}>
+            {FIELD_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Applies to
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={appliesTo} onChange={(e) => setAppliesTo(e.target.value)}>
+            <option value="">All document types</option>
+            {documentTypes.map((t) => (
+              <option key={t.id} value={t.id}>{t.name} only</option>
+            ))}
+          </select>
+        </label>
       </div>
       {definition && (
         <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "var(--ch-ink)" }}>
@@ -1151,20 +1198,25 @@ function RequirementForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select className={inputCls} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)} disabled={!!requirement}>
-          {availableDocTypes.length === 0 && <option value="">No document types left to add</option>}
-          {availableDocTypes.map((d) => (
-            <option key={d.id} value={d.id}>{d.name}</option>
-          ))}
-        </select>
-        <input
-          type="number"
-          className={inputCls}
-          style={inputStyle}
-          placeholder="Min remaining validity (days, optional)"
-          value={minValidity}
-          onChange={(e) => setMinValidity(e.target.value)}
-        />
+        <label className={lbl} style={lblStyle}>
+          Document type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)} disabled={!!requirement}>
+            {availableDocTypes.length === 0 && <option value="">No document types left to add</option>}
+            {availableDocTypes.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Min remaining validity (days, optional)
+          <input
+            type="number"
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={minValidity}
+            onChange={(e) => setMinValidity(e.target.value)}
+          />
+        </label>
         <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isMandatory} onChange={(e) => setIsMandatory(e.target.checked)} /> Mandatory
         </label>

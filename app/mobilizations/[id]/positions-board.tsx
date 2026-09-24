@@ -81,6 +81,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 const TIER_COLORS: Record<Candidate["tier"], { bg: string; fg: string }> = {
   eligible: { bg: "var(--ch-pass-bg)", fg: "var(--ch-pass)" },
@@ -306,7 +308,10 @@ function AddPositionForm({
           <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={requiredOnboardDate} onChange={(e) => setRequiredOnboardDate(e.target.value)} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Reason this position is needed outside the crew matrix" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Reason
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Why this position is needed outside the crew matrix" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={!jobRoleId || !reason.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Add position</button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
@@ -648,14 +653,16 @@ function PositionRow({
       {(panel === "select" || panel === "replace") && (
         <div className="border-t p-3" style={{ borderColor: "var(--ch-line)" }}>
           {panel === "replace" && (
-            <textarea
-              className={`${inputCls} w-full mb-3`}
-              style={inputStyle}
-              placeholder="Reason for replacing the selected candidate (required)"
-              rows={2}
-              value={reasonText}
-              onChange={(e) => setReasonText(e.target.value)}
-            />
+            <label className={`${lbl} block mb-3`} style={lblStyle}>
+              Reason for replacement (required)
+              <textarea
+                className={`${inputCls} w-full mt-1`}
+                style={inputStyle}
+                rows={2}
+                value={reasonText}
+                onChange={(e) => setReasonText(e.target.value)}
+              />
+            </label>
           )}
           {loadingCandidates && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>Loading candidates…</div>}
           {candidates && candidates.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No candidates found for this role.</div>}
@@ -919,22 +926,26 @@ function WaiverRequestForm({
 
   return (
     <div className="mt-2 border-t pt-2" style={{ borderColor: "var(--ch-line)" }}>
-      <textarea
-        className={`${inputCls} w-full mb-2`}
-        style={inputStyle}
-        placeholder="Justification for waiving this requirement (required)"
-        rows={2}
-        value={justification}
-        onChange={(e) => setJustification(e.target.value)}
-      />
-      <div className="grid gap-2 sm:grid-cols-2 mb-2">
-        <input
-          className={`${inputCls} w-full`}
+      <label className={`${lbl} block mb-2`} style={lblStyle}>
+        Justification for waiving this requirement (required)
+        <textarea
+          className={`${inputCls} w-full mt-1`}
           style={inputStyle}
-          placeholder="Supporting attachment URL (optional)"
-          value={attachmentUrl}
-          onChange={(e) => setAttachmentUrl(e.target.value)}
+          rows={2}
+          value={justification}
+          onChange={(e) => setJustification(e.target.value)}
         />
+      </label>
+      <div className="grid gap-2 sm:grid-cols-2 mb-2">
+        <label className={lbl} style={lblStyle}>
+          Supporting attachment URL (optional)
+          <input
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={attachmentUrl}
+            onChange={(e) => setAttachmentUrl(e.target.value)}
+          />
+        </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Expires (optional)
           <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
@@ -962,13 +973,15 @@ function RejectWaiverButton({ onReject }: { onReject: (note: string) => void }) 
   }
   return (
     <span className="flex items-center gap-1.5">
-      <input
-        className={`${inputCls}`}
-        style={{ ...inputStyle, width: 160 }}
-        placeholder="Reason (required)"
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-      />
+      <label className={lbl} style={lblStyle}>
+        Reason (required)
+        <input
+          className={`${inputCls} mt-1`}
+          style={{ ...inputStyle, width: 160 }}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </label>
       <button
         onClick={() => {
           if (!note.trim()) return;
@@ -1063,9 +1076,15 @@ function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSu
         <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={vesselAcknowledged} onChange={(e) => setVesselAcknowledged(e.target.checked)} /> Vessel acknowledged
         </label>
-        <input className={`${inputCls} w-64`} style={inputStyle} value={vesselAcknowledgedBy} onChange={(e) => setVesselAcknowledgedBy(e.target.value)} placeholder="Acknowledged by (name / role)" />
+        <label className={lbl} style={lblStyle}>
+          Acknowledged by
+          <input className={`${inputCls} w-64 mt-1`} style={inputStyle} value={vesselAcknowledgedBy} onChange={(e) => setVesselAcknowledgedBy(e.target.value)} placeholder="Name / role" />
+        </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} rows={2} placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Remarks
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={submit} disabled={!actualOnboardAt} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Confirm boarding</button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
@@ -1078,7 +1097,10 @@ function VacantForm({ onConfirm, onCancel }: { onConfirm: (reason: string) => vo
   const [reason, setReason] = useState("");
   return (
     <div>
-      <textarea className={`${inputCls} w-full mb-2`} style={inputStyle} placeholder="Reason this position is being left vacant" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <label className={`${lbl} block mb-2`} style={lblStyle}>
+        Reason
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Why this position is being left vacant" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={() => onConfirm(reason)} disabled={!reason.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Confirm vacant</button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

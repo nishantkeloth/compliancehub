@@ -61,6 +61,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 const WORKFLOW_STAGES = [
   "draft", "planning", "compliance_review", "internal_approval", "client_approval",
@@ -424,7 +426,10 @@ function HeaderForm({ request, onSubmit, onCancel }: { request: Request; onSubmi
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.travelOrigin} onChange={set("travelOrigin")} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Special instructions" rows={2} value={values.specialInstructions} onChange={set("specialInstructions")} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Special instructions
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.specialInstructions} onChange={set("specialInstructions")} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={submitted || !values.requiredOnboardDate} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Save</button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
@@ -460,15 +465,18 @@ function CommentsPanel({ requestId, comments }: { requestId: string; comments: C
     <div>
       <div className={`${cardCls} p-3 mb-4`} style={cardStyle}>
         {error && <div className="text-sm mb-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
-        <div className="flex items-center gap-2">
-          <input
-            className={`${inputCls} flex-1`}
-            style={inputStyle}
-            placeholder="Add a comment…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-          />
+        <div className="flex items-end gap-2">
+          <label className={`${lbl} flex-1`} style={lblStyle}>
+            Comment
+            <input
+              className={`${inputCls} w-full mt-1`}
+              style={inputStyle}
+              placeholder="Add a comment…"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+          </label>
           <button onClick={submit} disabled={!body.trim() || submitting} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Post</button>
         </div>
       </div>

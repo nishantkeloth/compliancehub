@@ -8,6 +8,9 @@ import { buildPermissionGroups, type Permission } from "./permission-groups";
 
 type Role = { id: string; name: string; isSystem: boolean; systemKey: string | null };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 const BASE_RANK_OPTIONS = [
   { value: "inspector", label: "Inspector (baseline access)" },
   { value: "auditor", label: "Auditor (baseline access)" },
@@ -168,13 +171,16 @@ export default function RolesManager({
           Create a role
         </h2>
         <div className="flex items-center gap-3 flex-wrap">
-          <input
-            className="border rounded-lg px-3 py-2 text-sm"
-            style={{ borderColor: "var(--ch-line)" }}
-            placeholder="Role name, e.g. Site Manager"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
+          <label className={lbl} style={lblStyle}>
+            Role name
+            <input
+              className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+              style={{ borderColor: "var(--ch-line)" }}
+              placeholder="e.g. Site Manager"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+            />
+          </label>
           <label className="flex items-center gap-1.5 text-sm" style={{ color: "var(--ch-ink)" }}>
             Base tier
             <select

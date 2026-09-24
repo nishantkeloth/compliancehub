@@ -28,6 +28,9 @@ const SKIP_CONDITIONS: Record<string, { value: string; label: string }[]> = {
 
 type RunFn = (fn: () => Promise<{ error?: string | null } | undefined>) => void;
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function WorkflowsManager({
   entityTypes,
   definitions,
@@ -148,14 +151,17 @@ function EntityWorkflowCard({
         <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--ch-sub)" }}>
           Add a stage
         </h3>
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            className="border rounded-lg px-3 py-2 text-sm"
-            style={{ borderColor: "var(--ch-line)" }}
-            placeholder="Stage name, e.g. Client Approval"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
+        <div className="flex items-end gap-2 flex-wrap">
+          <label className={lbl} style={lblStyle}>
+            Stage name
+            <input
+              className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+              style={{ borderColor: "var(--ch-line)" }}
+              placeholder="e.g. Client Approval"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+            />
+          </label>
           <ApproverTypeToggle value={newApproverType} onChange={setNewApproverType} />
           {newApproverType === "permission" ? (
             <select className="border rounded-lg px-2 py-2 text-sm" style={{ borderColor: "var(--ch-line)" }} value={newPermission} onChange={(e) => setNewPermission(e.target.value)}>

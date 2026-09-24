@@ -114,6 +114,8 @@ const cardCls = "bg-white border rounded-xl p-5 mb-4";
 const cardStyle = { borderColor: "var(--ch-line)" };
 const labelCls = "text-xs font-semibold uppercase tracking-wide mb-2";
 const labelStyle = { color: "var(--ch-sub)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 function unwrap<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
@@ -426,56 +428,83 @@ function GeneralForm({
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Identity</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
-        <input className={inputCls} style={inputStyle} placeholder="Full name" value={fullName} onChange={(e) => { setFullName(e.target.value); setSaved(false); }} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Employee code" value={employeeCode} onChange={(e) => { setEmployeeCode(e.target.value); setSaved(false); }} disabled={disabled} />
-        <select className={inputCls} style={inputStyle} value={employmentStatus} onChange={(e) => { setEmploymentStatus(e.target.value); setSaved(false); }} disabled={disabled}>
-          <option value="candidate">Candidate</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="suspended">Suspended</option>
-          <option value="terminated">Terminated</option>
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Full name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={fullName} onChange={(e) => { setFullName(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Employee code
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={employeeCode} onChange={(e) => { setEmployeeCode(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Employment status
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={employmentStatus} onChange={(e) => { setEmploymentStatus(e.target.value); setSaved(false); }} disabled={disabled}>
+            <option value="candidate">Candidate</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="suspended">Suspended</option>
+            <option value="terminated">Terminated</option>
+          </select>
+        </label>
       </div>
       <div className="flex items-center gap-3 mb-4">
         {photoUrl.trim() ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photoUrl.trim()} alt="Profile photo" className="w-12 h-12 rounded-lg object-cover border flex-shrink-0" style={{ borderColor: "var(--ch-line)" }} />
         ) : null}
-        <input className={`${inputCls} w-full`} style={inputStyle} placeholder="Photo URL (optional)" value={photoUrl} onChange={(e) => { setPhotoUrl(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className={`${lbl} w-full`} style={lblStyle}>
+          Photo URL (optional)
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={photoUrl} onChange={(e) => { setPhotoUrl(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
       </div>
 
       <div className={labelCls} style={labelStyle}>Personal</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Nationality" value={nationality} onChange={(e) => { setNationality(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className={lbl} style={lblStyle}>
+          Nationality
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={nationality} onChange={(e) => { setNationality(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Date of birth
           <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={dateOfBirth} onChange={(e) => { setDateOfBirth(e.target.value); setSaved(false); }} disabled={disabled} />
         </label>
-        <input className={inputCls} style={inputStyle} placeholder="Gender" value={gender} onChange={(e) => { setGender(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className={lbl} style={lblStyle}>
+          Gender
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={gender} onChange={(e) => { setGender(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Phone" value={phone} onChange={(e) => { setPhone(e.target.value); setSaved(false); }} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Email" value={email} onChange={(e) => { setEmail(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className={lbl} style={lblStyle}>
+          Phone
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={phone} onChange={(e) => { setPhone(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Email
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={email} onChange={(e) => { setEmail(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
-        <select
-          className={inputCls}
-          style={inputStyle}
-          value={homeCountry}
-          onChange={(e) => { setHomeCountry(e.target.value); setSaved(false); }}
-          disabled={disabled}
-        >
-          <option value="">Home country…</option>
-          {/* A previously-typed free-text value that doesn't match the
-              fixed list below stays selectable rather than silently
-              dropping it the moment this form loads. */}
-          {homeCountry && !COUNTRIES.includes(homeCountry as (typeof COUNTRIES)[number]) && (
-            <option value={homeCountry}>{homeCountry} (unmatched — pick below)</option>
-          )}
-          {COUNTRIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Home country
+          <select
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={homeCountry}
+            onChange={(e) => { setHomeCountry(e.target.value); setSaved(false); }}
+            disabled={disabled}
+          >
+            <option value="">Home country…</option>
+            {/* A previously-typed free-text value that doesn't match the
+                fixed list below stays selectable rather than silently
+                dropping it the moment this form loads. */}
+            {homeCountry && !COUNTRIES.includes(homeCountry as (typeof COUNTRIES)[number]) && (
+              <option value={homeCountry}>{homeCountry} (unmatched — pick below)</option>
+            )}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Current location
           <select
@@ -501,26 +530,38 @@ function GeneralForm({
             ))}
           </select>
         </label>
-        <input className={inputCls} style={inputStyle} placeholder="Nearest airport" value={nearestAirport} onChange={(e) => { setNearestAirport(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className={lbl} style={lblStyle}>
+          Nearest airport
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={nearestAirport} onChange={(e) => { setNearestAirport(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
       </div>
 
       <div className={labelCls} style={labelStyle}>Role & Employment</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select className={inputCls} style={inputStyle} value={primaryJobRoleId} onChange={(e) => { setPrimaryJobRoleId(e.target.value); setSaved(false); }} disabled={disabled}>
-          <option value="">No primary role</option>
-          {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
-        <select className={inputCls} style={inputStyle} value={employmentType} onChange={(e) => { setEmploymentType(e.target.value); setSaved(false); }} disabled={disabled}>
-          <option value="">Employment type</option>
-          <option value="permanent">Permanent</option>
-          <option value="temporary">Temporary</option>
-          <option value="subcontractor">Subcontractor</option>
-          <option value="freelancer">Freelancer</option>
-        </select>
-        <select className={inputCls} style={inputStyle} value={defaultRotationTemplateId} onChange={(e) => { setDefaultRotationTemplateId(e.target.value); setSaved(false); }} disabled={disabled}>
-          <option value="">No default rotation</option>
-          {rotationTemplates.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Primary job role
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={primaryJobRoleId} onChange={(e) => { setPrimaryJobRoleId(e.target.value); setSaved(false); }} disabled={disabled}>
+            <option value="">No primary role</option>
+            {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Employment type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={employmentType} onChange={(e) => { setEmploymentType(e.target.value); setSaved(false); }} disabled={disabled}>
+            <option value="">Employment type</option>
+            <option value="permanent">Permanent</option>
+            <option value="temporary">Temporary</option>
+            <option value="subcontractor">Subcontractor</option>
+            <option value="freelancer">Freelancer</option>
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Default rotation template
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={defaultRotationTemplateId} onChange={(e) => { setDefaultRotationTemplateId(e.target.value); setSaved(false); }} disabled={disabled}>
+            <option value="">No default rotation</option>
+            {rotationTemplates.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
@@ -539,8 +580,14 @@ function GeneralForm({
 
       <div className={labelCls} style={labelStyle}>Emergency Contact</div>
       <div className="grid gap-3 sm:grid-cols-2 mb-4">
-        <input className={inputCls} style={inputStyle} placeholder="Name" value={emergencyContactName} onChange={(e) => { setEmergencyContactName(e.target.value); setSaved(false); }} disabled={disabled} />
-        <input className={inputCls} style={inputStyle} placeholder="Phone" value={emergencyContactPhone} onChange={(e) => { setEmergencyContactPhone(e.target.value); setSaved(false); }} disabled={disabled} />
+        <label className={lbl} style={lblStyle}>
+          Name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={emergencyContactName} onChange={(e) => { setEmergencyContactName(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Phone
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={emergencyContactPhone} onChange={(e) => { setEmergencyContactPhone(e.target.value); setSaved(false); }} disabled={disabled} />
+        </label>
       </div>
 
       <div className={labelCls} style={labelStyle}>Notes</div>
@@ -647,13 +694,22 @@ function SkillsSection({
         })}
       </div>
       {canManage && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <select className={inputCls} style={inputStyle} value={skillId} onChange={(e) => setSkillId(e.target.value)}>
-            <option value="">Select skill…</option>
-            {skills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <input type="number" min={0} step="0.5" className={`${inputCls} w-24`} style={inputStyle} placeholder="Years" value={years} onChange={(e) => setYears(e.target.value)} />
-          <input className={`${inputCls} w-32`} style={inputStyle} placeholder="Grade" value={grade} onChange={(e) => setGrade(e.target.value)} />
+        <div className="flex items-end gap-2 flex-wrap">
+          <label className={lbl} style={lblStyle}>
+            Skill
+            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+              <option value="">Select skill…</option>
+              {skills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+          <label className={lbl} style={lblStyle}>
+            Years
+            <input type="number" min={0} step="0.5" className={`${inputCls} w-24 mt-1`} style={inputStyle} value={years} onChange={(e) => setYears(e.target.value)} />
+          </label>
+          <label className={lbl} style={lblStyle}>
+            Grade
+            <input className={`${inputCls} w-32 mt-1`} style={inputStyle} value={grade} onChange={(e) => setGrade(e.target.value)} />
+          </label>
           <button onClick={add} disabled={!skillId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
@@ -737,11 +793,14 @@ function SecondaryRolesSection({
         })}
       </div>
       {canManage && (
-        <div className="flex items-center gap-2">
-          <select className={inputCls} style={inputStyle} value={jobRoleId} onChange={(e) => setJobRoleId(e.target.value)}>
-            <option value="">Select role…</option>
-            {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+        <div className="flex items-end gap-2">
+          <label className={lbl} style={lblStyle}>
+            Job role
+            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={jobRoleId} onChange={(e) => setJobRoleId(e.target.value)}>
+              <option value="">Select role…</option>
+              {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </label>
           <button onClick={add} disabled={!jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
@@ -860,10 +919,13 @@ function AssignmentSection({
             Emergency override — normal assignments happen automatically when boarding is confirmed on an approved mobilization. Only use this to assign directly, and give a reason; every use is logged.
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <select className={inputCls} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
-              <option value="">{current ? "Reassign to…" : "Assign to…"}</option>
-              {offshoreSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <label className={lbl} style={lblStyle}>
+              Vessel
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
+                <option value="">{current ? "Reassign to…" : "Assign to…"}</option>
+                {offshoreSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
             <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
               Start date
               <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -1319,39 +1381,47 @@ function UploadPanel({
         />
       )}
       <div className="flex gap-2 flex-wrap">
-        <input
-          className={inputCls}
-          style={inputStyle}
-          placeholder="Document number"
-          value={documentNumber}
-          disabled={busy}
-          onChange={(e) => {
-            setDocumentNumber(e.target.value);
-            setUsedAiRead(false);
-          }}
-        />
-        <input
-          type="date"
-          className={inputCls}
-          style={inputStyle}
-          value={issueDate}
-          disabled={busy}
-          onChange={(e) => {
-            setIssueDate(e.target.value);
-            setUsedAiRead(false);
-          }}
-        />
-        <input
-          type="date"
-          className={inputCls}
-          style={inputStyle}
-          value={expiryDate}
-          disabled={busy}
-          onChange={(e) => {
-            setExpiryDate(e.target.value);
-            setUsedAiRead(false);
-          }}
-        />
+        <label className={lbl} style={lblStyle}>
+          Document number
+          <input
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={documentNumber}
+            disabled={busy}
+            onChange={(e) => {
+              setDocumentNumber(e.target.value);
+              setUsedAiRead(false);
+            }}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Issue date
+          <input
+            type="date"
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={issueDate}
+            disabled={busy}
+            onChange={(e) => {
+              setIssueDate(e.target.value);
+              setUsedAiRead(false);
+            }}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Expiry date
+          <input
+            type="date"
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={expiryDate}
+            disabled={busy}
+            onChange={(e) => {
+              setExpiryDate(e.target.value);
+              setUsedAiRead(false);
+            }}
+          />
+        </label>
       </div>
       <div className="flex gap-2">
         <button onClick={submit} disabled={busy} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
@@ -1578,31 +1648,39 @@ function PendingReviewRow({
       {confirmedByAi && !readError && (
         <div className="rounded-lg px-2 py-1" style={{ background: "#e6f4ea", color: "#1e7a34" }}>AI-read values confirmed below — edit anything before approving if needed.</div>
       )}
-      <div className="flex gap-2 flex-wrap">
-        <input
-          className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Document number"
-          value={documentNumber}
-          disabled={busy}
-          onChange={(e) => setDocumentNumber(e.target.value)}
-        />
-        <input
-          type="date"
-          className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50"
-          style={{ borderColor: "var(--ch-line)" }}
-          value={issueDate}
-          disabled={busy}
-          onChange={(e) => setIssueDate(e.target.value)}
-        />
-        <input
-          type="date"
-          className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50"
-          style={{ borderColor: "var(--ch-line)" }}
-          value={expiryDate}
-          disabled={busy}
-          onChange={(e) => setExpiryDate(e.target.value)}
-        />
+      <div className="flex items-end gap-2 flex-wrap">
+        <label className={lbl} style={lblStyle}>
+          Document number
+          <input
+            className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50 w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={documentNumber}
+            disabled={busy}
+            onChange={(e) => setDocumentNumber(e.target.value)}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Issue date
+          <input
+            type="date"
+            className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50 w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={issueDate}
+            disabled={busy}
+            onChange={(e) => setIssueDate(e.target.value)}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Expiry date
+          <input
+            type="date"
+            className="border rounded-lg px-2 py-1 text-xs disabled:opacity-50 w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={expiryDate}
+            disabled={busy}
+            onChange={(e) => setExpiryDate(e.target.value)}
+          />
+        </label>
         <button
           onClick={retryRead}
           disabled={reading || busy}
@@ -1916,12 +1994,18 @@ function DocumentForm({
   return (
     <div className="rounded-lg border p-3 mb-2" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <select className={inputCls} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)}>
-          <option value="">Select document type…</option>
-          {documentTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Document type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)}>
+            <option value="">Select document type…</option>
+            {documentTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </label>
         {tracksNumber && (
-          <input className={inputCls} style={inputStyle} placeholder="Document number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
+          <label className={lbl} style={lblStyle}>
+            Document number
+            <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
+          </label>
         )}
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
@@ -1953,15 +2037,21 @@ function DocumentForm({
       </div>
       {isVisa && (
         <div className="grid gap-3 sm:grid-cols-3 mb-3">
-          <input className={inputCls} style={inputStyle} placeholder="Sponsor" value={sponsor} onChange={(e) => setSponsor(e.target.value)} />
+          <label className={lbl} style={lblStyle}>
+            Sponsor
+            <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={sponsor} onChange={(e) => setSponsor(e.target.value)} />
+          </label>
           <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
             Extension date
             <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={extensionDate} onChange={(e) => setExtensionDate(e.target.value)} />
           </label>
-          <select className={inputCls} style={inputStyle} value={relieverCrewId} onChange={(e) => setRelieverCrewId(e.target.value)}>
-            <option value="">No reliever</option>
-            {crewList.filter((c) => c.id !== crewId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <label className={lbl} style={lblStyle}>
+            Reliever
+            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={relieverCrewId} onChange={(e) => setRelieverCrewId(e.target.value)}>
+              <option value="">No reliever</option>
+              {crewList.filter((c) => c.id !== crewId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
         </div>
       )}
       {applicableFields.length > 0 && (
@@ -1983,7 +2073,10 @@ function DocumentForm({
           </div>
         </div>
       )}
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={submitted || !documentTypeId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
@@ -2023,9 +2116,15 @@ function CostForm({ crew, canManage, onSaved }: { crew: Crew; canManage: boolean
   return (
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Cost (restricted)</div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <input type="number" min={0} step="0.01" className={`${inputCls} w-32`} style={inputStyle} placeholder="Day rate" value={dayRate} onChange={(e) => { setDayRate(e.target.value); setSaved(false); }} disabled={!canManage} />
-        <input className={`${inputCls} w-24`} style={inputStyle} placeholder="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value); setSaved(false); }} disabled={!canManage} />
+      <div className="flex items-end gap-2 flex-wrap">
+        <label className={lbl} style={lblStyle}>
+          Day rate
+          <input type="number" min={0} step="0.01" className={`${inputCls} w-32 mt-1`} style={inputStyle} value={dayRate} onChange={(e) => { setDayRate(e.target.value); setSaved(false); }} disabled={!canManage} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Currency
+          <input className={`${inputCls} w-24 mt-1`} style={inputStyle} value={currency} onChange={(e) => { setCurrency(e.target.value); setSaved(false); }} disabled={!canManage} />
+        </label>
         {canManage && (
           <button onClick={save} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold">
             Save

@@ -26,6 +26,9 @@ type Item = {
 type Section = { id: string; title: string; sortOrder: number; items: Item[] };
 type Meta = { code: string; name: string; revision: string; scoringType: string; status: string };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function TemplateEditor({
   templateId,
   initialMeta,
@@ -107,20 +110,24 @@ function TemplateMetaForm({
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="Code"
-        />
-        <input
-          className="border rounded-lg px-3 py-2 text-sm sm:col-span-2"
-          style={{ borderColor: "var(--ch-line)" }}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Name"
-        />
+        <label className={lbl} style={lblStyle}>
+          Code
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        </label>
+        <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+          Name
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
       </div>
       <div className="flex items-center gap-4 flex-wrap text-sm" style={{ color: "var(--ch-ink)" }}>
         <label className="flex items-center gap-1.5">
@@ -364,15 +371,17 @@ function ItemRow({
             onChange={(e) => setPrompt(e.target.value)}
           />
           {scored && (
-            <input
-              type="number"
-              min={1}
-              className="border rounded-lg px-2 py-1.5 text-sm w-20"
-              style={{ borderColor: "var(--ch-line)" }}
-              placeholder="Max marks"
-              value={maxMarks}
-              onChange={(e) => setMaxMarks(e.target.value)}
-            />
+            <label className={lbl} style={lblStyle}>
+              Max marks
+              <input
+                type="number"
+                min={1}
+                className="border rounded-lg px-2 py-1.5 text-sm w-20 mt-1"
+                style={{ borderColor: "var(--ch-line)" }}
+                value={maxMarks}
+                onChange={(e) => setMaxMarks(e.target.value)}
+              />
+            </label>
           )}
           <button
             onClick={save}
@@ -503,25 +512,30 @@ function AddItemForm({
 
   return (
     <div className="px-4 py-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <input
-          autoFocus
-          className="flex-1 border rounded-lg px-2 py-1.5 text-sm min-w-[200px]"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Item prompt"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        {scored && (
+      <div className="flex items-end gap-2 flex-wrap">
+        <label className={`${lbl} flex-1 min-w-[200px]`} style={lblStyle}>
+          Item prompt
           <input
-            type="number"
-            min={1}
-            className="border rounded-lg px-2 py-1.5 text-sm w-20"
+            autoFocus
+            className="border rounded-lg px-2 py-1.5 text-sm w-full mt-1"
             style={{ borderColor: "var(--ch-line)" }}
-            value={maxMarks}
-            onChange={(e) => setMaxMarks(e.target.value)}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
           />
+        </label>
+        {scored && (
+          <label className={lbl} style={lblStyle}>
+            Max marks
+            <input
+              type="number"
+              min={1}
+              className="border rounded-lg px-2 py-1.5 text-sm w-20 mt-1"
+              style={{ borderColor: "var(--ch-line)" }}
+              value={maxMarks}
+              onChange={(e) => setMaxMarks(e.target.value)}
+            />
+          </label>
         )}
         <button
           onClick={submit}
@@ -572,15 +586,17 @@ function AddSectionForm({ templateId, onAdded }: { templateId: string; onAdded: 
   };
 
   return (
-    <div className="mt-4 flex items-center gap-2 flex-wrap">
-      <input
-        className="flex-1 border rounded-lg px-3 py-2 text-sm min-w-[200px]"
-        style={{ borderColor: "var(--ch-line)" }}
-        placeholder="New section title"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-      />
+    <div className="mt-4 flex items-end gap-2 flex-wrap">
+      <label className={`${lbl} flex-1 min-w-[200px]`} style={lblStyle}>
+        Section title
+        <input
+          className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+          style={{ borderColor: "var(--ch-line)" }}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+      </label>
       <button
         onClick={submit}
         disabled={pending || !title.trim()}

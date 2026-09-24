@@ -5,6 +5,9 @@ import { createCompany } from "./actions";
 
 type Mode = "none" | "direct" | "invite";
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function NewCompanyForm() {
   const [companyName, setCompanyName] = useState("");
   const [notifyPrefix, setNotifyPrefix] = useState("");
@@ -52,20 +55,25 @@ export default function NewCompanyForm() {
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Company name"
-          value={companyName}
-          onChange={(e) => setCompanyName(e.target.value)}
-        />
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Notification email prefix, e.g. AHM (optional)"
-          value={notifyPrefix}
-          onChange={(e) => setNotifyPrefix(e.target.value)}
-        />
+        <label className={lbl} style={lblStyle}>
+          Company name
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Notification email prefix
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            placeholder="e.g. AHM (optional)"
+            value={notifyPrefix}
+            onChange={(e) => setNotifyPrefix(e.target.value)}
+          />
+        </label>
       </div>
       <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
         Reminder emails for this company will come from{" "}
@@ -95,30 +103,37 @@ export default function NewCompanyForm() {
 
       {mode !== "none" && (
         <div className="grid gap-3 sm:grid-cols-2 mb-1">
-          <input
-            className="border rounded-lg px-3 py-2 text-sm"
-            style={{ borderColor: "var(--ch-line)" }}
-            placeholder="Admin full name"
-            value={adminName}
-            onChange={(e) => setAdminName(e.target.value)}
-          />
-          <input
-            className="border rounded-lg px-3 py-2 text-sm"
-            style={{ borderColor: "var(--ch-line)" }}
-            placeholder="Admin email"
-            type="email"
-            value={adminEmail}
-            onChange={(e) => setAdminEmail(e.target.value)}
-          />
-          {mode === "direct" && (
+          <label className={lbl} style={lblStyle}>
+            Admin full name
             <input
-              className="border rounded-lg px-3 py-2 text-sm sm:col-span-2"
+              className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
               style={{ borderColor: "var(--ch-line)" }}
-              placeholder="Password (leave blank to auto-generate one)"
-              type="text"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
+              value={adminName}
+              onChange={(e) => setAdminName(e.target.value)}
             />
+          </label>
+          <label className={lbl} style={lblStyle}>
+            Admin email
+            <input
+              className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+              style={{ borderColor: "var(--ch-line)" }}
+              type="email"
+              value={adminEmail}
+              onChange={(e) => setAdminEmail(e.target.value)}
+            />
+          </label>
+          {mode === "direct" && (
+            <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+              Password
+              <input
+                className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+                style={{ borderColor: "var(--ch-line)" }}
+                placeholder="Leave blank to auto-generate one"
+                type="text"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+              />
+            </label>
           )}
         </div>
       )}

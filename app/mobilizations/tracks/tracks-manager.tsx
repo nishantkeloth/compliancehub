@@ -27,6 +27,8 @@ const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 const ORG_WIDE = "__org_wide__";
 const ALL = "__all__";
@@ -311,7 +313,10 @@ function TrackForm({
           <input type="number" className={`${inputCls} w-full mt-1`} style={inputStyle} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} rows={2} placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Description
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} placeholder="Optional" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </label>
       {initial && (
         <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
@@ -378,7 +383,10 @@ function ItemForm({
           <input type="number" className={`${inputCls} w-full mt-1`} style={inputStyle} value={sequence} onChange={(e) => setSequence(e.target.value)} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} rows={2} placeholder="Description / instructions (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Description / instructions
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} placeholder="Optional" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </label>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Due date is based on

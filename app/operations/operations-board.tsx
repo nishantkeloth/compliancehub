@@ -224,7 +224,10 @@ export default function OperationsBoard(props: {
         </div>
         {reopenOpen && (
           <div className="w-full flex items-center gap-2 flex-wrap pt-2 border-t" style={{ borderColor: "var(--ch-line)" }}>
-            <input className={`${inputCls} flex-1 min-w-[200px]`} style={inputStyle} placeholder="Reason for reopening (required, audited)" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} />
+            <label className={`${lbl} flex-1 min-w-[200px]`} style={lblStyle}>
+              Reason for reopening
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Required — this is audited" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} />
+            </label>
             <button onClick={() => run(() => reopenPeriod(project.id, month, reopenReason), () => { setReopenOpen(false); setReopenReason(""); })} disabled={!reopenReason.trim()} className="rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>Reopen period</button>
           </div>
         )}
@@ -468,13 +471,19 @@ function DailyLogForm({ projectId, siteId, date, log, perms, isOpen, run, onClos
         {perms.verify && isOpen && log?.status === "submitted" && (
           <>
             <button onClick={() => run(() => verifyDailyLog(log.id, true), onClose)} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: "var(--ch-pass-bg)", color: "var(--ch-pass)" }}>Verify</button>
-            <input className={`${inputCls} w-48`} style={inputStyle} placeholder="Rejection reason" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} />
+            <label className={lbl} style={lblStyle}>
+              Rejection reason
+              <input className={`${inputCls} w-48 mt-1`} style={inputStyle} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} />
+            </label>
             <button onClick={() => run(() => verifyDailyLog(log.id, false, rejectReason), onClose)} disabled={!rejectReason.trim()} className="text-sm font-semibold disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>Reject</button>
           </>
         )}
         {perms.verify && isOpen && log?.status === "verified" && (
           <>
-            <input className={`${inputCls} w-48`} style={inputStyle} placeholder="Reason to un-verify" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} />
+            <label className={lbl} style={lblStyle}>
+              Reason to un-verify
+              <input className={`${inputCls} w-48 mt-1`} style={inputStyle} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} />
+            </label>
             <button onClick={() => run(() => unverifyDailyLog(log.id, rejectReason), onClose)} disabled={!rejectReason.trim()} className="text-sm font-semibold disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>Un-verify</button>
           </>
         )}
@@ -548,17 +557,35 @@ function CostsTab({ project, sites, month, crewCost, containerCost, costEntries,
         {showAdd && (
           <div className="border rounded-lg p-3 mb-3" style={{ borderColor: "var(--ch-line)" }}>
             <div className="grid gap-2 sm:grid-cols-3">
-              <select className={inputCls} style={inputStyle} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
-                {COST_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </select>
-              <input type="date" className={inputCls} style={inputStyle} value={f.costDate} onChange={(e) => setF({ ...f, costDate: e.target.value })} />
-              <input type="number" min={0} step="0.01" className={inputCls} style={inputStyle} placeholder={`Amount (${cur})`} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
-              <input className={`${inputCls} sm:col-span-2`} style={inputStyle} placeholder="Description (required)" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
-              <input className={inputCls} style={inputStyle} placeholder="Invoice / reference" value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} />
-              <select className={inputCls} style={inputStyle} value={f.offshoreSiteId} onChange={(e) => setF({ ...f, offshoreSiteId: e.target.value })}>
-                <option value="">Whole project</option>
-                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <label className={lbl} style={lblStyle}>
+                Category
+                <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
+                  {COST_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </label>
+              <label className={lbl} style={lblStyle}>
+                Cost date
+                <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={f.costDate} onChange={(e) => setF({ ...f, costDate: e.target.value })} />
+              </label>
+              <label className={lbl} style={lblStyle}>
+                {`Amount (${cur})`}
+                <input type="number" min={0} step="0.01" className={`${inputCls} w-full mt-1`} style={inputStyle} value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
+              </label>
+              <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+                Description
+                <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
+              </label>
+              <label className={lbl} style={lblStyle}>
+                Invoice / Reference
+                <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} />
+              </label>
+              <label className={lbl} style={lblStyle}>
+                Site
+                <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={f.offshoreSiteId} onChange={(e) => setF({ ...f, offshoreSiteId: e.target.value })}>
+                  <option value="">Whole project</option>
+                  {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </label>
             </div>
             <button
               onClick={() => {
@@ -654,13 +681,25 @@ function BillingTab({ project, month, terms, billing, adjustments, period, perms
         <div className="text-sm font-bold mb-2" style={{ color: "var(--ch-ink)" }}>Additional services & deductions</div>
         {(perms.close || perms.commercial) && !["commercially_approved", "billing_ready"].includes(period.status) && (
           <div className="grid gap-2 sm:grid-cols-4 mb-3">
-            <select className={inputCls} style={inputStyle} value={adj.kind} onChange={(e) => setAdj({ ...adj, kind: e.target.value })}>
-              <option value="additional_service">Additional service (+)</option>
-              <option value="deduction">Deduction / service failure (−)</option>
-            </select>
-            <input className={`${inputCls} sm:col-span-2`} style={inputStyle} placeholder="Description" value={adj.description} onChange={(e) => setAdj({ ...adj, description: e.target.value })} />
-            <input type="number" min={0} step="0.01" className={inputCls} style={inputStyle} placeholder={`Amount (${cur})`} value={adj.amount} onChange={(e) => setAdj({ ...adj, amount: e.target.value })} />
-            <input className={`${inputCls} sm:col-span-3`} style={inputStyle} placeholder="Reference (PO, client approval, incident)" value={adj.reference} onChange={(e) => setAdj({ ...adj, reference: e.target.value })} />
+            <label className={lbl} style={lblStyle}>
+              Type
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={adj.kind} onChange={(e) => setAdj({ ...adj, kind: e.target.value })}>
+                <option value="additional_service">Additional service (+)</option>
+                <option value="deduction">Deduction / service failure (−)</option>
+              </select>
+            </label>
+            <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+              Description
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={adj.description} onChange={(e) => setAdj({ ...adj, description: e.target.value })} />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              {`Amount (${cur})`}
+              <input type="number" min={0} step="0.01" className={`${inputCls} w-full mt-1`} style={inputStyle} value={adj.amount} onChange={(e) => setAdj({ ...adj, amount: e.target.value })} />
+            </label>
+            <label className={`${lbl} sm:col-span-3`} style={lblStyle}>
+              Reference
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="PO, client approval, incident" value={adj.reference} onChange={(e) => setAdj({ ...adj, reference: e.target.value })} />
+            </label>
             <button
               onClick={() => {
                 const fd = new FormData();
@@ -771,7 +810,10 @@ function BillingTermsForm({ project, terms, run, onDone }: { project: ProjectOpt
         {field("monthlyBudgetCost", "Monthly budget — cost")}
         {field("monthlyBudgetRevenue", "Monthly budget — revenue")}
       </div>
-      <textarea className={`${inputCls} w-full mt-2`} style={inputStyle} rows={2} placeholder="Notes" value={v.notes} onChange={set("notes")} />
+      <label className={`${lbl} block mt-2`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={v.notes} onChange={set("notes")} />
+      </label>
       <div className="flex items-center gap-2 mt-3 flex-wrap">
         <button
           onClick={() => {

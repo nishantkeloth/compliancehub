@@ -379,7 +379,10 @@ function MovementForm({
           <input type="number" min={0} step="0.01" className={`${inputCls} w-full mt-1`} style={inputStyle} value={handlingCost} onChange={(e) => setHandlingCost(e.target.value)} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mt-3`} style={inputStyle} rows={2} placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      <label className={`${lbl} block mt-3`} style={lblStyle}>
+        Remarks
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2 mt-3">
         <button
           onClick={() => {
@@ -622,16 +625,40 @@ function LoadForm({ currency, busy, onSubmit }: { currency: string; busy: boolea
   return (
     <div className="border-t pt-3" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-        <select className={inputCls} style={inputStyle} value={category} onChange={(e) => { setCategory(e.target.value); if (!temperature) setTemperature(tempDefault[e.target.value] ?? ""); }}>
-          {LOAD_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-        </select>
-        <input className={inputCls} style={inputStyle} placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
-        <input type="number" min={0} step="0.01" className={inputCls} style={inputStyle} placeholder="Qty" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Unit (kg, ctn, pcs)" value={unit} onChange={(e) => setUnit(e.target.value)} />
-        <input type="number" min={0} step="0.01" className={inputCls} style={inputStyle} placeholder={`Value (${currency})`} value={value} onChange={(e) => setValue(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Temperature requirement" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Expiry consideration" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <label className={lbl} style={lblStyle}>
+          Category
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={category} onChange={(e) => { setCategory(e.target.value); if (!temperature) setTemperature(tempDefault[e.target.value] ?? ""); }}>
+            {LOAD_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Description
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Quantity
+          <input type="number" min={0} step="0.01" className={`${inputCls} w-full mt-1`} style={inputStyle} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Unit
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="kg, ctn, pcs" />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          {`Value (${currency})`}
+          <input type="number" min={0} step="0.01" className={`${inputCls} w-full mt-1`} style={inputStyle} value={value} onChange={(e) => setValue(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Temperature requirement
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={temperature} onChange={(e) => setTemperature(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Expiry consideration
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={expiry} onChange={(e) => setExpiry(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Notes
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </label>
       </div>
       <button
         onClick={() => {
@@ -661,7 +688,10 @@ function ReasonForm({ label, busy, onSubmit, onCancel }: { label: string; busy: 
   const [reason, setReason] = useState("");
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <input className={`${inputCls} flex-1 min-w-[200px]`} style={inputStyle} placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <label className={`${lbl} flex-1 min-w-[200px]`} style={lblStyle}>
+        Reason
+        <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Required" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
       <button onClick={() => onSubmit(reason.trim())} disabled={busy || !reason.trim()} className="rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{label}</button>
       <button onClick={onCancel} className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>Cancel</button>
     </div>
@@ -836,7 +866,10 @@ function CareTab({
               <label className={lbl} style={lblStyle}>Estimated recovery cost ({container.currency})<input type="number" min={0} step="0.01" className={`${inputCls} w-full mt-1`} style={inputStyle} value={incCost} onChange={(e) => setIncCost(e.target.value)} /></label>
               <div className="text-xs self-end" style={{ color: "var(--ch-sub)" }}>{openMovement ? `Linked to the open movement (${openMovement.projectLabel})` : "No open movement"}</div>
             </div>
-            <textarea className={`${inputCls} w-full mt-2`} style={inputStyle} rows={2} placeholder="What happened (required)" value={incDesc} onChange={(e) => setIncDesc(e.target.value)} />
+            <label className={`${lbl} block mt-2`} style={lblStyle}>
+              What happened *
+              <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={incDesc} onChange={(e) => setIncDesc(e.target.value)} />
+            </label>
             <button
               onClick={() => {
                 const fd = new FormData();
@@ -865,7 +898,10 @@ function CareTab({
               {canManage && !i.isResolved && (
                 resolveFor === i.id ? (
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <input className={`${inputCls} flex-1 min-w-[160px]`} style={inputStyle} placeholder="Resolution notes" value={resolveNote} onChange={(e) => setResolveNote(e.target.value)} />
+                    <label className={`${lbl} flex-1 min-w-[160px]`} style={lblStyle}>
+                      Resolution notes
+                      <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={resolveNote} onChange={(e) => setResolveNote(e.target.value)} />
+                    </label>
                     <button onClick={() => run(() => resolveIncident(i.id, container.id, resolveNote), () => { setResolveFor(null); setResolveNote(""); })} className="text-xs font-semibold" style={{ color: "var(--ch-pass)" }}>Mark resolved</button>
                     <button onClick={() => setResolveFor(null)} className="text-xs" style={{ color: "var(--ch-sub)" }}>Cancel</button>
                   </div>

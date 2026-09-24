@@ -6,6 +6,9 @@ import { createCrewProfile } from "./actions";
 
 type JobRole = { id: string; name: string };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function NewCrewForm({ jobRoles }: { jobRoles: JobRole[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -47,50 +50,62 @@ export default function NewCrewForm({ jobRoles }: { jobRoles: JobRole[] }) {
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Full name"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-        />
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Employee code (optional)"
-          value={employeeCode}
-          onChange={(e) => setEmployeeCode(e.target.value)}
-        />
+        <label className={lbl} style={lblStyle}>
+          Full name
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Employee code (optional)
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={employeeCode}
+            onChange={(e) => setEmployeeCode(e.target.value)}
+          />
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          value={primaryJobRoleId}
-          onChange={(e) => setPrimaryJobRoleId(e.target.value)}
-        >
-          <option value="">No role yet</option>
-          {jobRoles.map((r) => (
-            <option key={r.id} value={r.id}>{r.name}</option>
-          ))}
-        </select>
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Nationality"
-          value={nationality}
-          onChange={(e) => setNationality(e.target.value)}
-        />
-        <select
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          value={employmentStatus}
-          onChange={(e) => setEmploymentStatus(e.target.value)}
-        >
-          <option value="candidate">Candidate</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Job role / rank
+          <select
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={primaryJobRoleId}
+            onChange={(e) => setPrimaryJobRoleId(e.target.value)}
+          >
+            <option value="">No role yet</option>
+            {jobRoles.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Nationality
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={nationality}
+            onChange={(e) => setNationality(e.target.value)}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Employment status
+          <select
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={employmentStatus}
+            onChange={(e) => setEmploymentStatus(e.target.value)}
+          >
+            <option value="candidate">Candidate</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
       </div>
       <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
         You'll add documents, skills, and remaining details on the crew member's page after creating them.

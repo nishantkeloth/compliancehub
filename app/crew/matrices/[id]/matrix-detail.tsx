@@ -54,6 +54,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 export default function MatrixDetail({
   matrix,
@@ -565,7 +567,10 @@ function MatrixForm({ matrix, onSubmit, onCancel }: { matrix: Matrix; onSubmit: 
 
   return (
     <div className={`${cardCls} p-4`} style={cardStyle}>
-      <input className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Title" value={values.title} onChange={set("title")} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Title
+        <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.title} onChange={set("title")} />
+      </label>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Effective from
@@ -580,7 +585,10 @@ function MatrixForm({ matrix, onSubmit, onCancel }: { matrix: Matrix; onSubmit: 
           <input type="number" min="0" className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.expectedPob} onChange={set("expectedPob")} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={values.notes} onChange={set("notes")} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={submitted || !values.title.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Save</button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

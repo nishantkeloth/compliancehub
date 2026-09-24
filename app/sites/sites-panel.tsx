@@ -39,6 +39,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
@@ -305,77 +307,113 @@ function OffshoreSiteForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Site name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Code" value={code} onChange={(e) => setCode(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={siteType} onChange={(e) => setSiteType(e.target.value)}>
-          {SITE_TYPES.map((t) => (
-            <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Site name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Code
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={code} onChange={(e) => setCode(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Site type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={siteType} onChange={(e) => setSiteType(e.target.value)}>
+            {SITE_TYPES.map((t) => (
+              <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <select
-          className={inputCls}
-          style={inputStyle}
-          value={contractorId}
-          onChange={(e) => {
-            setContractorId(e.target.value);
-            setProjectId("");
-          }}
-        >
-          <option value="">No EPC contractor</option>
-          {contractors.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <select className={inputCls} style={inputStyle} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">{eligibleProjects.length ? "No project" : (contractorId ? "No projects under this contractor" : "No contractor-less projects")}</option>
-          {eligibleProjects.map((p) => (
-            <option key={p.id} value={p.id}>{p.project_name}</option>
-          ))}
-        </select>
-        <select className={inputCls} style={inputStyle} value={country} onChange={(e) => setCountry(e.target.value)}>
-          <option value="">Country…</option>
-          {/* A previously-typed free-text value that doesn't match the
-              fixed list below stays selectable rather than silently
-              dropping it the moment this form loads. */}
-          {country && !COUNTRIES.includes(country as (typeof COUNTRIES)[number]) && (
-            <option value={country}>{country} (unmatched — pick below)</option>
-          )}
-          {COUNTRIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          EPC contractor
+          <select
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={contractorId}
+            onChange={(e) => {
+              setContractorId(e.target.value);
+              setProjectId("");
+            }}
+          >
+            <option value="">No EPC contractor</option>
+            {contractors.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Project
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <option value="">{eligibleProjects.length ? "No project" : (contractorId ? "No projects under this contractor" : "No contractor-less projects")}</option>
+            {eligibleProjects.map((p) => (
+              <option key={p.id} value={p.id}>{p.project_name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Country
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={country} onChange={(e) => setCountry(e.target.value)}>
+            <option value="">Country…</option>
+            {/* A previously-typed free-text value that doesn't match the
+                fixed list below stays selectable rather than silently
+                dropping it the moment this form loads. */}
+            {country && !COUNTRIES.includes(country as (typeof COUNTRIES)[number]) && (
+              <option value={country}>{country} (unmatched — pick below)</option>
+            )}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
-        <select className={inputCls} style={inputStyle} value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)}>
-          <option value="">Operating region…</option>
-          {/* A previously-typed free-text value that doesn't match the
-              fixed list below (the same list crew's Current Location
-              dropdown uses — see lib/regions.ts) stays selectable rather
-              than silently dropping it the moment this form loads. */}
-          {operatingRegion && !REGIONS.includes(operatingRegion) && (
-            <option value={operatingRegion}>{operatingRegion} (unmatched — pick below)</option>
-          )}
-          {REGIONS.map((r) => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-        </select>
-        <input className={inputCls} style={inputStyle} placeholder="Port / heliport" value={portOrHeliport} onChange={(e) => setPortOrHeliport(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder="Crew-change location" value={crewChangeLocation} onChange={(e) => setCrewChangeLocation(e.target.value)} />
-        <select className={inputCls} style={inputStyle} value={rotationTemplateId} onChange={(e) => setRotationTemplateId(e.target.value)}>
-          <option value="">No standard rotation</option>
-          {rotationTemplates.map((r) => (
-            <option key={r.id} value={r.id}>{r.name}</option>
-          ))}
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Operating region
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={operatingRegion} onChange={(e) => setOperatingRegion(e.target.value)}>
+            <option value="">Operating region…</option>
+            {/* A previously-typed free-text value that doesn't match the
+                fixed list below (the same list crew's Current Location
+                dropdown uses — see lib/regions.ts) stays selectable rather
+                than silently dropping it the moment this form loads. */}
+            {operatingRegion && !REGIONS.includes(operatingRegion) && (
+              <option value={operatingRegion}>{operatingRegion} (unmatched — pick below)</option>
+            )}
+            {REGIONS.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Port / heliport
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={portOrHeliport} onChange={(e) => setPortOrHeliport(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Crew-change location
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={crewChangeLocation} onChange={(e) => setCrewChangeLocation(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Standard rotation template
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={rotationTemplateId} onChange={(e) => setRotationTemplateId(e.target.value)}>
+            <option value="">No standard rotation</option>
+            {rotationTemplates.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
       <div className="flex items-center gap-2">
-        <select className={`${inputCls} mr-auto`} style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
+        <label className={`${lbl} mr-auto`} style={lblStyle}>
+          Status
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
         <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
         </button>

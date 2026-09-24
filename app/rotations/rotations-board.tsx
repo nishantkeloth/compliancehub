@@ -63,6 +63,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 function pill(text: string, bg: string, fg: string) {
   return (
@@ -461,7 +463,10 @@ function ChangeRequestForm({ a, crewOptions, today, onSubmit, onCancel }: { a: A
           <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={plannedDate} onChange={(e) => { setPlannedDate(e.target.value); setPreview(null); }} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-2`} style={inputStyle} rows={2} placeholder="Reason for the crew change (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <label className={`${lbl} block mb-2`} style={lblStyle}>
+        Reason (required)
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
       <div className="flex items-center gap-3 flex-wrap mb-2">
         <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isEmergency} onChange={(e) => setIsEmergency(e.target.checked)} /> Emergency change
@@ -593,7 +598,10 @@ function SignoffForm({ a, crewOptions, canEmergency, onSubmit, onCancel }: { a: 
         {check("Company property returned", propertyReturned, setPropertyReturned)}
         {check("Timesheet closed", timesheetClosed, setTimesheetClosed)}
       </div>
-      <input className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Handover notes" value={handoverNotes} onChange={(e) => setHandoverNotes(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Handover notes
+        <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={handoverNotes} onChange={(e) => setHandoverNotes(e.target.value)} />
+      </label>
 
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
@@ -635,7 +643,10 @@ function SignoffForm({ a, crewOptions, canEmergency, onSubmit, onCancel }: { a: 
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={performanceNotes} onChange={(e) => setPerformanceNotes(e.target.value)} />
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} rows={2} placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Remarks
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      </label>
 
       {canEmergency && (
         <div className="mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)" }}>
@@ -643,7 +654,10 @@ function SignoffForm({ a, crewOptions, canEmergency, onSubmit, onCancel }: { a: 
             <input type="checkbox" checked={isEmergency} onChange={(e) => setIsEmergency(e.target.checked)} /> Emergency sign-off (bypasses the checklist — reason required, audited)
           </label>
           {isEmergency && (
-            <input className={`${inputCls} w-full mt-2`} style={inputStyle} placeholder="Emergency reason" value={emergencyReason} onChange={(e) => setEmergencyReason(e.target.value)} />
+            <label className={`${lbl} block mt-2`} style={lblStyle}>
+              Emergency reason
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={emergencyReason} onChange={(e) => setEmergencyReason(e.target.value)} />
+            </label>
           )}
         </div>
       )}
@@ -667,7 +681,10 @@ function RejectButton({ onReject }: { onReject: (note: string) => void }) {
   if (!open) return <button onClick={() => setOpen(true)} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Reject</button>;
   return (
     <span className="flex items-center gap-1.5">
-      <input className={inputCls} style={{ ...inputStyle, width: 160 }} placeholder="Reason (required)" value={note} onChange={(e) => setNote(e.target.value)} />
+      <label className={lbl} style={lblStyle}>
+        Reason (required)
+        <input className={`${inputCls} mt-1`} style={{ ...inputStyle, width: 160 }} value={note} onChange={(e) => setNote(e.target.value)} />
+      </label>
       <button onClick={() => { if (!note.trim()) return; onReject(note.trim()); setOpen(false); setNote(""); }} disabled={!note.trim()} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>
         Confirm reject
       </button>

@@ -337,14 +337,14 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
             {expanded === l.key && (
               <div className="border-t p-2.5 space-y-2" style={{ borderColor: "var(--ch-line)" }}>
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <input className={inputCls} style={inputStyle} placeholder="Employment type preference" value={l.employment_type_preference} onChange={(e) => update(l.key, { employment_type_preference: e.target.value })} />
-                  <input className={inputCls} style={inputStyle} placeholder="Nationality preference" value={l.nationality_preference} onChange={(e) => update(l.key, { nationality_preference: e.target.value })} />
-                  <input className={inputCls} style={inputStyle} placeholder="Language requirement" value={l.language_requirement} onChange={(e) => update(l.key, { language_requirement: e.target.value })} />
-                  <input type="number" min={0} step="0.5" className={inputCls} style={inputStyle} placeholder="Min experience (yrs)" value={l.minimum_experience_years} onChange={(e) => update(l.key, { minimum_experience_years: e.target.value })} />
-                  <input type="number" min={0} className={inputCls} style={inputStyle} placeholder="Mobilization lead (days)" value={l.mobilization_lead_days} onChange={(e) => update(l.key, { mobilization_lead_days: e.target.value })} />
-                  <label className="text-xs flex items-center gap-1" style={{ color: "var(--ch-ink)" }}><input type="checkbox" checked={l.client_approval_required} onChange={(e) => update(l.key, { client_approval_required: e.target.checked })} /> Client approval required</label>
+                  <label className={lbl} style={lblStyle}>Employment type preference<input className={`${inputCls} w-full mt-1`} style={inputStyle} value={l.employment_type_preference} onChange={(e) => update(l.key, { employment_type_preference: e.target.value })} /></label>
+                  <label className={lbl} style={lblStyle}>Nationality preference<input className={`${inputCls} w-full mt-1`} style={inputStyle} value={l.nationality_preference} onChange={(e) => update(l.key, { nationality_preference: e.target.value })} /></label>
+                  <label className={lbl} style={lblStyle}>Language requirement<input className={`${inputCls} w-full mt-1`} style={inputStyle} value={l.language_requirement} onChange={(e) => update(l.key, { language_requirement: e.target.value })} /></label>
+                  <label className={lbl} style={lblStyle}>Min experience (yrs)<input type="number" min={0} step="0.5" className={`${inputCls} w-full mt-1`} style={inputStyle} value={l.minimum_experience_years} onChange={(e) => update(l.key, { minimum_experience_years: e.target.value })} /></label>
+                  <label className={lbl} style={lblStyle}>Mobilization lead (days)<input type="number" min={0} className={`${inputCls} w-full mt-1`} style={inputStyle} value={l.mobilization_lead_days} onChange={(e) => update(l.key, { mobilization_lead_days: e.target.value })} /></label>
+                  <label className="text-xs flex items-center gap-1 mt-5" style={{ color: "var(--ch-ink)" }}><input type="checkbox" checked={l.client_approval_required} onChange={(e) => update(l.key, { client_approval_required: e.target.checked })} /> Client approval required</label>
                 </div>
-                <input className={`${inputCls} w-full`} style={inputStyle} placeholder="Remarks" value={l.remarks} onChange={(e) => update(l.key, { remarks: e.target.value })} />
+                <label className={`${lbl} block`} style={lblStyle}>Remarks<input className={`${inputCls} w-full mt-1`} style={inputStyle} value={l.remarks} onChange={(e) => update(l.key, { remarks: e.target.value })} /></label>
 
                 <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Required documents</div>
                 {l.documents.length === 0 && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>None proposed.</div>}
@@ -363,7 +363,7 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
                     {d.method === "fuzzy" && d.id && pill("fuzzy", "#fef3e2", "#b45309")}
                     <label className="flex items-center gap-1" style={{ color: "var(--ch-ink)" }}><input type="checkbox" checked={d.is_mandatory} onChange={(e) => update(l.key, { documents: l.documents.map((x, i) => (i === di ? { ...x, is_mandatory: e.target.checked } : x)) })} /> Mandatory</label>
                     <label className="flex items-center gap-1" style={{ color: "var(--ch-ink)" }}><input type="checkbox" checked={d.waiver_permitted} onChange={(e) => update(l.key, { documents: l.documents.map((x, i) => (i === di ? { ...x, waiver_permitted: e.target.checked } : x)) })} /> Waiver ok</label>
-                    <input type="number" min={0} className={`${inputCls} w-24`} style={inputStyle} placeholder="Min validity d" value={d.minimum_remaining_validity_days} onChange={(e) => update(l.key, { documents: l.documents.map((x, i) => (i === di ? { ...x, minimum_remaining_validity_days: e.target.value } : x)) })} />
+                    <label className={lbl} style={lblStyle}>Min. validity (days)<input type="number" min={0} className={`${inputCls} w-24 mt-1`} style={inputStyle} value={d.minimum_remaining_validity_days} onChange={(e) => update(l.key, { documents: l.documents.map((x, i) => (i === di ? { ...x, minimum_remaining_validity_days: e.target.value } : x)) })} /></label>
                     <button onClick={() => update(l.key, { documents: l.documents.filter((_, i) => i !== di) })} style={{ color: "var(--ch-fail)" }}>✕</button>
                   </div>
                 ))}

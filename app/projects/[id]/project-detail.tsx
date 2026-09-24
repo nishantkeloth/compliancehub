@@ -42,6 +42,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 const PROJECT_STATUSES = ["planned", "mobilizing", "active", "demobilizing", "completed", "cancelled"];
 
 function memberName(members: Member[], id: string | null) {
@@ -306,7 +308,10 @@ function ProjectForm({
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Project / campaign name" value={values.projectName} onChange={set("projectName")} />
+        <label className={lbl} style={lblStyle}>
+          Project name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Project / campaign name" value={values.projectName} onChange={set("projectName")} />
+        </label>
         {field("Client reference", "clientReference")}
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
@@ -346,7 +351,10 @@ function ProjectForm({
           </select>
         </label>
       </div>
-      <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Notes" rows={2} value={values.notes} onChange={set("notes")} />
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
+      </label>
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={submitted || !values.projectName.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save

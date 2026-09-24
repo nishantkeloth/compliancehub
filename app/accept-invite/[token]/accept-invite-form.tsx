@@ -7,6 +7,9 @@ type Preview =
   | { valid: true; company_name: string; role: string; email: string | null }
   | { valid: false };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function AcceptInviteForm({ token }: { token: string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [fullName, setFullName] = useState("");
@@ -231,40 +234,49 @@ export default function AcceptInviteForm({ token }: { token: string }) {
           <strong>{preview.role}</strong>. Set up your account below.
         </p>
 
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Full name"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-        />
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={!!preview.email}
-        />
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Choose a password (min 6 characters)"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-4"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Confirm password"
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
+        <label className={`${lbl} block mb-3`} style={lblStyle}>
+          Full name
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+          />
+        </label>
+        <label className={`${lbl} block mb-3`} style={lblStyle}>
+          Email
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={!!preview.email}
+          />
+        </label>
+        <label className={`${lbl} block mb-3`} style={lblStyle}>
+          Password
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            placeholder="Min 6 characters"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </label>
+        <label className={`${lbl} block mb-4`} style={lblStyle}>
+          Confirm password
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </label>
 
         {error && (
           <div

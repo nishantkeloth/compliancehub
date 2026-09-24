@@ -86,6 +86,8 @@ export type { StaffingCrew, FieldDef, ReservationInfo };
 
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 // lib/regions.ts lists these three emirates as their own selectable
 // entries alongside "United Arab Emirates" as a country — a site can be
@@ -1290,22 +1292,27 @@ function RowActions({
           <div className="text-[10px]" style={{ color: "#92400e" }}>
             Keeps {personName} on this list with a &quot;Reserved&quot; tag — doesn&apos;t assign them yet.
           </div>
-          <textarea
-            value={reserveNotes}
-            onChange={(e) => setReserveNotes(e.target.value)}
-            placeholder="Note (optional) — e.g. waiting on Passport"
-            rows={2}
-            className="text-[11px] rounded px-1.5 py-1 border w-full resize-none"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
-          />
-          <input
-            type="date"
-            value={reserveReadyDate}
-            onChange={(e) => setReserveReadyDate(e.target.value)}
-            title="Expected ready date (optional)"
-            className="text-[11px] rounded px-1.5 py-1 border w-full"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
-          />
+          <label className={`${lbl} block`} style={lblStyle}>
+            Note (optional)
+            <textarea
+              value={reserveNotes}
+              onChange={(e) => setReserveNotes(e.target.value)}
+              placeholder="e.g. waiting on Passport"
+              rows={2}
+              className="text-[11px] rounded px-1.5 py-1 border w-full resize-none mt-1"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+            />
+          </label>
+          <label className={`${lbl} block`} style={lblStyle}>
+            Expected ready date (optional)
+            <input
+              type="date"
+              value={reserveReadyDate}
+              onChange={(e) => setReserveReadyDate(e.target.value)}
+              className="text-[11px] rounded px-1.5 py-1 border w-full mt-1"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+            />
+          </label>
           <div className="flex items-center gap-1.5">
             <button
               onClick={doReserve}
@@ -1365,22 +1372,26 @@ function RowActions({
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
-          <textarea
-            value={reasonNotes}
-            onChange={(e) => setReasonNotes(e.target.value)}
-            placeholder="Notes (optional)"
-            rows={2}
-            className="text-[11px] rounded px-1.5 py-1 border w-full resize-none"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
-          />
-          <input
-            type="date"
-            value={effectiveDate}
-            onChange={(e) => setEffectiveDate(e.target.value)}
-            title="Effective date"
-            className="text-[11px] rounded px-1.5 py-1 border w-full"
-            style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
-          />
+          <label className={`${lbl} block`} style={lblStyle}>
+            Notes (optional)
+            <textarea
+              value={reasonNotes}
+              onChange={(e) => setReasonNotes(e.target.value)}
+              rows={2}
+              className="text-[11px] rounded px-1.5 py-1 border w-full resize-none mt-1"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+            />
+          </label>
+          <label className={`${lbl} block`} style={lblStyle}>
+            Effective date
+            <input
+              type="date"
+              value={effectiveDate}
+              onChange={(e) => setEffectiveDate(e.target.value)}
+              className="text-[11px] rounded px-1.5 py-1 border w-full mt-1"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+            />
+          </label>
           <div className="flex items-center gap-1.5">
             <button
               onClick={doRosterChange}

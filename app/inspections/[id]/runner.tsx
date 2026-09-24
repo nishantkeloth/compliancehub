@@ -7,6 +7,9 @@ type Item = { id: string; prompt: string; maxMarks: number | null };
 type Section = { id: string; title: string; items: Item[] };
 type Insp = { id: string; code: string; name: string; scoring: string; site: string; orgId: string };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function Runner({
   inspection,
   sections,
@@ -256,13 +259,16 @@ export default function Runner({
 
                   {failed && (
                     <div className="mt-2 space-y-2">
-                      <input
-                        className="w-full border rounded-lg px-3 py-2 text-sm"
-                        style={{ borderColor: "var(--ch-line)" }}
-                        placeholder="Finding note — what was observed?"
-                        value={notes[it.id] || ""}
-                        onChange={(e) => setNotes({ ...notes, [it.id]: e.target.value })}
-                      />
+                      <label className={`${lbl} block`} style={lblStyle}>
+                        Finding note
+                        <input
+                          className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+                          style={{ borderColor: "var(--ch-line)" }}
+                          placeholder="What was observed?"
+                          value={notes[it.id] || ""}
+                          onChange={(e) => setNotes({ ...notes, [it.id]: e.target.value })}
+                        />
+                      </label>
 
                       <div className="flex items-center gap-2 flex-wrap">
                         {itemPhotos.map((url) => (

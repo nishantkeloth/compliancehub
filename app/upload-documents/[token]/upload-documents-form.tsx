@@ -11,6 +11,9 @@ type Preview =
   | { valid: true; crew_name: string; company_name: string; expires_at: string; items: PreviewItem[] }
   | { valid: false };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function UploadDocumentsForm({ token }: { token: string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
 
@@ -233,32 +236,41 @@ function DocumentUploadItem({
             <DocumentReadModal result={pendingRead} expectedTypeName={item.name} onConfirm={confirmRead} onCancel={() => setPendingRead(null)} />
           )}
           <div className="grid grid-cols-3 gap-2 mt-2">
-            <input
-              className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)" }}
-              placeholder="Document number (optional)"
-              value={documentNumber}
-              disabled={busy || confirmedByAi}
-              onChange={(e) => setDocumentNumber(e.target.value)}
-            />
-            <input
-              type="date"
-              className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)" }}
-              value={issueDate}
-              disabled={busy || confirmedByAi}
-              onChange={(e) => setIssueDate(e.target.value)}
-              title="Issue date (optional)"
-            />
-            <input
-              type="date"
-              className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
-              style={{ borderColor: "var(--ch-line)" }}
-              value={expiryDate}
-              disabled={busy || confirmedByAi}
-              onChange={(e) => setExpiryDate(e.target.value)}
-              title="Expiry date (optional)"
-            />
+            <label className={lbl} style={lblStyle}>
+              Document number
+              <input
+                className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50 w-full mt-1"
+                style={{ borderColor: "var(--ch-line)" }}
+                placeholder="Optional"
+                value={documentNumber}
+                disabled={busy || confirmedByAi}
+                onChange={(e) => setDocumentNumber(e.target.value)}
+              />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Issue date
+              <input
+                type="date"
+                className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50 w-full mt-1"
+                style={{ borderColor: "var(--ch-line)" }}
+                value={issueDate}
+                disabled={busy || confirmedByAi}
+                onChange={(e) => setIssueDate(e.target.value)}
+                title="Issue date (optional)"
+              />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Expiry date
+              <input
+                type="date"
+                className="border rounded-lg px-2 py-1.5 text-xs disabled:opacity-50 w-full mt-1"
+                style={{ borderColor: "var(--ch-line)" }}
+                value={expiryDate}
+                disabled={busy || confirmedByAi}
+                onChange={(e) => setExpiryDate(e.target.value)}
+                title="Expiry date (optional)"
+              />
+            </label>
           </div>
           {error && (
             <div className="text-xs rounded-lg px-2 py-1.5 mt-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>

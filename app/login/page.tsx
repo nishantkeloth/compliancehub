@@ -15,6 +15,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const lbl = "text-xs";
+  const lblStyle = { color: "var(--ch-sub)" };
+
   const submit = async () => {
     setError(null);
     setBusy(true);
@@ -40,23 +43,27 @@ export default function LoginPage() {
           Sign in to your workspace
         </p>
 
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-4"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
+        <label className={`${lbl} block mb-3`} style={lblStyle}>
+          Email
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </label>
+        <label className={`${lbl} block mb-4`} style={lblStyle}>
+          Password
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </label>
 
         {error && (
           <div

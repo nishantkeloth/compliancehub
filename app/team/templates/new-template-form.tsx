@@ -4,6 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createTemplate } from "./actions";
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function NewTemplateForm() {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
@@ -32,20 +35,26 @@ export default function NewTemplateForm() {
   return (
     <div className="bg-white border rounded-xl p-4" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Code, e.g. AHM MS 33"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-        <input
-          className="border rounded-lg px-3 py-2 text-sm sm:col-span-2"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Name, e.g. FSMS Audit Checklist"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
+        <label className={lbl} style={lblStyle}>
+          Code
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            placeholder="e.g. AHM MS 33"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        </label>
+        <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+          Name
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            placeholder="e.g. FSMS Audit Checklist"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
       </div>
       <div className="flex items-center gap-4 mb-3 text-sm" style={{ color: "var(--ch-ink)" }}>
         <label className="flex items-center gap-1.5">

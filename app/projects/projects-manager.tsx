@@ -25,6 +25,8 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 const PROJECT_STATUSES = ["planned", "mobilizing", "active", "demobilizing", "completed", "cancelled"];
 
 export default function ProjectsManager({
@@ -219,7 +221,10 @@ function ProjectForm({
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <input className={inputCls} style={inputStyle} placeholder="Project / campaign name" value={name} onChange={(e) => setName(e.target.value)} />
+        <label className={lbl} style={lblStyle}>
+          Project / campaign name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Status
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>

@@ -15,6 +15,8 @@ const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
 
 // A matrix can be sent at any status, including draft — the send action
 // (share-actions.ts) watermarks the attachment and secure page as
@@ -234,8 +236,8 @@ export default function SendMatrixWizard({
             {clientId && (
               addingContact ? (
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  <input className={inputCls} style={inputStyle} placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-                  <input className={inputCls} style={inputStyle} placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+                  <label className={lbl} style={lblStyle}>Name<input className={`${inputCls} mt-1`} style={inputStyle} value={newName} onChange={(e) => setNewName(e.target.value)} /></label>
+                  <label className={lbl} style={lblStyle}>Email<input className={`${inputCls} mt-1`} style={inputStyle} value={newEmail} onChange={(e) => setNewEmail(e.target.value)} /></label>
                   <button onClick={saveNewContact} disabled={savingContact || !newName.trim() || !newEmail.trim()} className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50">
                     {savingContact ? "Saving…" : "Save contact"}
                   </button>
@@ -263,8 +265,14 @@ export default function SendMatrixWizard({
             <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
               Sending to: {selected.map((r) => r.name).join(", ")}. Each recipient gets their own email with their own secure link — recipients are never listed in each other&apos;s email.
             </div>
-            <input className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
-            <textarea className={`${inputCls} w-full mb-2`} style={inputStyle} rows={7} value={bodyText} onChange={(e) => setBodyText(e.target.value)} />
+            <label className={`${lbl} block mb-3`} style={lblStyle}>
+              Subject
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={subject} onChange={(e) => setSubject(e.target.value)} />
+            </label>
+            <label className={`${lbl} block mb-2`} style={lblStyle}>
+              Message
+              <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={7} value={bodyText} onChange={(e) => setBodyText(e.target.value)} />
+            </label>
             <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
               A secure &quot;View secure crew matrix&quot; button, the matrix reference, and a confidentiality notice are added automatically below your message.
             </div>

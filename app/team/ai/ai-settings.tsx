@@ -164,11 +164,20 @@ function KeysCard({ keys, envKeys, canEncrypt, run }: { keys: KeyRow[]; envKeys:
         })}
       </div>
       <div className="grid gap-2 sm:grid-cols-4">
-        <select className={inputCls} style={inputStyle} value={provider} onChange={(e) => { setProvider(e.target.value); setBaseUrl(PROVIDERS.find((p) => p.value === e.target.value)?.baseUrl ?? ""); }}>
-          {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-        <input type="password" autoComplete="off" className={`${inputCls} sm:col-span-2`} style={inputStyle} placeholder={provider === "ollama" ? "API key (optional)" : "Paste API key"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-        <input className={inputCls} style={inputStyle} placeholder={meta.baseUrl ? "Base URL" : "Base URL (optional)"} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        <label className={lbl} style={lblStyle}>
+          Provider
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={provider} onChange={(e) => { setProvider(e.target.value); setBaseUrl(PROVIDERS.find((p) => p.value === e.target.value)?.baseUrl ?? ""); }}>
+            {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </label>
+        <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+          API key
+          <input type="password" autoComplete="off" className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder={provider === "ollama" ? "Optional" : "Paste key"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Base URL
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder={meta.baseUrl ? "Required for this provider" : "Optional"} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        </label>
       </div>
       <button
         onClick={() => {
@@ -263,25 +272,52 @@ function ModelForm({ model, onDone, run }: { model: ModelRow | null; onDone: () 
   return (
     <div className="border rounded-lg p-3 mb-3" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-2 sm:grid-cols-4">
-        <select className={inputCls} style={inputStyle} value={v.provider} onChange={(e) => setV({ ...v, provider: e.target.value })}>
-          {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-        <input className={inputCls} style={inputStyle} placeholder="Model ID (e.g. gemini-2.5-flash)" value={v.modelId} onChange={(e) => setV({ ...v, modelId: e.target.value })} />
-        <input className={inputCls} style={inputStyle} placeholder="Display name" value={v.displayName} onChange={(e) => setV({ ...v, displayName: e.target.value })} />
-        <select className={inputCls} style={inputStyle} value={v.costTier} onChange={(e) => setV({ ...v, costTier: e.target.value })}>
-          <option value="free">Free tier</option>
-          <option value="paid">Paid</option>
-        </select>
+        <label className={lbl} style={lblStyle}>
+          Provider
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={v.provider} onChange={(e) => setV({ ...v, provider: e.target.value })}>
+            {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Model ID
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. gemini-2.5-flash" value={v.modelId} onChange={(e) => setV({ ...v, modelId: e.target.value })} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Display name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={v.displayName} onChange={(e) => setV({ ...v, displayName: e.target.value })} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Cost tier
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={v.costTier} onChange={(e) => setV({ ...v, costTier: e.target.value })}>
+            <option value="free">Free tier</option>
+            <option value="paid">Paid</option>
+          </select>
+        </label>
         {v.costTier === "free" ? (
-          <input type="number" min={0} className={inputCls} style={inputStyle} placeholder="Free tokens / month (blank = unlimited)" value={v.allowance} onChange={(e) => setV({ ...v, allowance: e.target.value })} />
+          <label className={lbl} style={lblStyle}>
+            Free tokens / month
+            <input type="number" min={0} className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Blank = unlimited" value={v.allowance} onChange={(e) => setV({ ...v, allowance: e.target.value })} />
+          </label>
         ) : (
           <>
-            <input type="number" min={0} step="0.0001" className={inputCls} style={inputStyle} placeholder="$ per 1k input tokens" value={v.inputCost} onChange={(e) => setV({ ...v, inputCost: e.target.value })} />
-            <input type="number" min={0} step="0.0001" className={inputCls} style={inputStyle} placeholder="$ per 1k output tokens" value={v.outputCost} onChange={(e) => setV({ ...v, outputCost: e.target.value })} />
+            <label className={lbl} style={lblStyle}>
+              Input cost ($ / 1k tokens)
+              <input type="number" min={0} step="0.0001" className={`${inputCls} w-full mt-1`} style={inputStyle} value={v.inputCost} onChange={(e) => setV({ ...v, inputCost: e.target.value })} />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Output cost ($ / 1k tokens)
+              <input type="number" min={0} step="0.0001" className={`${inputCls} w-full mt-1`} style={inputStyle} value={v.outputCost} onChange={(e) => setV({ ...v, outputCost: e.target.value })} />
+            </label>
           </>
         )}
-        <input type="number" min={1} className={inputCls} style={inputStyle} placeholder="Priority (lower first)" value={v.priority} onChange={(e) => setV({ ...v, priority: e.target.value })} />
-        <input type="number" min={0} className={inputCls} style={inputStyle} placeholder="Max context tokens (optional)" value={v.maxContext} onChange={(e) => setV({ ...v, maxContext: e.target.value })} />
+        <label className={lbl} style={lblStyle}>
+          Priority (lower first)
+          <input type="number" min={1} className={`${inputCls} w-full mt-1`} style={inputStyle} value={v.priority} onChange={(e) => setV({ ...v, priority: e.target.value })} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Max context tokens
+          <input type="number" min={0} className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Optional" value={v.maxContext} onChange={(e) => setV({ ...v, maxContext: e.target.value })} />
+        </label>
         <label className="text-xs flex items-center gap-1" style={{ color: "var(--ch-ink)" }}><input type="checkbox" checked={v.supportsDocuments} onChange={(e) => setV({ ...v, supportsDocuments: e.target.checked })} /> Accepts PDFs / images</label>
         <label className="text-xs flex items-center gap-1" style={{ color: "var(--ch-ink)" }}><input type="checkbox" checked={v.isEnabled} onChange={(e) => setV({ ...v, isEnabled: e.target.checked })} /> Enabled</label>
       </div>

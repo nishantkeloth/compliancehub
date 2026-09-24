@@ -6,6 +6,9 @@ import { inviteTeamMember } from "./actions";
 type Mode = "direct" | "invite";
 type RoleOption = { id: string; name: string };
 
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
 export default function NewMemberForm({ roles }: { roles: RoleOption[] }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -66,21 +69,25 @@ export default function NewMemberForm({ roles }: { roles: RoleOption[] }) {
   return (
     <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
       <div className="grid gap-3 sm:grid-cols-2">
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Full name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
+        <label className={lbl} style={lblStyle}>
+          Full name
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Email
+          <input
+            className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </label>
       </div>
 
       <div className="flex items-center gap-4 flex-wrap mt-3 mb-3 text-sm" style={{ color: "var(--ch-ink)" }}>
@@ -111,14 +118,17 @@ export default function NewMemberForm({ roles }: { roles: RoleOption[] }) {
       </div>
 
       {mode === "direct" && (
-        <input
-          className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
-          style={{ borderColor: "var(--ch-line)" }}
-          placeholder="Password (leave blank to auto-generate one)"
-          type="text"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        <label className={`${lbl} block mb-3`} style={lblStyle}>
+          Password
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+            style={{ borderColor: "var(--ch-line)" }}
+            placeholder="Leave blank to auto-generate one"
+            type="text"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
       )}
 
       <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
