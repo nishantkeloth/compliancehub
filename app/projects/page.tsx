@@ -18,7 +18,7 @@ export default async function ProjectsPage({
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "projects.view") || !access.orgId) redirect("/");
 
-  const [{ data: projects }, { data: contracts }, { data: contractors }] = await Promise.all([
+  const [{ data: projects }, { data: contracts }, { data: contractors }, { data: members }] = await Promise.all([
     supabase
       .from("projects")
       .select("id, project_code, project_name, status, planned_start_date, planned_end_date, expected_pob, contracts(id, contract_title), contractors(id, name)")
@@ -26,6 +26,7 @@ export default async function ProjectsPage({
       .order("created_at", { ascending: false }),
     supabase.from("contracts").select("id, contract_title, status, client_id").eq("org_id", access.orgId).order("contract_title"),
     supabase.from("contractors").select("id, name, is_active, client_id").eq("org_id", access.orgId).eq("is_active", true).order("name"),
+    supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).eq("status", "active").order("full_name"),
   ]);
 
   const rows = (projects ?? []).map((p) => {
@@ -54,6 +55,7 @@ export default async function ProjectsPage({
         projects={rows}
         contracts={contracts ?? []}
         contractors={contractors ?? []}
+        members={members ?? []}
         canManage={can(access, "projects.manage")}
         defaultContractId={contractId ?? ""}
       />

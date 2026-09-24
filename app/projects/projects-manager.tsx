@@ -20,6 +20,7 @@ type Project = {
 };
 type ContractRef = { id: string; contract_title: string; status: string; client_id: string };
 type ContractorRef = { id: string; name: string; is_active: boolean; client_id: string };
+type Member = { id: string; full_name: string };
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
@@ -33,12 +34,14 @@ export default function ProjectsManager({
   projects,
   contracts,
   contractors,
+  members,
   canManage,
   defaultContractId,
 }: {
   projects: Project[];
   contracts: ContractRef[];
   contractors: ContractorRef[];
+  members: Member[];
   canManage: boolean;
   defaultContractId: string;
 }) {
@@ -99,6 +102,7 @@ export default function ProjectsManager({
           <ProjectForm
             contracts={contracts}
             contractors={contractors}
+            members={members}
             defaultContractId={defaultContractId}
             onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), project_code: null, ...values })}
             onCancel={() => setAdding(false)}
@@ -147,60 +151,82 @@ export default function ProjectsManager({
 function ProjectForm({
   contracts,
   contractors,
+  members,
   defaultContractId,
   onSubmit,
   onCancel,
 }: {
   contracts: ContractRef[];
   contractors: ContractorRef[];
+  members: Member[];
   defaultContractId: string;
   onSubmit: (fd: FormData, values: Omit<Project, "id" | "project_code">) => void;
   onCancel: () => void;
 }) {
-  const [contractId, setContractId] = useState(defaultContractId || contracts[0]?.id || "");
-  const [contractorId, setContractorId] = useState("");
-  const [name, setName] = useState("");
-  const [status, setStatus] = useState("planned");
+  const [values, setValues] = useState({
+    contractId: defaultContractId || contracts[0]?.id || "",
+    contractorId: "",
+    projectName: "",
+    clientReference: "",
+    purchaseOrderNumber: "",
+    country: "",
+    operatingRegion: "",
+    basePort: "",
+    mobilizationLocation: "",
+    demobilizationLocation: "",
+    plannedStartDate: "",
+    plannedEndDate: "",
+    actualStartDate: "",
+    actualEndDate: "",
+    expectedPob: "",
+    projectManagerUserId: "",
+    operationsCoordinatorUserId: "",
+    status: "planned",
+    notes: "",
+  });
   const [submitted, setSubmitted] = useState(false);
+  const set = (k: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    setValues((v) => ({ ...v, [k]: e.target.value }));
 
-  const selectedContract = contracts.find((c) => c.id === contractId);
+  const selectedContract = contracts.find((c) => c.id === values.contractId);
   const eligibleContractors = useMemo(
     () => (selectedContract ? contractors.filter((c) => c.client_id === selectedContract.client_id) : contractors),
     [contractors, selectedContract]
   );
 
   const save = () => {
-    if (!name.trim() || !contractId || submitted) return;
+    if (!values.projectName.trim() || !values.contractId || submitted) return;
     const fd = new FormData();
-    fd.set("contractId", contractId);
-    fd.set("contractorId", contractorId);
-    fd.set("projectName", name.trim());
-    fd.set("status", status);
+    Object.entries(values).forEach(([k, v]) => fd.set(k, v));
     setSubmitted(true);
     onSubmit(fd, {
-      project_name: name.trim(),
-      status,
-      planned_start_date: null,
-      planned_end_date: null,
-      expected_pob: null,
+      project_name: values.projectName.trim(),
+      status: values.status,
+      planned_start_date: values.plannedStartDate || null,
+      planned_end_date: values.plannedEndDate || null,
+      expected_pob: values.expectedPob ? Number(values.expectedPob) : null,
       contract_title: selectedContract?.contract_title ?? "—",
-      contractor_name: contractors.find((c) => c.id === contractorId)?.name ?? "—",
+      contractor_name: contractors.find((c) => c.id === values.contractorId)?.name ?? "—",
     });
   };
 
+  const field = (label: string, key: keyof typeof values, type = "text") => (
+    <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+      {label}
+      <input type={type} className={`${inputCls} w-full mt-1`} style={inputStyle} value={values[key]} onChange={set(key)} />
+    </label>
+  );
+
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Contract
+          Contract <span style={{ color: "var(--ch-fail)" }}>*</span>
           <select
             className={`${inputCls} w-full mt-1`}
             style={inputStyle}
-            value={contractId}
-            onChange={(e) => {
-              setContractId(e.target.value);
-              setContractorId("");
-            }}
+            value={values.contractId}
+            onChange={(e) => setValues((v) => ({ ...v, contractId: e.target.value, contractorId: "" }))}
           >
             {contracts.length === 0 && <option value="">No contracts yet</option>}
             {contracts.map((c) => (
@@ -212,33 +238,72 @@ function ProjectForm({
         </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           EPC Contractor
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={contractorId} onChange={(e) => setContractorId(e.target.value)}>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.contractorId} onChange={set("contractorId")}>
             <option value="">No EPC contractor</option>
             {eligibleContractors.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </label>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <label className={lbl} style={lblStyle}>
-          Project / campaign name
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Status
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.status} onChange={set("status")}>
             {PROJECT_STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
         </label>
       </div>
-      <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-        You&rsquo;ll fill in dates, POB, locations, and team on the project page after saving.
-      </p>
+      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+        <label className={lbl} style={lblStyle}>
+          Project name <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Project / campaign name" value={values.projectName} onChange={set("projectName")} />
+        </label>
+        {field("Client reference", "clientReference")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        {field("Purchase order", "purchaseOrderNumber")}
+        {field("Country", "country")}
+        {field("Operating region", "operatingRegion")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        {field("Base port", "basePort")}
+        {field("Mobilization location", "mobilizationLocation")}
+        {field("Demobilization location", "demobilizationLocation")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4 mb-3">
+        {field("Planned start", "plannedStartDate", "date")}
+        {field("Planned end", "plannedEndDate", "date")}
+        {field("Actual start", "actualStartDate", "date")}
+        {field("Actual end", "actualEndDate", "date")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        {field("Expected POB", "expectedPob", "number")}
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Project manager
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.projectManagerUserId} onChange={set("projectManagerUserId")}>
+            <option value="">—</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.full_name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Operations coordinator
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.operationsCoordinatorUserId} onChange={set("operationsCoordinatorUserId")}>
+            <option value="">—</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.full_name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
+      </label>
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={submitted || !name.trim() || !contractId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button onClick={save} disabled={submitted || !values.projectName.trim() || !values.contractId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
