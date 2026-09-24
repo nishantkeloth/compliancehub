@@ -10,8 +10,8 @@ import Link from "next/link";
 //   2. AI-assisted bulk document intake (one folder per crew member,
 //      matched against existing crew_profiles and uploaded into the
 //      same crew-documents storage/versioning path the single-person
-//      AI intake flow already uses) — still a placeholder, waiting on the
-//      document folders being staged.
+//      AI intake flow already uses) — live, see ./document-intake
+//      (folder → crew match → AI classify per file → review → commit).
 //
 // Gated on crew.bulk_intake.manage (0027_bulk_intake_permission.sql),
 // granted to company_admin only — same pattern as ai.configure.
@@ -53,22 +53,26 @@ export default async function BulkIntakePage() {
           </span>
         </Link>
 
-        <div className="bg-white border rounded-xl p-5" style={{ borderColor: "var(--ch-line)" }}>
+        <Link
+          href="/team/bulk-intake/document-intake"
+          className="block bg-white border rounded-xl p-5 hover:shadow-sm transition-shadow"
+          style={{ borderColor: "var(--ch-line)" }}
+        >
           <div className="text-sm font-semibold mb-1" style={{ color: "var(--ch-navy)" }}>
-            Bulk Document Intake
+            Bulk Document Intake →
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
-            Upload a batch of per-crew-member document folders. AI matches each folder to an
+            Select a batch of per-crew-member document folders. AI matches each folder to an
             existing crew member, classifies each file by document type, and stores it as a new
             document version.
           </p>
           <span
             className="inline-block text-xs font-semibold px-2.5 py-1 rounded-full"
-            style={{ background: "var(--ch-navy-soft, #eef1f6)", color: "var(--ch-navy)" }}
+            style={{ background: "var(--ch-pass-bg, #dcfce7)", color: "var(--ch-pass, #15803d)" }}
           >
-            Coming soon — waiting on the document folders
+            Ready
           </span>
-        </div>
+        </Link>
       </div>
     </>
   );
