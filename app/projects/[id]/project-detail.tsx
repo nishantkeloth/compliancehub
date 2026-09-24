@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { updateProject, deleteProject } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
+import { COUNTRIES } from "@/lib/countries";
+import { REGIONS } from "@/lib/regions";
 
 type Project = {
   id: string;
@@ -263,17 +265,26 @@ function ProjectForm({
   const set = (k: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setValues((v) => ({ ...v, [k]: e.target.value }));
 
+  const isValid =
+    values.projectName.trim() &&
+    values.contractId &&
+    values.country &&
+    values.operatingRegion &&
+    values.plannedStartDate &&
+    values.plannedEndDate &&
+    values.expectedPob;
+
   const save = () => {
-    if (!values.projectName.trim() || !values.contractId || submitted) return;
+    if (!isValid || submitted) return;
     const fd = new FormData();
     Object.entries(values).forEach(([k, v]) => fd.set(k, v));
     setSubmitted(true);
     onSubmit(fd);
   };
 
-  const field = (label: string, key: keyof typeof values, type = "text") => (
+  const field = (label: string, key: keyof typeof values, type = "text", required = false) => (
     <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-      {label}
+      {label} {required && <span style={{ color: "var(--ch-fail)" }}>*</span>}
       <input type={type} className={`${inputCls} w-full mt-1`} style={inputStyle} value={values[key]} onChange={set(key)} />
     </label>
   );
@@ -316,8 +327,35 @@ function ProjectForm({
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         {field("Purchase order", "purchaseOrderNumber")}
-        {field("Country", "country")}
-        {field("Operating region", "operatingRegion")}
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Country <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.country} onChange={set("country")}>
+            <option value="">Country…</option>
+            {/* A previously-typed free-text value that doesn't match the
+                fixed list below stays selectable rather than silently
+                dropping it the moment this form loads. */}
+            {values.country && !COUNTRIES.includes(values.country as (typeof COUNTRIES)[number]) && (
+              <option value={values.country}>{values.country} (unmatched — pick below)</option>
+            )}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Operating region <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.operatingRegion} onChange={set("operatingRegion")}>
+            <option value="">Operating region…</option>
+            {/* Same list as Sites/Crew Location (lib/regions.ts) — cities
+                (the UAE's emirates) alongside every country, plus "Other". */}
+            {values.operatingRegion && !REGIONS.includes(values.operatingRegion) && (
+              <option value={values.operatingRegion}>{values.operatingRegion} (unmatched — pick below)</option>
+            )}
+            {REGIONS.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         {field("Base port", "basePort")}
@@ -325,13 +363,13 @@ function ProjectForm({
         {field("Demobilization location", "demobilizationLocation")}
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
-        {field("Planned start", "plannedStartDate", "date")}
-        {field("Planned end", "plannedEndDate", "date")}
+        {field("Planned start", "plannedStartDate", "date", true)}
+        {field("Planned end", "plannedEndDate", "date", true)}
         {field("Actual start", "actualStartDate", "date")}
         {field("Actual end", "actualEndDate", "date")}
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        {field("Expected POB", "expectedPob", "number")}
+        {field("Expected POB", "expectedPob", "number", true)}
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Project manager
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.projectManagerUserId} onChange={set("projectManagerUserId")}>
@@ -356,7 +394,7 @@ function ProjectForm({
         <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
       </label>
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={submitted || !values.projectName.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button onClick={save} disabled={submitted || !isValid} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

@@ -68,6 +68,10 @@ export async function createProject(formData: FormData) {
   const contractorId = optStr(formData, "contractorId");
   const name = str(formData, "projectName");
   if (!name) return { error: "Project name is required." };
+  const country = optStr(formData, "country");
+  if (!country) return { error: "Country is required." };
+  const operatingRegion = optStr(formData, "operatingRegion");
+  if (!operatingRegion) return { error: "Operating region is required." };
 
   const [{ data: contract, error: contractError }, contractorResult] = await Promise.all([
     supabase.from("contracts").select("status, planned_start_date, planned_end_date").eq("id", contractId).single(),
@@ -88,7 +92,11 @@ export async function createProject(formData: FormData) {
   }
 
   const plannedStart = optStr(formData, "plannedStartDate");
+  if (!plannedStart) return { error: "Planned start is required." };
   const plannedEnd = optStr(formData, "plannedEndDate");
+  if (!plannedEnd) return { error: "Planned end is required." };
+  const expectedPobValue = optNum(formData, "expectedPob");
+  if (expectedPobValue == null) return { error: "Expected POB is required." };
   const warning = datesOutsideContract(plannedStart, plannedEnd, contract.planned_start_date, contract.planned_end_date)
     ? "This project's planned dates fall outside the contract's planned dates — saved anyway, but worth double-checking."
     : undefined;
@@ -109,8 +117,8 @@ export async function createProject(formData: FormData) {
       project_name: name,
       client_reference: optStr(formData, "clientReference"),
       purchase_order_number: optStr(formData, "purchaseOrderNumber"),
-      country: optStr(formData, "country"),
-      operating_region: optStr(formData, "operatingRegion"),
+      country,
+      operating_region: operatingRegion,
       base_port: optStr(formData, "basePort"),
       mobilization_location: optStr(formData, "mobilizationLocation"),
       demobilization_location: optStr(formData, "demobilizationLocation"),
@@ -118,7 +126,7 @@ export async function createProject(formData: FormData) {
       planned_end_date: plannedEnd,
       actual_start_date: optStr(formData, "actualStartDate"),
       actual_end_date: optStr(formData, "actualEndDate"),
-      expected_pob: optNum(formData, "expectedPob"),
+      expected_pob: expectedPobValue,
       project_manager_user_id: optStr(formData, "projectManagerUserId"),
       operations_coordinator_user_id: optStr(formData, "operationsCoordinatorUserId"),
       status,
@@ -140,6 +148,10 @@ export async function updateProject(id: string, formData: FormData) {
   const contractorId = optStr(formData, "contractorId");
   const name = str(formData, "projectName");
   if (!name) return { error: "Project name is required." };
+  const country = optStr(formData, "country");
+  if (!country) return { error: "Country is required." };
+  const operatingRegion = optStr(formData, "operatingRegion");
+  if (!operatingRegion) return { error: "Operating region is required." };
 
   const [{ data: contract, error: contractError }, contractorResult] = await Promise.all([
     supabase.from("contracts").select("status, planned_start_date, planned_end_date").eq("id", contractId).single(),
@@ -157,7 +169,11 @@ export async function updateProject(id: string, formData: FormData) {
   }
 
   const plannedStart = optStr(formData, "plannedStartDate");
+  if (!plannedStart) return { error: "Planned start is required." };
   const plannedEnd = optStr(formData, "plannedEndDate");
+  if (!plannedEnd) return { error: "Planned end is required." };
+  const expectedPobValue = optNum(formData, "expectedPob");
+  if (expectedPobValue == null) return { error: "Expected POB is required." };
   const warning = datesOutsideContract(plannedStart, plannedEnd, contract.planned_start_date, contract.planned_end_date)
     ? "This project's planned dates fall outside the contract's planned dates — saved anyway, but worth double-checking."
     : undefined;
@@ -170,8 +186,8 @@ export async function updateProject(id: string, formData: FormData) {
       project_name: name,
       client_reference: optStr(formData, "clientReference"),
       purchase_order_number: optStr(formData, "purchaseOrderNumber"),
-      country: optStr(formData, "country"),
-      operating_region: optStr(formData, "operatingRegion"),
+      country,
+      operating_region: operatingRegion,
       base_port: optStr(formData, "basePort"),
       mobilization_location: optStr(formData, "mobilizationLocation"),
       demobilization_location: optStr(formData, "demobilizationLocation"),
@@ -179,7 +195,7 @@ export async function updateProject(id: string, formData: FormData) {
       planned_end_date: plannedEnd,
       actual_start_date: optStr(formData, "actualStartDate"),
       actual_end_date: optStr(formData, "actualEndDate"),
-      expected_pob: optNum(formData, "expectedPob"),
+      expected_pob: expectedPobValue,
       project_manager_user_id: optStr(formData, "projectManagerUserId"),
       operations_coordinator_user_id: optStr(formData, "operationsCoordinatorUserId"),
       status,
