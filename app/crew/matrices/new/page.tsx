@@ -14,7 +14,11 @@ export default async function NewCrewMatrixPage() {
   if (!can(access, "crew.matrix.manage") || !access.orgId) redirect("/crew/matrices");
 
   const [{ data: projects }, { data: sites }, { data: aiSettings }] = await Promise.all([
-    supabase.from("projects").select("id, project_name, planned_start_date, planned_end_date, expected_pob").eq("org_id", access.orgId).order("project_name"),
+    supabase
+      .from("projects")
+      .select("id, project_name, planned_start_date, planned_end_date, expected_pob, country, operating_region")
+      .eq("org_id", access.orgId)
+      .order("project_name"),
     supabase.from("offshore_sites").select("id, name, project_id").eq("org_id", access.orgId).order("name"),
     supabase.from("ai_settings").select("ai_enabled").eq("org_id", access.orgId).maybeSingle(),
   ]);

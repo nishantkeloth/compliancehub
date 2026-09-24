@@ -14,6 +14,8 @@ type Project = {
   planned_start_date: string | null;
   planned_end_date: string | null;
   expected_pob: number | null;
+  country: string | null;
+  operating_region: string | null;
 };
 type Site = { id: string; name: string; project_id: string | null };
 
@@ -43,8 +45,13 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
   const [addingSite, setAddingSite] = useState(false);
   const [newSiteName, setNewSiteName] = useState("");
   const [newSiteType, setNewSiteType] = useState("vessel");
-  const [newSiteCountry, setNewSiteCountry] = useState("");
-  const [newSiteRegion, setNewSiteRegion] = useState("");
+  // Pre-filled from the selected project's own Country / Operating region
+  // (see onProjectChange), same as effectiveFrom/effectiveTo/expectedPob
+  // below — a new site almost always sits in the same country/region as
+  // the project it's under, so this just saves re-picking what's already
+  // known. Still freely editable for the (rare) site that doesn't.
+  const [newSiteCountry, setNewSiteCountry] = useState(defaultProject?.country ?? "");
+  const [newSiteRegion, setNewSiteRegion] = useState(defaultProject?.operating_region ?? "");
   const [copyFromSiteId, setCopyFromSiteId] = useState("");
   const [siteSubmitting, setSiteSubmitting] = useState(false);
   const [siteError, setSiteError] = useState<string | null>(null);
@@ -70,6 +77,8 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
     setEffectiveFrom(project?.planned_start_date ?? "");
     setEffectiveTo(project?.planned_end_date ?? "");
     setExpectedPob(project?.expected_pob?.toString() ?? "");
+    setNewSiteCountry(project?.country ?? "");
+    setNewSiteRegion(project?.operating_region ?? "");
   };
 
   const submitNewSite = () => {
