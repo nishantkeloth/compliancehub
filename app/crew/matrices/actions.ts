@@ -222,6 +222,48 @@ export async function updateCrewMatrixHeader(id: string, formData: FormData) {
   return {};
 }
 
+// Deleting a matrix only removes crew_matrix_lines (and everything that
+// cascades from them — skills/documents/competencies/client requirements,
+// reservations, resource-profile links, status history). It does NOT touch
+// crew_assignments: assigning someone from the Staffing Plan writes
+// directly into crew_assignments against the matrix's offshore_site_id,
+// and that row has no crew_matrix_id at all — there's no link back to the
+// matrix to cascade through. So anyone currently Assigned stays exactly as
+// they are (still active, still deployment_status "onboard") even after
+// the matrix that assigned them is gone, with no automatic way back to
+// the Staffing Plan that would let someone unassign them. The delete
+// button checks for this first (see getMatrixSiteActiveAssignments) so
+// the confirm dialog can say so, rather than silently deleting a draft
+// out from under active assignments.
+export async function getMatrixSiteActiveAssignments(
+  id: string
+): Promise<{ error: string } | { count: number; names: string[] }> {
+  const { supabase, access } = await requireManage();
+  const { data: matrix, error: matrixErr } = await supabase
+    .from("crew_matrices")
+    .select("id, offshore_site_id")
+    .eq("id", id)
+    .eq("org_id", access.orgId)
+    .single();
+  if (matrixErr || !matrix) return { error: "Matrix not found." };
+
+  const { data: rows, error } = await supabase
+    .from("crew_assignments")
+    .select("crew_profiles(full_name)")
+    .eq("org_id", access.orgId)
+    .eq("offshore_site_id", matrix.offshore_site_id)
+    .is("end_date", null);
+  if (error) return { error: error.message };
+
+  const names = (rows ?? [])
+    .map((r) => {
+      const profile = Array.isArray(r.crew_profiles) ? r.crew_profiles[0] : r.crew_profiles;
+      return (profile as { full_name?: string } | null)?.full_name ?? "Unknown";
+    })
+    .sort((a, b) => a.localeCompare(b));
+  return { count: names.length, names };
+}
+
 export async function deleteCrewMatrix(id: string) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, id);

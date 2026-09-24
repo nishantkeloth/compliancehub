@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   updateCrewMatrixHeader,
   deleteCrewMatrix,
+  getMatrixSiteActiveAssignments,
   submitForApproval,
   approveInternal,
   rejectInternal,
@@ -187,11 +188,30 @@ export default function MatrixDetail({
     });
   };
 
-  const submitDelete = () => {
-    if (!window.confirm(`Delete draft "${matrix.title}"? This can't be undone.`)) return;
+  const submitDelete = async () => {
     setError(null);
+    setBusy(true);
+    // Deleting doesn't touch crew_assignments — anyone currently Assigned
+    // on this matrix's Staffing Plan stays assigned to the site regardless
+    // (see getMatrixSiteActiveAssignments / deleteCrewMatrix in actions.ts
+    // for why). Check first so the confirm can say so, rather than finding
+    // out after the matrix — and the Staffing Plan tab that would let
+    // someone unassign them — is already gone.
+    const check = await getMatrixSiteActiveAssignments(matrix.id);
+    setBusy(false);
+    if ("error" in check) {
+      setError(check.error);
+      return;
+    }
+    const warning =
+      check.count > 0
+        ? `\n\nWarning: ${check.count} crew member${check.count === 1 ? " is" : "s are"} currently assigned to this site (${check.names.slice(0, 5).join(", ")}${check.count > 5 ? `, +${check.count - 5} more` : ""}). Deleting this matrix will NOT unassign them — they'll stay tagged to the vessel, and you'll need to manage that from their crew profile or another matrix's Staffing Plan instead.`
+        : "";
+    if (!window.confirm(`Delete draft "${matrix.title}"? This can't be undone.${warning}`)) return;
+    setBusy(true);
     startTransition(async () => {
       const res = await deleteCrewMatrix(matrix.id);
+      setBusy(false);
       if (res?.error) {
         setError(res.error);
         return;
@@ -278,8 +298,8 @@ export default function MatrixDetail({
           {isDraft && canManage && !editing && (
             <>
               <button onClick={() => setEditing(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Edit</button>
-              <button onClick={submitDelete} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-fail)", color: "var(--ch-fail)" }}>
-                Delete
+              <button onClick={submitDelete} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50" style={{ borderColor: "var(--ch-fail)", color: "var(--ch-fail)" }}>
+                {busy ? "Checking…" : "Delete"}
               </button>
             </>
           )}
