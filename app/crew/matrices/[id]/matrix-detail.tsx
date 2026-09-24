@@ -207,11 +207,23 @@ export default function MatrixDetail({
     }
 
     let unassignSiteCrew = false;
-    if (check.count > 0) {
+    if (check.count > 0 && check.blockingMatrix) {
+      // These assignments belong to another matrix that's currently active
+      // at this site (often the very version this draft was branched from)
+      // — never offer to unassign here, so a forgetful click can't touch a
+      // live deployment. The system decides this, not the person clicking.
+      const bm = check.blockingMatrix;
+      if (
+        !window.confirm(
+          `Delete draft "${matrix.title}"? This can't be undone.\n\n${check.count} crew member${check.count === 1 ? " is" : "s are"} currently assigned to this site, under the active matrix "${bm.title}" (${bm.matrixNumber} v${bm.versionNumber}). They won't be affected — unassigning isn't offered here since they belong to that active matrix, not this draft.`
+        )
+      )
+        return;
+    } else if (check.count > 0) {
       const names = `${check.names.slice(0, 5).join(", ")}${check.count > 5 ? `, +${check.count - 5} more` : ""}`;
       if (
         !window.confirm(
-          `Delete draft "${matrix.title}"? This can't be undone.\n\n${check.count} crew member${check.count === 1 ? " is" : "s are"} currently assigned to this site (${names}).`
+          `Delete draft "${matrix.title}"? This can't be undone.\n\n${check.count} crew member${check.count === 1 ? " is" : "s are"} currently assigned to this site (${names}), with no active matrix claiming them.`
         )
       )
         return;

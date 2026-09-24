@@ -235,9 +235,36 @@ export async function updateCrewMatrixHeader(id: string, formData: FormData) {
 // button checks for this first (see getMatrixSiteActiveAssignments) so
 // the confirm dialog can say so, rather than silently deleting a draft
 // out from under active assignments.
+// crew_assignments is keyed to offshore_site_id only — never to a specific
+// crew_matrix or version — so "who's active at this site" can't be
+// attributed to *this* matrix by the schema alone. Whenever another matrix
+// at the same site is currently `active`, we treat that active matrix as
+// the true owner of those assignments (this covers both a sibling version
+// from createNewVersion, which shares matrix_number, and any unrelated
+// matrix that merely happens to share the site) and refuse to offer/perform
+// an unassign — only a site with no active matrix at all is safe to touch.
+async function findBlockingActiveMatrix(
+  supabase: Supa,
+  orgId: string | null,
+  offshoreSiteId: string,
+  excludeId: string
+): Promise<{ error: string } | { matrix: { id: string; title: string; matrix_number: string; version_number: number } | null }> {
+  const { data, error } = await supabase
+    .from("crew_matrices")
+    .select("id, title, matrix_number, version_number")
+    .eq("org_id", orgId)
+    .eq("offshore_site_id", offshoreSiteId)
+    .eq("status", "active")
+    .neq("id", excludeId)
+    .limit(1)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  return { matrix: data as { id: string; title: string; matrix_number: string; version_number: number } | null };
+}
+
 export async function getMatrixSiteActiveAssignments(
   id: string
-): Promise<{ error: string } | { count: number; names: string[] }> {
+): Promise<{ error: string } | { count: number; names: string[]; blockingMatrix: { title: string; matrixNumber: string; versionNumber: number } | null }> {
   const { supabase, access } = await requireManage();
   const { data: matrix, error: matrixErr } = await supabase
     .from("crew_matrices")
@@ -261,7 +288,17 @@ export async function getMatrixSiteActiveAssignments(
       return (profile as { full_name?: string } | null)?.full_name ?? "Unknown";
     })
     .sort((a, b) => a.localeCompare(b));
-  return { count: names.length, names };
+
+  let blockingMatrix: { title: string; matrixNumber: string; versionNumber: number } | null = null;
+  if (names.length > 0) {
+    const blocking = await findBlockingActiveMatrix(supabase, access.orgId, matrix.offshore_site_id, id);
+    if ("error" in blocking) return { error: blocking.error };
+    if (blocking.matrix) {
+      blockingMatrix = { title: blocking.matrix.title, matrixNumber: blocking.matrix.matrix_number, versionNumber: blocking.matrix.version_number };
+    }
+  }
+
+  return { count: names.length, names, blockingMatrix };
 }
 
 export async function deleteCrewMatrix(id: string, unassignSiteCrew?: boolean) {
@@ -276,6 +313,17 @@ export async function deleteCrewMatrix(id: string, unassignSiteCrew?: boolean) {
       .eq("org_id", access.orgId)
       .single();
     if (matrixErr || !matrix) return { error: "Matrix not found." };
+
+    // Re-verify server-side, even though the UI only offers this option
+    // when it already found no blocking active matrix — never trust the
+    // client's word alone for something that unassigns real crew.
+    const blocking = await findBlockingActiveMatrix(supabase, access.orgId, matrix.offshore_site_id, id);
+    if ("error" in blocking) return { error: blocking.error };
+    if (blocking.matrix) {
+      return {
+        error: `Can't unassign — crew at this site belong to the active matrix "${blocking.matrix.title}" (${blocking.matrix.matrix_number} v${blocking.matrix.version_number}). Manage them from that matrix's Staffing Plan instead.`,
+      };
+    }
 
     const { data: rows, error: findErr } = await supabase
       .from("crew_assignments")
