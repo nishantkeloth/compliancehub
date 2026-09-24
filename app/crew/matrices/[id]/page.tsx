@@ -19,7 +19,9 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
 
   const { data: matrix } = await supabase
     .from("crew_matrices")
-    .select("*, projects(project_name, operating_region), offshore_sites(name, operating_region)")
+    .select(
+      "*, projects(project_name, operating_region), offshore_sites(id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status)"
+    )
     .eq("id", id)
     .eq("org_id", access.orgId)
     .single();
@@ -55,6 +57,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       { data: allActiveAssignments },
       { data: fieldDefs },
       { data: stagedChanges },
+      { data: manningRequirements },
     ],
     workflowStage,
   ] = await Promise.all([
@@ -123,6 +126,14 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       .eq("org_id", access.orgId)
       .eq("status", "approved")
       .is("applied_assignment_id", null),
+    // Site tab — this site's standing manning requirements (roles +
+    // minimum headcount), the same rows the Offshore Sites page manages,
+    // so they can be set/edited directly from the matrix without leaving it.
+    supabase
+      .from("site_manning_requirements")
+      .select("id, offshore_site_id, job_role_id, minimum_headcount")
+      .eq("org_id", access.orgId)
+      .eq("offshore_site_id", matrix.offshore_site_id),
     ]),
     // The current stage of this matrix's in-progress approval workflow
     // (see lib/workflow.ts) — null once it's approved/rejected/cancelled,
@@ -429,7 +440,17 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   });
 
   const project = (Array.isArray(matrix.projects) ? matrix.projects[0] : matrix.projects) as { project_name?: string; operating_region?: string | null } | null;
-  const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as { name?: string; operating_region?: string | null } | null;
+  const site = (Array.isArray(matrix.offshore_sites) ? matrix.offshore_sites[0] : matrix.offshore_sites) as {
+    id?: string;
+    name?: string;
+    code?: string | null;
+    site_type?: string | null;
+    country?: string | null;
+    operating_region?: string | null;
+    port_or_heliport?: string | null;
+    crew_change_location?: string | null;
+    status?: string | null;
+  } | null;
   // Phase 16 — the matrix's own region, for splitting Available Candidates
   // into region-matched vs other-region groups. Site's region wins when
   // set (a matrix is normally tied to one physical site); falls back to
@@ -511,6 +532,23 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         approved_at: matrix.approved_at,
         created_at: matrix.created_at,
       }}
+      site={{
+        id: site?.id ?? matrix.offshore_site_id,
+        name: site?.name ?? "—",
+        code: site?.code ?? null,
+        site_type: site?.site_type ?? null,
+        country: site?.country ?? null,
+        operating_region: site?.operating_region ?? null,
+        port_or_heliport: site?.port_or_heliport ?? null,
+        crew_change_location: site?.crew_change_location ?? null,
+        status: site?.status ?? null,
+      }}
+      manningRequirements={(manningRequirements ?? []).map((m) => ({
+        id: m.id as string,
+        offshore_site_id: m.offshore_site_id as string,
+        job_role_id: m.job_role_id as string,
+        minimum_headcount: m.minimum_headcount as number,
+      }))}
       lines={rows}
       history={allVersionsHistory ?? []}
       versions={(versions ?? []).map((v) => ({ id: v.id as string, version_number: v.version_number as number, status: v.status as string, created_at: v.created_at as string }))}

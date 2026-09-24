@@ -26,6 +26,7 @@ import LinesEditor, { type Line, type Ref, type DocTypeRef } from "./lines-edito
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
+import SiteTab, { type SiteInfo, type ManningReq } from "./site-tab";
 
 type Matrix = {
   id: string;
@@ -59,6 +60,8 @@ const lblStyle = { color: "var(--ch-sub)" };
 
 export default function MatrixDetail({
   matrix,
+  site,
+  manningRequirements,
   lines,
   history,
   versions,
@@ -81,6 +84,8 @@ export default function MatrixDetail({
   aiVisible = false,
 }: {
   matrix: Matrix;
+  site: SiteInfo;
+  manningRequirements: ManningReq[];
   lines: Line[];
   history: HistoryRow[];
   versions: VersionRow[];
@@ -109,8 +114,8 @@ export default function MatrixDetail({
   // apart from the general `run`/startTransition above so its "Regenerating…"
   // state doesn't flicker on while an unrelated workflow action is pending.
   const [staffingPending, startStaffingTransition] = useTransition();
-  type TabKey = "overview" | "lines" | "staffing" | "versions";
-  const VALID_TABS: TabKey[] = ["overview", "lines", "staffing", "versions"];
+  type TabKey = "overview" | "lines" | "site" | "staffing" | "versions";
+  const VALID_TABS: TabKey[] = ["overview", "lines", "site", "staffing", "versions"];
   // Regenerate calls router.refresh(), which re-suspends this page while the
   // server component re-fetches — React remounts the client tree when that
   // resolves, which would silently reset a plain useState("overview") back
@@ -172,6 +177,7 @@ export default function MatrixDetail({
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "lines", label: `Manning Lines (${lines.length})` },
+    { key: "site", label: "Site" },
     { key: "staffing", label: "Staffing Plan" },
     { key: "versions", label: `Versions (${versions.length})` },
   ];
@@ -457,6 +463,15 @@ export default function MatrixDetail({
           skills={skills}
           rotationTemplates={rotationTemplates}
           documentTypes={documentTypes}
+        />
+      )}
+
+      {tab === "site" && (
+        <SiteTab
+          site={site}
+          jobRoles={jobRoles}
+          manningRequirements={manningRequirements}
+          canManageManning={canAssignCrew}
         />
       )}
 

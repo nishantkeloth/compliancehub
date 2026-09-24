@@ -3,9 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewMatrix, generateDraftFromManning } from "../actions";
-import { createOffshoreSite, copyManningRequirements } from "@/app/crew/setup/actions";
-import { COUNTRIES } from "@/lib/countries";
-import { REGIONS } from "@/lib/regions";
+import { createOffshoreSite } from "@/app/crew/setup/actions";
 import AiGenerate from "./ai-generate";
 
 type Project = {
@@ -45,17 +43,15 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
   const [addingSite, setAddingSite] = useState(false);
   const [newSiteName, setNewSiteName] = useState("");
   const [newSiteType, setNewSiteType] = useState("vessel");
-  // Pre-filled from the selected project's own Country / Operating region
-  // (see onProjectChange), same as effectiveFrom/effectiveTo/expectedPob
-  // below — a new site almost always sits in the same country/region as
-  // the project it's under, so this just saves re-picking what's already
-  // known. Still freely editable for the (rare) site that doesn't.
+  // Silently carried over from the selected project's own Country /
+  // Operating region (see onProjectChange) — no longer shown as fields
+  // here (a new site's location is almost always the project's own), but
+  // still sent through to createOffshoreSite so the site record has it.
+  // Editable afterward from the matrix's new Site tab or from Offshore Sites.
   const [newSiteCountry, setNewSiteCountry] = useState(defaultProject?.country ?? "");
   const [newSiteRegion, setNewSiteRegion] = useState(defaultProject?.operating_region ?? "");
-  const [copyFromSiteId, setCopyFromSiteId] = useState("");
   const [siteSubmitting, setSiteSubmitting] = useState(false);
   const [siteError, setSiteError] = useState<string | null>(null);
-  const [copyNotice, setCopyNotice] = useState<string | null>(null);
   // Pre-filled from the selected project's own planned dates / expected POB
   // (see onProjectChange) — still just a starting point, freely editable.
   const [effectiveFrom, setEffectiveFrom] = useState(defaultProject?.planned_start_date ?? "");
@@ -72,7 +68,6 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
     setOffshoreSiteId("");
     setAddingSite(false);
     setSiteError(null);
-    setCopyNotice(null);
     const project = projects.find((p) => p.id === id);
     setEffectiveFrom(project?.planned_start_date ?? "");
     setEffectiveTo(project?.planned_end_date ?? "");
@@ -84,7 +79,6 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
   const submitNewSite = () => {
     if (!projectId || !newSiteName.trim() || siteSubmitting) return;
     setSiteError(null);
-    setCopyNotice(null);
     setSiteSubmitting(true);
     const fd = new FormData();
     fd.set("projectId", projectId);
@@ -103,26 +97,11 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
       if (newId) {
         setSites((cur) => [...cur, { id: newId, name: newSiteName.trim(), project_id: projectId }]);
         setOffshoreSiteId(newId);
-
-        if (copyFromSiteId) {
-          const copyRes = await copyManningRequirements(copyFromSiteId, newId);
-          if (copyRes?.error) {
-            setCopyNotice(`Site created, but couldn't copy roles: ${copyRes.error}`);
-          } else if (copyRes?.copied) {
-            const fromName = sites.find((s) => s.id === copyFromSiteId)?.name ?? "that site";
-            setCopyNotice(`Copied ${copyRes.copied} role${copyRes.copied === 1 ? "" : "s"} from ${fromName} — use "Generate from manning requirements" below to pull them in as manning lines.`);
-          } else {
-            setCopyNotice("Site created — the site you copied from has no roles set up yet, so none were copied.");
-          }
-        }
       }
       setSiteSubmitting(false);
       setAddingSite(false);
       setNewSiteName("");
       setNewSiteType("vessel");
-      setNewSiteCountry("");
-      setNewSiteRegion("");
-      setCopyFromSiteId("");
     });
   };
 
@@ -257,40 +236,9 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
               </select>
             </label>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 mb-2">
-            <label className={lbl} style={lblStyle}>
-              Country
-              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={newSiteCountry} onChange={(e) => setNewSiteCountry(e.target.value)}>
-                <option value="">Country…</option>
-                {COUNTRIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </label>
-            <label className={lbl} style={lblStyle}>
-              Operating region
-              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={newSiteRegion} onChange={(e) => setNewSiteRegion(e.target.value)}>
-                <option value="">Operating region…</option>
-                {REGIONS.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="text-xs block mb-2" style={{ color: "var(--ch-sub)" }}>
-            Copy roles from an existing site (optional)
-            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={copyFromSiteId} onChange={(e) => setCopyFromSiteId(e.target.value)}>
-              <option value="">Don&rsquo;t copy — start with no roles</option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </label>
           <p className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>
-            Setting the operating region now is what lets Staffing Plan tell &ldquo;available&rdquo; crew
-            from &ldquo;other location&rdquo; ones later — you can also add it afterward from Offshore Sites.
-            If this is a sister vessel to one you already run, pick it above to copy its manning
-            requirements (roles + headcounts) across, so this matrix doesn&rsquo;t start from zero.
+            Country and operating region are carried over automatically from the selected project.
+            Manning requirements (roles + headcounts) can be set up from the matrix&rsquo;s Site tab once it&rsquo;s created.
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -306,7 +254,6 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
               onClick={() => {
                 setAddingSite(false);
                 setSiteError(null);
-                setCopyFromSiteId("");
               }}
               className="rounded-lg px-3 py-1.5 text-xs font-semibold border"
               style={{ borderColor: "var(--ch-line)" }}
@@ -314,12 +261,6 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
               Cancel
             </button>
           </div>
-        </div>
-      )}
-
-      {copyNotice && (
-        <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
-          {copyNotice}
         </div>
       )}
 
