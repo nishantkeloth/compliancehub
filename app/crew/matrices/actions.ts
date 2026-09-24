@@ -264,9 +264,43 @@ export async function getMatrixSiteActiveAssignments(
   return { count: names.length, names };
 }
 
-export async function deleteCrewMatrix(id: string) {
-  const { supabase } = await requireManage();
+export async function deleteCrewMatrix(id: string, unassignSiteCrew?: boolean) {
+  const { supabase, access, userId } = await requireManage();
   await assertDraft(supabase, id);
+
+  if (unassignSiteCrew) {
+    const { data: matrix, error: matrixErr } = await supabase
+      .from("crew_matrices")
+      .select("id, offshore_site_id")
+      .eq("id", id)
+      .eq("org_id", access.orgId)
+      .single();
+    if (matrixErr || !matrix) return { error: "Matrix not found." };
+
+    const { data: rows, error: findErr } = await supabase
+      .from("crew_assignments")
+      .select("id, crew_id")
+      .eq("org_id", access.orgId)
+      .eq("offshore_site_id", matrix.offshore_site_id)
+      .is("end_date", null);
+    if (findErr) return { error: findErr.message };
+
+    const today = new Date().toISOString().slice(0, 10);
+    for (const row of rows ?? []) {
+      const { error: closeErr } = await supabase
+        .from("crew_assignments")
+        .update({
+          end_date: today,
+          planned_end_date: today,
+          assignment_status: "cancelled",
+          updated_by: userId,
+        })
+        .eq("id", row.id);
+      if (closeErr) return { error: closeErr.message };
+      await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", row.crew_id);
+    }
+  }
+
   const { error } = await supabase.from("crew_matrices").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateMatrix();
