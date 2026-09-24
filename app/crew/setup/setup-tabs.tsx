@@ -1470,7 +1470,6 @@ function DocumentTemplatesPanel({
                         templateId={t.id}
                         documentTypes={documentTypes}
                         items={itemsForTemplate(t.id)}
-                        docTypeName={docTypeName}
                         onCreate={submitCreateItem}
                         onUpdate={submitUpdateItem}
                         onDelete={submitDeleteItem}
@@ -1544,7 +1543,6 @@ function TemplateItemsEditor({
   templateId,
   documentTypes,
   items,
-  docTypeName,
   onCreate,
   onUpdate,
   onDelete,
@@ -1552,138 +1550,127 @@ function TemplateItemsEditor({
   templateId: string;
   documentTypes: DocumentType[];
   items: DocTemplateItem[];
-  docTypeName: (id: string) => string;
   onCreate: (fd: FormData, optimisticItem: DocTemplateItem) => void;
   onUpdate: (item: DocTemplateItem, fd: FormData, patch: Partial<DocTemplateItem>) => void;
   onDelete: (item: DocTemplateItem, index: number) => void;
 }) {
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // Same checkbox-grid look as a Manning Line's "Required document types"
+  // (app/crew/matrices/[id]/lines-editor.tsx's DocumentsPanel) — check a
+  // document in, then set Mandatory and a minimum remaining validity right
+  // on that row, instead of a separate add-one-at-a-time form.
+  const byTypeId = new Map(items.map((it) => [it.document_type_id, it]));
+  const [validityDraft, setValidityDraft] = useState<Record<string, string>>({});
 
-  return (
-    <div>
-      {adding ? (
-        <TemplateItemForm
-          templateId={templateId}
-          documentTypes={documentTypes}
-          existing={items}
-          onSubmit={(fd, values) => {
-            onCreate(fd, { id: tempId(), ...values });
-            setAdding(false);
-          }}
-          onCancel={() => setAdding(false)}
-        />
-      ) : (
-        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold mb-3" disabled={documentTypes.length === items.length}>
-          + Add document
-        </button>
-      )}
-      <div className="space-y-1.5">
-        {items.length === 0 && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No documents in this template yet.</div>}
-        {items.map((it, i) =>
-          editingId === it.id ? (
-            <TemplateItemForm
-              key={it.id}
-              templateId={templateId}
-              documentTypes={documentTypes}
-              existing={items}
-              item={it}
-              onSubmit={(fd, values) => {
-                onUpdate(it, fd, values);
-                setEditingId(null);
-              }}
-              onCancel={() => setEditingId(null)}
-            />
-          ) : (
-            <div key={it.id} className="flex items-center gap-2 text-sm">
-              <span style={{ color: "var(--ch-ink)" }}>
-                {docTypeName(it.document_type_id)}
-                {it.is_mandatory && " *"}
-              </span>
-              {it.minimum_remaining_validity_days != null && (
-                <span className="text-xs" style={{ color: "var(--ch-sub)" }}>min {it.minimum_remaining_validity_days}d remaining</span>
-              )}
-              <SavingTag id={it.id} />
-              <button onClick={() => setEditingId(it.id)} disabled={isTempId(it.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>
-                Edit
-              </button>
-              <button onClick={() => onDelete(it, i)} disabled={isTempId(it.id)} className="text-xs disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>
-                Remove
-              </button>
-            </div>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TemplateItemForm({
-  templateId,
-  documentTypes,
-  existing,
-  item,
-  onSubmit,
-  onCancel,
-}: {
-  templateId: string;
-  documentTypes: DocumentType[];
-  existing: DocTemplateItem[];
-  item?: DocTemplateItem;
-  onSubmit: (fd: FormData, values: Omit<DocTemplateItem, "id">) => void;
-  onCancel: () => void;
-}) {
-  const usedDocTypeIds = new Set(existing.filter((e) => e.id !== item?.id).map((e) => e.document_type_id));
-  const availableDocTypes = item ? documentTypes : documentTypes.filter((d) => !usedDocTypeIds.has(d.id));
-  const [documentTypeId, setDocumentTypeId] = useState(item?.document_type_id ?? availableDocTypes[0]?.id ?? "");
-  const [isMandatory, setIsMandatory] = useState(item?.is_mandatory ?? true);
-  const [minValidity, setMinValidity] = useState(item?.minimum_remaining_validity_days != null ? String(item.minimum_remaining_validity_days) : "");
-  const [submitted, setSubmitted] = useState(false);
-
-  const save = () => {
-    if (!documentTypeId || submitted) return;
+  const buildFd = (isMandatory: boolean, minimumRemainingValidityDays: string, sortOrder: number) => {
     const fd = new FormData();
     fd.set("templateId", templateId);
-    fd.set("documentTypeId", documentTypeId);
     fd.set("isMandatory", isMandatory ? "on" : "off");
-    fd.set("minimumRemainingValidityDays", minValidity);
-    fd.set("sortOrder", String(item?.sort_order ?? existing.length));
-    setSubmitted(true);
-    onSubmit(fd, {
-      template_id: templateId,
-      document_type_id: documentTypeId,
-      is_mandatory: isMandatory,
-      minimum_remaining_validity_days: minValidity ? Number(minValidity) : null,
-      sort_order: item?.sort_order ?? existing.length,
+    fd.set("minimumRemainingValidityDays", minimumRemainingValidityDays);
+    fd.set("sortOrder", String(sortOrder));
+    return fd;
+  };
+
+  const toggle = (docType: DocumentType, checked: boolean) => {
+    if (checked) {
+      const fd = buildFd(true, "", items.length);
+      fd.set("documentTypeId", docType.id);
+      onCreate(fd, {
+        id: tempId(),
+        template_id: templateId,
+        document_type_id: docType.id,
+        is_mandatory: true,
+        minimum_remaining_validity_days: null,
+        sort_order: items.length,
+      });
+    } else {
+      const existing = byTypeId.get(docType.id);
+      if (!existing) return;
+      onDelete(existing, items.findIndex((it) => it.id === existing.id));
+    }
+  };
+
+  const toggleMandatory = (item: DocTemplateItem) => {
+    const nextMandatory = !item.is_mandatory;
+    const fd = buildFd(nextMandatory, item.minimum_remaining_validity_days != null ? String(item.minimum_remaining_validity_days) : "", item.sort_order);
+    onUpdate(item, fd, { is_mandatory: nextMandatory });
+  };
+
+  const commitValidity = (item: DocTemplateItem, raw: string) => {
+    const trimmed = raw.trim();
+    const value = trimmed ? Number(trimmed) : null;
+    setValidityDraft((prev) => {
+      const next = { ...prev };
+      delete next[item.document_type_id];
+      return next;
+    });
+    if (value === item.minimum_remaining_validity_days) return;
+    const fd = buildFd(item.is_mandatory, trimmed, item.sort_order);
+    onUpdate(item, fd, { minimum_remaining_validity_days: value });
+  };
+
+  const selectAll = () => {
+    documentTypes.forEach((docType) => {
+      if (!byTypeId.has(docType.id)) toggle(docType, true);
+    });
+  };
+  const deselectAll = () => {
+    documentTypes.forEach((docType) => {
+      if (byTypeId.has(docType.id)) toggle(docType, false);
     });
   };
 
   return (
-    <div className={`${cardCls} p-3 mb-2`} style={cardStyle}>
-      <div className="grid gap-2 sm:grid-cols-3 mb-2">
-        <label className={lbl} style={lblStyle}>
-          Document type
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)} disabled={!!item}>
-            {availableDocTypes.length === 0 && <option value="">No document types left to add</option>}
-            {availableDocTypes.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
-        </label>
-        <label className={lbl} style={lblStyle}>
-          Min remaining validity (days, optional)
-          <input type="number" className={`${inputCls} w-full mt-1`} style={inputStyle} value={minValidity} onChange={(e) => setMinValidity(e.target.value)} />
-        </label>
-        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
-          <input type="checkbox" checked={isMandatory} onChange={(e) => setIsMandatory(e.target.checked)} /> Mandatory
-        </label>
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Documents in this template</div>
+        {documentTypes.length > 0 && (
+          <div className="flex items-center gap-2">
+            <button onClick={selectAll} className="text-xs font-semibold ch-link-navy">Select all</button>
+            <button onClick={deselectAll} className="text-xs font-semibold" style={{ color: "var(--ch-fail)" }}>Deselect all</button>
+          </div>
+        )}
       </div>
-      <div className="flex items-center gap-2">
-        <button onClick={save} disabled={submitted || !documentTypeId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-          Save
-        </button>
-        <button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
-      </div>
+      {documentTypes.length === 0 ? (
+        <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types configured yet.</div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 rounded-lg border p-2" style={{ borderColor: "var(--ch-line)" }}>
+          {documentTypes.map((docType) => {
+            const item = byTypeId.get(docType.id);
+            const selected = !!item;
+            const saving = selected && isTempId(item.id);
+            return (
+              <div key={docType.id} className="flex items-center gap-3 flex-wrap text-xs py-1">
+                <label className="flex items-center gap-2 min-w-[190px]" style={{ color: "var(--ch-ink)" }}>
+                  <input type="checkbox" checked={selected} disabled={saving} onChange={(e) => toggle(docType, e.target.checked)} />
+                  <span className={selected ? "font-semibold" : ""}>{docType.name}</span>
+                </label>
+                {item && (
+                  <>
+                    <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                      <input type="checkbox" checked={item.is_mandatory} disabled={saving} onChange={() => toggleMandatory(item)} /> Mandatory
+                    </label>
+                    <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                      min
+                      <input
+                        type="number"
+                        min={0}
+                        disabled={saving}
+                        className="border rounded px-1.5 py-0.5 w-16 text-xs"
+                        style={{ borderColor: "var(--ch-line)" }}
+                        value={validityDraft[docType.id] ?? item.minimum_remaining_validity_days?.toString() ?? ""}
+                        onChange={(e) => setValidityDraft((prev) => ({ ...prev, [docType.id]: e.target.value }))}
+                        onBlur={(e) => commitValidity(item, e.target.value)}
+                      />
+                      d
+                    </label>
+                    <SavingTag id={item.id} />
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
