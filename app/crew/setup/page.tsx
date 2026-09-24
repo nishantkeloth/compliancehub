@@ -14,7 +14,17 @@ export default async function CrewSetupPage() {
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "crew.manage")) redirect("/");
 
-  const [jobRolesRes, skillsRes, rotationTemplatesRes, documentTypesRes, customFieldDefinitionsRes, clientsRes, documentRequirementsRes] = await Promise.all([
+  const [
+    jobRolesRes,
+    skillsRes,
+    rotationTemplatesRes,
+    documentTypesRes,
+    customFieldDefinitionsRes,
+    clientsRes,
+    documentRequirementsRes,
+    documentTemplatesRes,
+    documentTemplateItemsRes,
+  ] = await Promise.all([
     supabase.from("job_roles").select("id, name, category, is_active").eq("org_id", access.orgId).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
     supabase.from("rotation_templates").select("id, name, pattern_type, days_on, days_off, notes, is_active").eq("org_id", access.orgId).order("name"),
@@ -32,6 +42,16 @@ export default async function CrewSetupPage() {
     supabase
       .from("job_role_document_requirements")
       .select("id, job_role_id, client_id, document_type_id, is_mandatory, minimum_remaining_validity_days, is_excluded, sort_order")
+      .eq("org_id", access.orgId)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("document_requirement_templates")
+      .select("id, name, job_role_id, is_active")
+      .eq("org_id", access.orgId)
+      .order("name"),
+    supabase
+      .from("document_requirement_template_items")
+      .select("id, template_id, document_type_id, is_mandatory, minimum_remaining_validity_days, sort_order")
       .eq("org_id", access.orgId)
       .order("sort_order", { ascending: true }),
   ]);
@@ -55,6 +75,8 @@ export default async function CrewSetupPage() {
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
         clients={clientsRes.data ?? []}
         documentRequirements={documentRequirementsRes.data ?? []}
+        documentTemplates={documentTemplatesRes.data ?? []}
+        documentTemplateItems={documentTemplateItemsRes.data ?? []}
       />
     </>
   );

@@ -22,7 +22,7 @@ import {
 } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
 import AiReviewPanel from "./ai-review-panel";
-import LinesEditor, { type Line, type Ref, type DocTypeRef } from "./lines-editor";
+import LinesEditor, { type Line, type Ref, type DocTypeRef, type DocTemplate } from "./lines-editor";
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
@@ -69,6 +69,7 @@ export default function MatrixDetail({
   skills,
   rotationTemplates,
   documentTypes,
+  documentTemplates,
   staffingCrew,
   candidateStaffingCrew,
   matrixRegion,
@@ -93,6 +94,7 @@ export default function MatrixDetail({
   skills: Ref[];
   rotationTemplates: Ref[];
   documentTypes: DocTypeRef[];
+  documentTemplates: DocTemplate[];
   staffingCrew: StaffingCrew[];
   candidateStaffingCrew: StaffingCrew[];
   matrixRegion?: string | null;
@@ -463,6 +465,7 @@ export default function MatrixDetail({
           skills={skills}
           rotationTemplates={rotationTemplates}
           documentTypes={documentTypes}
+          documentTemplates={documentTemplates}
         />
       )}
 

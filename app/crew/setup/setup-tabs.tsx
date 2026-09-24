@@ -20,6 +20,12 @@ import {
   createJobRoleDocumentRequirement,
   updateJobRoleDocumentRequirement,
   deleteJobRoleDocumentRequirement,
+  createDocumentRequirementTemplate,
+  updateDocumentRequirementTemplate,
+  deleteDocumentRequirementTemplate,
+  createDocumentRequirementTemplateItem,
+  updateDocumentRequirementTemplateItem,
+  deleteDocumentRequirementTemplateItem,
 } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 
@@ -63,8 +69,17 @@ type DocRequirement = {
   is_excluded: boolean;
   sort_order: number;
 };
+export type DocTemplate = { id: string; name: string; job_role_id: string; is_active: boolean };
+export type DocTemplateItem = {
+  id: string;
+  template_id: string;
+  document_type_id: string;
+  is_mandatory: boolean;
+  minimum_remaining_validity_days: number | null;
+  sort_order: number;
+};
 
-const TABS = ["Job Roles", "Skills", "Rotation Templates", "Document Types", "Document Requirements", "Custom Fields"] as const;
+const TABS = ["Job Roles", "Skills", "Rotation Templates", "Document Types", "Document Requirements", "Document Templates", "Custom Fields"] as const;
 type Tab = (typeof TABS)[number];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -125,6 +140,8 @@ export default function SetupTabs({
   customFieldDefinitions,
   clients,
   documentRequirements,
+  documentTemplates,
+  documentTemplateItems,
 }: {
   jobRoles: JobRole[];
   skills: Skill[];
@@ -133,6 +150,8 @@ export default function SetupTabs({
   customFieldDefinitions: CustomFieldDefinition[];
   clients: Client[];
   documentRequirements: DocRequirement[];
+  documentTemplates: DocTemplate[];
+  documentTemplateItems: DocTemplateItem[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
 
@@ -161,6 +180,14 @@ export default function SetupTabs({
       {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} />}
       {tab === "Document Requirements" && (
         <DocumentRequirementsPanel jobRoles={jobRoles} documentTypes={documentTypes} clients={clients} documentRequirements={documentRequirements} />
+      )}
+      {tab === "Document Templates" && (
+        <DocumentTemplatesPanel
+          jobRoles={jobRoles}
+          documentTypes={documentTypes}
+          documentTemplates={documentTemplates}
+          documentTemplateItems={documentTemplateItems}
+        />
       )}
       {tab === "Custom Fields" && (
         <CustomFieldDefinitionsPanel customFieldDefinitions={customFieldDefinitions} documentTypes={documentTypes} />
@@ -1232,6 +1259,430 @@ function RequirementForm({
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/* ================= Document Templates =================
+   Named, reusable document checklists for a role (e.g. "ADNOC
+   Standard" or "ADNOC VIP" for Camp Boss) — a role can have several,
+   picked by hand on a Manning Line inside a crew matrix instead of
+   ticking every document by hand. Distinct from the single silent
+   per-role/per-client default set under "Document Requirements"
+   above, which still applies automatically and is untouched by this. */
+
+function DocumentTemplatesPanel({
+  jobRoles,
+  documentTypes,
+  documentTemplates,
+  documentTemplateItems,
+}: {
+  jobRoles: JobRole[];
+  documentTypes: DocumentType[];
+  documentTemplates: DocTemplate[];
+  documentTemplateItems: DocTemplateItem[];
+}) {
+  const router = useRouter();
+  const templatesList = useOptimisticList(documentTemplates);
+  const itemsList = useOptimisticList(documentTemplateItems);
+  const [, startTransition] = useTransition();
+  const [bgError, setBgError] = useState<string | null>(null);
+  const [roleId, setRoleId] = useState(jobRoles[0]?.id ?? "");
+  const [adding, setAdding] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
+
+  const docTypeName = (id: string) => documentTypes.find((d) => d.id === id)?.name ?? "—";
+  const templatesForRole = templatesList.items.filter((t) => t.job_role_id === roleId);
+  const itemsForTemplate = (templateId: string) =>
+    itemsList.items.filter((i) => i.template_id === templateId).sort((a, b) => a.sort_order - b.sort_order);
+
+  const submitCreateTemplate = (fd: FormData, optimisticItem: DocTemplate) => {
+    setBgError(null);
+    templatesList.addOptimistic(optimisticItem);
+    setAdding(false);
+    setExpandedTemplateId(optimisticItem.id);
+    startTransition(async () => {
+      const res = await createDocumentRequirementTemplate(fd);
+      if (res?.error) {
+        templatesList.removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't add "${optimisticItem.name}": ${res.error}`);
+        return;
+      }
+      if (res?.id) setExpandedTemplateId(res.id);
+      router.refresh();
+    });
+  };
+
+  const submitUpdateTemplate = (template: DocTemplate, fd: FormData, patch: Partial<DocTemplate>) => {
+    setBgError(null);
+    templatesList.updateOptimistic(template.id, patch);
+    setEditingTemplateId(null);
+    startTransition(async () => {
+      const res = await updateDocumentRequirementTemplate(template.id, fd);
+      if (res?.error) {
+        templatesList.updateOptimistic(template.id, template);
+        setBgError(`Couldn't update "${template.name}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDeleteTemplate = (template: DocTemplate, index: number) => {
+    if (!window.confirm(`Delete template "${template.name}"? This also removes its document list.`)) return;
+    setBgError(null);
+    templatesList.removeOptimistic(template.id);
+    if (expandedTemplateId === template.id) setExpandedTemplateId(null);
+    startTransition(async () => {
+      const res = await deleteDocumentRequirementTemplate(template.id);
+      if (res?.error) {
+        templatesList.restoreOptimistic(template, index);
+        setBgError(`Couldn't delete "${template.name}": ${res.error}`);
+      }
+    });
+  };
+
+  const submitCreateItem = (fd: FormData, optimisticItem: DocTemplateItem) => {
+    setBgError(null);
+    itemsList.addOptimistic(optimisticItem);
+    startTransition(async () => {
+      const res = await createDocumentRequirementTemplateItem(fd);
+      if (res?.error) {
+        itemsList.removeOptimistic(optimisticItem.id);
+        setBgError(`Couldn't add "${docTypeName(optimisticItem.document_type_id)}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitUpdateItem = (item: DocTemplateItem, fd: FormData, patch: Partial<DocTemplateItem>) => {
+    setBgError(null);
+    itemsList.updateOptimistic(item.id, patch);
+    startTransition(async () => {
+      const res = await updateDocumentRequirementTemplateItem(item.id, fd);
+      if (res?.error) {
+        itemsList.updateOptimistic(item.id, item);
+        setBgError(`Couldn't update "${docTypeName(item.document_type_id)}": ${res.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const submitDeleteItem = (item: DocTemplateItem, index: number) => {
+    setBgError(null);
+    itemsList.removeOptimistic(item.id);
+    startTransition(async () => {
+      const res = await deleteDocumentRequirementTemplateItem(item.id);
+      if (res?.error) {
+        itemsList.restoreOptimistic(item, index);
+        setBgError(`Couldn't delete "${docTypeName(item.document_type_id)}": ${res.error}`);
+      }
+    });
+  };
+
+  return (
+    <div>
+      <p className="text-sm mb-4" style={{ color: "var(--ch-sub)" }}>
+        Named, reusable document checklists for a role — e.g. &ldquo;ADNOC Standard&rdquo; vs &ldquo;ADNOC
+        VIP&rdquo; for the same Camp Boss role. Unlike the org-wide default under Document Requirements, these
+        are picked by hand on a Manning Line inside a crew matrix, so a role can offer more than one to choose
+        from.
+      </p>
+      <BgErrorBanner error={bgError} />
+
+      <select
+        value={roleId}
+        onChange={(e) => {
+          setRoleId(e.target.value);
+          setAdding(false);
+          setEditingTemplateId(null);
+          setExpandedTemplateId(null);
+        }}
+        className={`${inputCls} mb-4`}
+        style={inputStyle}
+      >
+        {jobRoles.length === 0 && <option value="">No job roles yet</option>}
+        {jobRoles.map((r) => (
+          <option key={r.id} value={r.id}>{r.name}</option>
+        ))}
+      </select>
+
+      {!roleId ? (
+        <div className="text-sm" style={{ color: "var(--ch-sub)" }}>Add a job role first, under the Job Roles tab.</div>
+      ) : (
+        <>
+          {adding ? (
+            <TemplateForm
+              jobRoleId={roleId}
+              onSubmit={(fd, values) => submitCreateTemplate(fd, { id: tempId(), ...values })}
+              onCancel={() => setAdding(false)}
+            />
+          ) : (
+            <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">
+              + New template
+            </button>
+          )}
+
+          <div className="space-y-2">
+            {templatesForRole.length === 0 && (
+              <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No templates for this role yet.</div>
+            )}
+            {templatesForRole.map((t, i) =>
+              editingTemplateId === t.id ? (
+                <TemplateForm
+                  key={t.id}
+                  jobRoleId={roleId}
+                  template={t}
+                  onSubmit={(fd, values) => submitUpdateTemplate(t, fd, values)}
+                  onCancel={() => setEditingTemplateId(null)}
+                />
+              ) : (
+                <div key={t.id} className={`${cardCls} p-3`} style={cardStyle}>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex-1 min-w-[160px]">
+                      <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{t.name}</span>
+                      <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
+                        {itemsForTemplate(t.id).length} document{itemsForTemplate(t.id).length === 1 ? "" : "s"}
+                      </span>
+                      {!t.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
+                      <SavingTag id={t.id} />
+                    </div>
+                    <button
+                      onClick={() => setExpandedTemplateId(expandedTemplateId === t.id ? null : t.id)}
+                      disabled={isTempId(t.id)}
+                      className="text-xs font-semibold disabled:opacity-40 ch-link-navy"
+                    >
+                      {expandedTemplateId === t.id ? "Hide documents" : "Manage documents"}
+                    </button>
+                    <button onClick={() => setEditingTemplateId(t.id)} disabled={isTempId(t.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>
+                      Edit
+                    </button>
+                    <DeleteButton onConfirm={() => submitDeleteTemplate(t, i)} disabled={isTempId(t.id)} label="template" />
+                  </div>
+
+                  {expandedTemplateId === t.id && (
+                    <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
+                      <TemplateItemsEditor
+                        templateId={t.id}
+                        documentTypes={documentTypes}
+                        items={itemsForTemplate(t.id)}
+                        docTypeName={docTypeName}
+                        onCreate={submitCreateItem}
+                        onUpdate={submitUpdateItem}
+                        onDelete={submitDeleteItem}
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TemplateForm({
+  jobRoleId,
+  template,
+  onSubmit,
+  onCancel,
+}: {
+  jobRoleId: string;
+  template?: DocTemplate;
+  onSubmit: (fd: FormData, values: Omit<DocTemplate, "id">) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(template?.name ?? "");
+  const [isActive, setIsActive] = useState(template?.is_active ?? true);
+  const [submitted, setSubmitted] = useState(false);
+
+  const save = () => {
+    if (!name.trim() || submitted) return;
+    const fd = new FormData();
+    fd.set("name", name.trim());
+    fd.set("jobRoleId", jobRoleId);
+    if (isActive) fd.set("isActive", "on");
+    setSubmitted(true);
+    onSubmit(fd, { name: name.trim(), job_role_id: jobRoleId, is_active: isActive });
+  };
+
+  return (
+    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      <div className="flex items-end gap-2 flex-wrap">
+        <label className={`${lbl} flex-1 min-w-[200px]`} style={lblStyle}>
+          Template name
+          <input
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            placeholder="e.g. ADNOC document requirement"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+        </label>
+        {template && (
+          <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+            <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
+          </label>
+        )}
+        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Save
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function TemplateItemsEditor({
+  templateId,
+  documentTypes,
+  items,
+  docTypeName,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  templateId: string;
+  documentTypes: DocumentType[];
+  items: DocTemplateItem[];
+  docTypeName: (id: string) => string;
+  onCreate: (fd: FormData, optimisticItem: DocTemplateItem) => void;
+  onUpdate: (item: DocTemplateItem, fd: FormData, patch: Partial<DocTemplateItem>) => void;
+  onDelete: (item: DocTemplateItem, index: number) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  return (
+    <div>
+      {adding ? (
+        <TemplateItemForm
+          templateId={templateId}
+          documentTypes={documentTypes}
+          existing={items}
+          onSubmit={(fd, values) => {
+            onCreate(fd, { id: tempId(), ...values });
+            setAdding(false);
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      ) : (
+        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold mb-3" disabled={documentTypes.length === items.length}>
+          + Add document
+        </button>
+      )}
+      <div className="space-y-1.5">
+        {items.length === 0 && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No documents in this template yet.</div>}
+        {items.map((it, i) =>
+          editingId === it.id ? (
+            <TemplateItemForm
+              key={it.id}
+              templateId={templateId}
+              documentTypes={documentTypes}
+              existing={items}
+              item={it}
+              onSubmit={(fd, values) => {
+                onUpdate(it, fd, values);
+                setEditingId(null);
+              }}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <div key={it.id} className="flex items-center gap-2 text-sm">
+              <span style={{ color: "var(--ch-ink)" }}>
+                {docTypeName(it.document_type_id)}
+                {it.is_mandatory && " *"}
+              </span>
+              {it.minimum_remaining_validity_days != null && (
+                <span className="text-xs" style={{ color: "var(--ch-sub)" }}>min {it.minimum_remaining_validity_days}d remaining</span>
+              )}
+              <SavingTag id={it.id} />
+              <button onClick={() => setEditingId(it.id)} disabled={isTempId(it.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>
+                Edit
+              </button>
+              <button onClick={() => onDelete(it, i)} disabled={isTempId(it.id)} className="text-xs disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>
+                Remove
+              </button>
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TemplateItemForm({
+  templateId,
+  documentTypes,
+  existing,
+  item,
+  onSubmit,
+  onCancel,
+}: {
+  templateId: string;
+  documentTypes: DocumentType[];
+  existing: DocTemplateItem[];
+  item?: DocTemplateItem;
+  onSubmit: (fd: FormData, values: Omit<DocTemplateItem, "id">) => void;
+  onCancel: () => void;
+}) {
+  const usedDocTypeIds = new Set(existing.filter((e) => e.id !== item?.id).map((e) => e.document_type_id));
+  const availableDocTypes = item ? documentTypes : documentTypes.filter((d) => !usedDocTypeIds.has(d.id));
+  const [documentTypeId, setDocumentTypeId] = useState(item?.document_type_id ?? availableDocTypes[0]?.id ?? "");
+  const [isMandatory, setIsMandatory] = useState(item?.is_mandatory ?? true);
+  const [minValidity, setMinValidity] = useState(item?.minimum_remaining_validity_days != null ? String(item.minimum_remaining_validity_days) : "");
+  const [submitted, setSubmitted] = useState(false);
+
+  const save = () => {
+    if (!documentTypeId || submitted) return;
+    const fd = new FormData();
+    fd.set("templateId", templateId);
+    fd.set("documentTypeId", documentTypeId);
+    fd.set("isMandatory", isMandatory ? "on" : "off");
+    fd.set("minimumRemainingValidityDays", minValidity);
+    fd.set("sortOrder", String(item?.sort_order ?? existing.length));
+    setSubmitted(true);
+    onSubmit(fd, {
+      template_id: templateId,
+      document_type_id: documentTypeId,
+      is_mandatory: isMandatory,
+      minimum_remaining_validity_days: minValidity ? Number(minValidity) : null,
+      sort_order: item?.sort_order ?? existing.length,
+    });
+  };
+
+  return (
+    <div className={`${cardCls} p-3 mb-2`} style={cardStyle}>
+      <div className="grid gap-2 sm:grid-cols-3 mb-2">
+        <label className={lbl} style={lblStyle}>
+          Document type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={documentTypeId} onChange={(e) => setDocumentTypeId(e.target.value)} disabled={!!item}>
+            {availableDocTypes.length === 0 && <option value="">No document types left to add</option>}
+            {availableDocTypes.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Min remaining validity (days, optional)
+          <input type="number" className={`${inputCls} w-full mt-1`} style={inputStyle} value={minValidity} onChange={(e) => setMinValidity(e.target.value)} />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isMandatory} onChange={(e) => setIsMandatory(e.target.checked)} /> Mandatory
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={submitted || !documentTypeId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+          Save
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
     </div>
   );

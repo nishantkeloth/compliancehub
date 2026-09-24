@@ -58,6 +58,8 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       { data: fieldDefs },
       { data: stagedChanges },
       { data: manningRequirements },
+      { data: documentTemplates },
+      { data: documentTemplateItems },
     ],
     workflowStage,
   ] = await Promise.all([
@@ -134,6 +136,19 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       .select("id, offshore_site_id, job_role_id, minimum_headcount")
       .eq("org_id", access.orgId)
       .eq("offshore_site_id", matrix.offshore_site_id),
+    // Named, reusable document requirement templates (distinct from the
+    // silent per-role/per-client default in job_role_document_requirements)
+    // — offered on the Lines tab as an "Apply template" pick, per role.
+    supabase
+      .from("document_requirement_templates")
+      .select("id, name, job_role_id")
+      .eq("org_id", access.orgId)
+      .eq("is_active", true)
+      .order("name"),
+    supabase
+      .from("document_requirement_template_items")
+      .select("id, template_id, document_type_id, is_mandatory, minimum_remaining_validity_days")
+      .eq("org_id", access.orgId),
     ]),
     // The current stage of this matrix's in-progress approval workflow
     // (see lib/workflow.ts) — null once it's approved/rejected/cancelled,
@@ -511,6 +526,22 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     };
   });
 
+  // Named document requirement templates, nested with their items so
+  // LinesEditor can filter by a line's job_role_id and hand the matching
+  // ones to DocumentsPanel's "Apply template" control.
+  const documentTemplatesWithItems = (documentTemplates ?? []).map((t) => ({
+    id: t.id as string,
+    name: t.name as string,
+    job_role_id: t.job_role_id as string,
+    items: (documentTemplateItems ?? [])
+      .filter((i) => i.template_id === t.id)
+      .map((i) => ({
+        document_type_id: i.document_type_id as string,
+        is_mandatory: i.is_mandatory as boolean,
+        minimum_remaining_validity_days: i.minimum_remaining_validity_days as number | null,
+      })),
+  }));
+
   return (
     <MatrixDetail
       matrix={{
@@ -549,6 +580,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         job_role_id: m.job_role_id as string,
         minimum_headcount: m.minimum_headcount as number,
       }))}
+      documentTemplates={documentTemplatesWithItems}
       lines={rows}
       history={allVersionsHistory ?? []}
       versions={(versions ?? []).map((v) => ({ id: v.id as string, version_number: v.version_number as number, status: v.status as string, created_at: v.created_at as string }))}

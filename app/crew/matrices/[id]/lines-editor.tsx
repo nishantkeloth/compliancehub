@@ -20,6 +20,15 @@ import {
 } from "../actions";
 
 export type Ref = { id: string; name: string };
+// Named, reusable document requirement templates (Crew Setup → Document
+// Templates), offered per role on a Manning Line's document checklist so
+// the user can pick one instead of ticking every document by hand.
+export type DocTemplate = {
+  id: string;
+  name: string;
+  job_role_id: string;
+  items: { document_type_id: string; is_mandatory: boolean; minimum_remaining_validity_days: number | null }[];
+};
 // Document types as needed by the Staffing Plan tab (status computation +
 // number display), a superset of Ref — passing this where Ref[] is
 // expected (LinesEditor) is fine, TS structurally allows the wider shape.
@@ -114,6 +123,7 @@ export default function LinesEditor({
   skills,
   rotationTemplates,
   documentTypes,
+  documentTemplates,
 }: {
   crewMatrixId: string;
   lines: Line[];
@@ -130,6 +140,7 @@ export default function LinesEditor({
   skills: Ref[];
   rotationTemplates: Ref[];
   documentTypes: Ref[];
+  documentTemplates: DocTemplate[];
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -302,7 +313,15 @@ export default function LinesEditor({
               </div>
               {expandedId === line.id && (
                 <div className="border-t p-3" style={{ borderColor: "var(--ch-line)" }}>
-                  <LineRequirements crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} skills={skills} documentTypes={documentTypes} onChange={refresh} />
+                  <LineRequirements
+                    crewMatrixId={crewMatrixId}
+                    line={line}
+                    canEdit={canEdit}
+                    skills={skills}
+                    documentTypes={documentTypes}
+                    documentTemplates={documentTemplates}
+                    onChange={refresh}
+                  />
                 </div>
               )}
             </div>
@@ -438,6 +457,7 @@ function LineRequirements({
   canEdit,
   skills,
   documentTypes,
+  documentTemplates,
   onChange,
 }: {
   crewMatrixId: string;
@@ -445,6 +465,7 @@ function LineRequirements({
   canEdit: boolean;
   skills: Ref[];
   documentTypes: Ref[];
+  documentTemplates: DocTemplate[];
   onChange: () => void;
 }) {
   const [, startTransition] = useTransition();
@@ -475,7 +496,14 @@ function LineRequirements({
       {error && <div className="text-sm sm:col-span-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
 
       <SkillsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} skills={skills} run={run} />
-      <DocumentsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} documentTypes={documentTypes} onChange={onChange} />
+      <DocumentsPanel
+        crewMatrixId={crewMatrixId}
+        line={line}
+        canEdit={canEdit}
+        documentTypes={documentTypes}
+        documentTemplates={documentTemplates.filter((t) => t.job_role_id === line.job_role_id)}
+        onChange={onChange}
+      />
       <CompetenciesPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} run={run} />
       <ClientRequirementsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} run={run} />
     </div>
@@ -533,12 +561,14 @@ function DocumentsPanel({
   line,
   canEdit,
   documentTypes,
+  documentTemplates,
   onChange,
 }: {
   crewMatrixId: string;
   line: Line;
   canEdit: boolean;
   documentTypes: Ref[];
+  documentTemplates: DocTemplate[];
   onChange: () => void;
 }) {
   // Local state, not tied to a full-page refresh: a checkbox toggle used to
@@ -554,6 +584,7 @@ function DocumentsPanel({
   // eventually — it just no longer gates what this panel shows.
   const [docs, setDocs] = useState<DocRow[]>(line.documents);
   const [error, setError] = useState<string | null>(null);
+  const [templateId, setTemplateId] = useState(documentTemplates[0]?.id ?? "");
   const byTypeId = new Map(docs.map((d) => [d.document_type_id, d]));
   // A just-checked row shows instantly with a placeholder id (not a real
   // UUID) until its insert comes back. If "Mandatory" or the checkbox
@@ -568,31 +599,41 @@ function DocumentsPanel({
     return pendingAdds.current.get(doc.id) ?? Promise.resolve(undefined);
   };
 
+  // Generalized so both a plain checkbox click (mandatory, no validity) and
+  // "Apply template" (which may carry its own mandatory/validity values)
+  // can share the same optimistic-add + server-insert path.
+  const addDoc = (docTypeId: string, opts?: { isMandatory?: boolean; minimumRemainingValidityDays?: number | null }) => {
+    const isMandatory = opts?.isMandatory ?? true;
+    const minValidity = opts?.minimumRemainingValidityDays ?? null;
+    const tempId = `optimistic-${docTypeId}`;
+    setDocs((prev) => [
+      ...prev,
+      { id: tempId, document_type_id: docTypeId, name: "", minimum_remaining_validity_days: minValidity, is_mandatory: isMandatory, waiver_permitted: false },
+    ]);
+    const fd = new FormData();
+    fd.set("documentTypeId", docTypeId);
+    fd.set("minimumRemainingValidityDays", minValidity != null ? String(minValidity) : "");
+    if (!isMandatory) fd.set("isMandatory", "off");
+    const pending = addLineDocument(line.id, crewMatrixId, fd).then((res) => {
+      if (res?.error) {
+        setError(res.error);
+        setDocs((prev) => prev.filter((d) => d.id !== tempId));
+        return undefined;
+      }
+      const realId = res?.id;
+      if (realId) {
+        setDocs((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: realId } : d)));
+      }
+      onChange();
+      return realId;
+    });
+    pendingAdds.current.set(tempId, pending);
+  };
+
   const toggleSelected = (docTypeId: string, checked: boolean) => {
     setError(null);
     if (checked) {
-      const tempId = `optimistic-${docTypeId}`;
-      setDocs((prev) => [
-        ...prev,
-        { id: tempId, document_type_id: docTypeId, name: "", minimum_remaining_validity_days: null, is_mandatory: true, waiver_permitted: false },
-      ]);
-      const fd = new FormData();
-      fd.set("documentTypeId", docTypeId);
-      fd.set("minimumRemainingValidityDays", "");
-      const pending = addLineDocument(line.id, crewMatrixId, fd).then((res) => {
-        if (res?.error) {
-          setError(res.error);
-          setDocs((prev) => prev.filter((d) => d.id !== tempId));
-          return undefined;
-        }
-        const realId = res?.id;
-        if (realId) {
-          setDocs((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: realId } : d)));
-        }
-        onChange();
-        return realId;
-      });
-      pendingAdds.current.set(tempId, pending);
+      addDoc(docTypeId);
     } else {
       const existing = byTypeId.get(docTypeId);
       if (!existing) return;
@@ -636,6 +677,41 @@ function DocumentsPanel({
     });
   };
 
+  // Apply a named template (Crew Setup → Document Templates): for a document
+  // type not yet on this line, add it with the template's mandatory/validity
+  // values (via addDoc); for one already on the line, sync those two values
+  // to match the template rather than skipping it. Never removes a document
+  // that's on the line but not in the template — this only fills in/updates,
+  // it doesn't wholesale replace the checklist.
+  const applyTemplateItem = (item: DocTemplate["items"][number]) => {
+    setError(null);
+    const existing = byTypeId.get(item.document_type_id);
+    if (!existing) {
+      addDoc(item.document_type_id, { isMandatory: item.is_mandatory, minimumRemainingValidityDays: item.minimum_remaining_validity_days });
+      return;
+    }
+    setDocs((prev) =>
+      prev.map((d) => (d.id === existing.id ? { ...d, is_mandatory: item.is_mandatory, minimum_remaining_validity_days: item.minimum_remaining_validity_days } : d))
+    );
+    resolveRealId(existing).then((realId) => {
+      if (!realId) return;
+      const fd = new FormData();
+      fd.set("minimumRemainingValidityDays", item.minimum_remaining_validity_days != null ? String(item.minimum_remaining_validity_days) : "");
+      if (!item.is_mandatory) fd.set("isMandatory", "off");
+      if (existing.waiver_permitted) fd.set("waiverPermitted", "on");
+      updateLineDocument(realId, crewMatrixId, fd).then((res) => {
+        if (res?.error) {
+          setError(res.error);
+          return;
+        }
+        onChange();
+      });
+    });
+  };
+  const applyTemplate = (template: DocTemplate) => {
+    template.items.forEach(applyTemplateItem);
+  };
+
   // Adds every document type not yet on this line, and removes every one
   // that is — both just replay toggleSelected per row, so each still goes
   // through the same local-state + server-action path as a manual click.
@@ -661,6 +737,26 @@ function DocumentsPanel({
           </div>
         )}
       </div>
+      {canEdit && documentTemplates.length > 0 && (
+        <div className="flex items-center gap-2 mb-2">
+          <select className={`${inputCls} flex-1`} style={inputStyle} value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+            {documentTemplates.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => {
+              const template = documentTemplates.find((t) => t.id === templateId);
+              if (template) applyTemplate(template);
+            }}
+            disabled={!templateId}
+            className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50"
+            title="Fills in / updates this role's documents from the template — doesn't remove anything already checked."
+          >
+            Apply template
+          </button>
+        </div>
+      )}
       {error && <div className="text-xs mb-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
       {documentTypes.length === 0 ? (
         <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No document types configured yet.</div>

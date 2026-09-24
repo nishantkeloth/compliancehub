@@ -463,3 +463,105 @@ export async function deleteJobRoleDocumentRequirement(id: string) {
   revalidateSetup();
   return {};
 }
+
+/* ---------------- Document requirement templates ----------------
+   Named, reusable per-role document checklists (e.g. "ADNOC Standard"
+   for Camp Boss) — distinct from the single silent org-wide/per-client
+   default above. A role can have several of these; they're picked by
+   hand on a Manning Line inside a crew matrix (see the "Apply
+   template" control in lines-editor.tsx's DocumentsPanel), which just
+   replays the same addLineDocument/updateLineDocument calls a manual
+   checkbox click would. */
+
+export async function createDocumentRequirementTemplate(formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const name = str(formData, "name");
+  const jobRoleId = str(formData, "jobRoleId");
+  if (!name || !jobRoleId) return { error: "Template name and job role are required." };
+
+  const { data, error } = await supabase
+    .from("document_requirement_templates")
+    .insert({ org_id: access.orgId, name, job_role_id: jobRoleId, created_by: userId, updated_by: userId })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23505") return { error: "A template with this name already exists for this role." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  return { id: data.id as string };
+}
+
+export async function updateDocumentRequirementTemplate(id: string, formData: FormData) {
+  const { supabase, userId } = await requireCrewManage();
+  const name = str(formData, "name");
+  const jobRoleId = str(formData, "jobRoleId");
+  if (!name || !jobRoleId) return { error: "Template name and job role are required." };
+
+  const { error } = await supabase
+    .from("document_requirement_templates")
+    .update({ name, job_role_id: jobRoleId, is_active: formData.get("isActive") === "on", updated_by: userId })
+    .eq("id", id);
+  if (error) {
+    if (error.code === "23505") return { error: "A template with this name already exists for this role." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  return {};
+}
+
+export async function deleteDocumentRequirementTemplate(id: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("document_requirement_templates").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function createDocumentRequirementTemplateItem(formData: FormData) {
+  const { supabase, access } = await requireCrewManage();
+  const templateId = str(formData, "templateId");
+  const documentTypeId = str(formData, "documentTypeId");
+  if (!templateId || !documentTypeId) return { error: "Document type is required." };
+  const validityRaw = str(formData, "minimumRemainingValidityDays");
+
+  const { error } = await supabase.from("document_requirement_template_items").insert({
+    org_id: access.orgId,
+    template_id: templateId,
+    document_type_id: documentTypeId,
+    is_mandatory: formData.get("isMandatory") !== "off",
+    minimum_remaining_validity_days: validityRaw ? Number(validityRaw) : null,
+    sort_order: Number(str(formData, "sortOrder") || "0"),
+  });
+  if (error) {
+    if (error.code === "23505") return { error: "This document is already in the template." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  return {};
+}
+
+export async function updateDocumentRequirementTemplateItem(id: string, formData: FormData) {
+  const { supabase } = await requireCrewManage();
+  const validityRaw = str(formData, "minimumRemainingValidityDays");
+
+  const { error } = await supabase
+    .from("document_requirement_template_items")
+    .update({
+      is_mandatory: formData.get("isMandatory") !== "off",
+      minimum_remaining_validity_days: validityRaw ? Number(validityRaw) : null,
+      sort_order: Number(str(formData, "sortOrder") || "0"),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+export async function deleteDocumentRequirementTemplateItem(id: string) {
+  const { supabase } = await requireCrewManage();
+  const { error } = await supabase.from("document_requirement_template_items").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
