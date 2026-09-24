@@ -133,7 +133,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     // so they can be set/edited directly from the matrix without leaving it.
     supabase
       .from("site_manning_requirements")
-      .select("id, offshore_site_id, job_role_id, minimum_headcount")
+      .select("id, offshore_site_id, job_role_id, minimum_headcount, preferred_document_template_id")
       .eq("org_id", access.orgId)
       .eq("offshore_site_id", matrix.offshore_site_id),
     // Named, reusable document requirement templates (distinct from the
@@ -579,6 +579,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         offshore_site_id: m.offshore_site_id as string,
         job_role_id: m.job_role_id as string,
         minimum_headcount: m.minimum_headcount as number,
+        preferred_document_template_id: m.preferred_document_template_id as string | null,
       }))}
       documentTemplates={documentTemplatesWithItems}
       lines={rows}

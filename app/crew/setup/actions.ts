@@ -231,11 +231,22 @@ export async function setManningRequirement(offshoreSiteId: string, formData: Fo
   if (!Number.isFinite(minimumHeadcount) || minimumHeadcount < 1) {
     return { error: "Minimum headcount must be at least 1." };
   }
+  // Optional — which named Document Requirement Template (see
+  // document_requirement_templates) this role should use when a matrix is
+  // generated from manning requirements. Left unset, generation falls back
+  // to the org-wide/per-client default the same as before this existed.
+  const preferredDocumentTemplateId = optStr(formData, "preferredDocumentTemplateId");
 
   const { error } = await supabase
     .from("site_manning_requirements")
     .upsert(
-      { org_id: access.orgId, offshore_site_id: offshoreSiteId, job_role_id: jobRoleId, minimum_headcount: minimumHeadcount },
+      {
+        org_id: access.orgId,
+        offshore_site_id: offshoreSiteId,
+        job_role_id: jobRoleId,
+        minimum_headcount: minimumHeadcount,
+        preferred_document_template_id: preferredDocumentTemplateId,
+      },
       { onConflict: "offshore_site_id,job_role_id" }
     );
   if (error) return { error: error.message };
@@ -263,7 +274,7 @@ export async function copyManningRequirements(fromOffshoreSiteId: string, toOffs
 
   const { data: source, error: sourceError } = await supabase
     .from("site_manning_requirements")
-    .select("job_role_id, minimum_headcount")
+    .select("job_role_id, minimum_headcount, preferred_document_template_id")
     .eq("offshore_site_id", fromOffshoreSiteId)
     .eq("org_id", access.orgId);
   if (sourceError) return { error: sourceError.message };
@@ -275,6 +286,7 @@ export async function copyManningRequirements(fromOffshoreSiteId: string, toOffs
       offshore_site_id: toOffshoreSiteId,
       job_role_id: r.job_role_id,
       minimum_headcount: r.minimum_headcount,
+      preferred_document_template_id: r.preferred_document_template_id,
     })),
     { onConflict: "offshore_site_id,job_role_id" }
   );

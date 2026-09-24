@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setManningRequirement, deleteManningRequirement } from "@/app/crew/setup/actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
-import type { Ref } from "./lines-editor";
+import type { Ref, DocTemplate } from "./lines-editor";
 
 export type SiteInfo = {
   id: string;
@@ -17,21 +17,16 @@ export type SiteInfo = {
   crew_change_location: string | null;
   status: string | null;
 };
-export type ManningReq = { id: string; offshore_site_id: string; job_role_id: string; minimum_headcount: number };
+export type ManningReq = {
+  id: string;
+  offshore_site_id: string;
+  job_role_id: string;
+  minimum_headcount: number;
+  preferred_document_template_id: string | null;
+};
 
-const inputCls = "border rounded-lg px-3 py-2 text-sm";
-const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
-
-function ErrorLine({ error }: { error: string | null }) {
-  if (!error) return null;
-  return (
-    <div className="text-xs mt-1.5" style={{ color: "var(--ch-fail)" }}>
-      {error}
-    </div>
-  );
-}
 
 function BgErrorBanner({ error }: { error: string | null }) {
   if (!error) return null;
@@ -65,41 +60,86 @@ export default function SiteTab({
   site,
   jobRoles,
   manningRequirements,
+  documentTemplates,
   canManageManning,
 }: {
   site: SiteInfo;
   jobRoles: Ref[];
   manningRequirements: ManningReq[];
+  documentTemplates: DocTemplate[];
   canManageManning: boolean;
 }) {
   const router = useRouter();
-  const { items, addOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(manningRequirements);
+  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(manningRequirements);
   const [, startTransition] = useTransition();
-  const [jobRoleId, setJobRoleId] = useState("");
-  const [headcount, setHeadcount] = useState("1");
-  const [error, setError] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
+  // Local text state for the headcount inputs, keyed by job role, so typing
+  // doesn't save on every keystroke — committed onBlur.
+  const [headcountDraft, setHeadcountDraft] = useState<Record<string, string>>({});
 
-  const add = () => {
-    if (!jobRoleId) return;
-    setError(null);
-    setBgError(null);
+  const byRoleId = new Map(items.map((r) => [r.job_role_id, r]));
+
+  // Every save is a full-row upsert (site_manning_requirements is unique on
+  // offshore_site_id + job_role_id) — always sends the row's current
+  // headcount and template together, so updating one never clobbers the
+  // other back to blank.
+  const submit = (jobRoleId: string, minimumHeadcount: number, preferredDocumentTemplateId: string | null) => {
     const fd = new FormData();
     fd.set("jobRoleId", jobRoleId);
-    fd.set("minimumHeadcount", headcount);
-    const optimisticItem: ManningReq = {
-      id: tempId(),
-      offshore_site_id: site.id,
-      job_role_id: jobRoleId,
-      minimum_headcount: Number(headcount) || 1,
-    };
-    addOptimistic(optimisticItem);
-    setJobRoleId("");
-    setHeadcount("1");
+    fd.set("minimumHeadcount", String(minimumHeadcount));
+    if (preferredDocumentTemplateId) fd.set("preferredDocumentTemplateId", preferredDocumentTemplateId);
+    return setManningRequirement(site.id, fd);
+  };
+
+  const toggle = (role: Ref, checked: boolean) => {
+    setBgError(null);
+    if (checked) {
+      const optimisticItem: ManningReq = {
+        id: tempId(),
+        offshore_site_id: site.id,
+        job_role_id: role.id,
+        minimum_headcount: 1,
+        preferred_document_template_id: null,
+      };
+      addOptimistic(optimisticItem);
+      startTransition(async () => {
+        const res = await submit(role.id, 1, null);
+        if (res?.error) {
+          removeOptimistic(optimisticItem.id);
+          setBgError(res.error);
+          return;
+        }
+        router.refresh();
+      });
+    } else {
+      const existing = byRoleId.get(role.id);
+      if (!existing || isTempId(existing.id)) return;
+      const index = items.findIndex((r) => r.id === existing.id);
+      removeOptimistic(existing.id);
+      startTransition(async () => {
+        const res = await deleteManningRequirement(existing.id);
+        if (res?.error) {
+          restoreOptimistic(existing, index);
+          setBgError(res.error);
+        }
+      });
+    }
+  };
+
+  const commitHeadcount = (req: ManningReq, raw: string) => {
+    setHeadcountDraft((prev) => {
+      const next = { ...prev };
+      delete next[req.job_role_id];
+      return next;
+    });
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 1 || value === req.minimum_headcount) return;
+    setBgError(null);
+    updateOptimistic(req.id, { minimum_headcount: value });
     startTransition(async () => {
-      const res = await setManningRequirement(site.id, fd);
+      const res = await submit(req.job_role_id, value, req.preferred_document_template_id);
       if (res?.error) {
-        removeOptimistic(optimisticItem.id);
+        updateOptimistic(req.id, { minimum_headcount: req.minimum_headcount });
         setBgError(res.error);
         return;
       }
@@ -107,15 +147,18 @@ export default function SiteTab({
     });
   };
 
-  const remove = (req: ManningReq, index: number) => {
+  const setTemplate = (req: ManningReq, templateId: string) => {
     setBgError(null);
-    removeOptimistic(req.id);
+    const nextTemplateId = templateId || null;
+    updateOptimistic(req.id, { preferred_document_template_id: nextTemplateId });
     startTransition(async () => {
-      const res = await deleteManningRequirement(req.id);
+      const res = await submit(req.job_role_id, req.minimum_headcount, nextTemplateId);
       if (res?.error) {
-        restoreOptimistic(req, index);
+        updateOptimistic(req.id, { preferred_document_template_id: req.preferred_document_template_id });
         setBgError(res.error);
+        return;
       }
+      router.refresh();
     });
   };
 
@@ -142,49 +185,71 @@ export default function SiteTab({
           Manning requirements
         </div>
         <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-          The site&rsquo;s standing minimum headcount per role — used when generating a matrix from manning
-          requirements, and shared with the Offshore Sites page.
+          Check off every role this site needs, with its minimum headcount — used when generating a matrix
+          from manning requirements, and shared with the Offshore Sites page. Optionally pick a document
+          template per role too, so a generated matrix&rsquo;s line for that role starts with that
+          template&rsquo;s document checklist already applied.
         </div>
-        {canManageManning && (
-          <div className="flex items-center gap-2 flex-wrap mb-3">
-            <select className={inputCls} style={inputStyle} value={jobRoleId} onChange={(e) => setJobRoleId(e.target.value)}>
-              <option value="">Select job role…</option>
-              {jobRoles.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={1}
-              className={`${inputCls} w-24`}
-              style={inputStyle}
-              value={headcount}
-              onChange={(e) => setHeadcount(e.target.value)}
-            />
-            <button onClick={add} disabled={!jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-              Set requirement
-            </button>
+        <BgErrorBanner error={bgError} />
+        {jobRoles.length === 0 ? (
+          <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No job roles configured yet — add some under Crew Setup.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {jobRoles.map((role) => {
+              const req = byRoleId.get(role.id);
+              const selected = !!req;
+              const saving = !!req && isTempId(req.id);
+              const templatesForRole = documentTemplates.filter((t) => t.job_role_id === role.id);
+              return (
+                <div key={role.id} className="flex items-center gap-3 flex-wrap text-xs py-1">
+                  <label className="flex items-center gap-2 min-w-[160px]" style={{ color: "var(--ch-ink)" }}>
+                    <input type="checkbox" checked={selected} disabled={!canManageManning || saving} onChange={(e) => toggle(role, e.target.checked)} />
+                    <span className={selected ? "font-semibold" : ""}>{role.name}</span>
+                  </label>
+                  {req && (
+                    <>
+                      <label className="flex items-center gap-1" style={{ color: "var(--ch-sub)" }}>
+                        min headcount
+                        <input
+                          type="number"
+                          min={1}
+                          disabled={!canManageManning || saving}
+                          className="border rounded px-1.5 py-0.5 w-16 text-xs"
+                          style={{ borderColor: "var(--ch-line)" }}
+                          value={headcountDraft[role.id] ?? req.minimum_headcount.toString()}
+                          onChange={(e) => setHeadcountDraft((prev) => ({ ...prev, [role.id]: e.target.value }))}
+                          onBlur={(e) => commitHeadcount(req, e.target.value)}
+                        />
+                      </label>
+                      {templatesForRole.length > 0 &&
+                        (canManageManning ? (
+                          <select
+                            className="border rounded-lg px-2 py-1 text-xs"
+                            style={{ borderColor: "var(--ch-line)" }}
+                            disabled={saving}
+                            value={req.preferred_document_template_id ?? ""}
+                            onChange={(e) => setTemplate(req, e.target.value)}
+                          >
+                            <option value="">No document template</option>
+                            {templatesForRole.map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          req.preferred_document_template_id && (
+                            <span style={{ color: "var(--ch-sub)" }}>
+                              {templatesForRole.find((t) => t.id === req.preferred_document_template_id)?.name ?? "Template"}
+                            </span>
+                          )
+                        ))}
+                      <SavingTag id={req.id} />
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
-        <ErrorLine error={error} />
-        <BgErrorBanner error={bgError} />
-        <div className="space-y-1.5">
-          {items.length === 0 && (
-            <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No manning requirements set for this site yet.</div>
-          )}
-          {items.map((r, i) => (
-            <div key={r.id} className="flex items-center gap-2 text-sm">
-              <span style={{ color: "var(--ch-ink)" }}>{jobRoles.find((j) => j.id === r.job_role_id)?.name ?? "Unknown role"}</span>
-              <span style={{ color: "var(--ch-sub)" }}>min {r.minimum_headcount}</span>
-              <SavingTag id={r.id} />
-              {canManageManning && (
-                <button onClick={() => remove(r, i)} disabled={isTempId(r.id)} className="text-xs disabled:opacity-40" style={{ color: "var(--ch-fail)" }}>
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );

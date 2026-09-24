@@ -474,6 +474,7 @@ export default function MatrixDetail({
           site={site}
           jobRoles={jobRoles}
           manningRequirements={manningRequirements}
+          documentTemplates={documentTemplates}
           canManageManning={canAssignCrew}
         />
       )}

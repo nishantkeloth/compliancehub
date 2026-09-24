@@ -118,6 +118,48 @@ async function seedLineDocumentsFromTemplate(supabase: Supa, orgId: string, clie
   await supabase.from("crew_matrix_line_documents").insert(rows);
 }
 
+// Site manning requirements (site_manning_requirements) can each carry a
+// preferred named Document Requirement Template (see
+// document_requirement_templates) — set on the crew matrix's Site tab, or
+// on Offshore Sites. Applied here, after seedLineDocumentsFromTemplate
+// above, so an explicit per-role template choice at the site wins over the
+// generic org-wide/per-client default for any document type both define.
+// Upserts (never removes) — same non-destructive contract as the Lines
+// tab's manual "Apply template" button.
+async function applyPreferredDocumentTemplates(supabase: Supa, orgId: string, lines: { id: string; preferred_document_template_id: string | null }[]) {
+  const templateIds = [...new Set(lines.map((l) => l.preferred_document_template_id).filter((id): id is string => !!id))];
+  if (templateIds.length === 0) return;
+
+  const { data: items } = await supabase
+    .from("document_requirement_template_items")
+    .select("template_id, document_type_id, is_mandatory, minimum_remaining_validity_days")
+    .eq("org_id", orgId)
+    .in("template_id", templateIds);
+  if (!items || items.length === 0) return;
+
+  const itemsByTemplate = new Map<string, typeof items>();
+  for (const it of items) {
+    const arr = itemsByTemplate.get(it.template_id as string) ?? [];
+    arr.push(it);
+    itemsByTemplate.set(it.template_id as string, arr);
+  }
+
+  const rows = lines.flatMap((line) => {
+    if (!line.preferred_document_template_id) return [];
+    const templateItems = itemsByTemplate.get(line.preferred_document_template_id) ?? [];
+    return templateItems.map((it) => ({
+      org_id: orgId,
+      line_id: line.id,
+      document_type_id: it.document_type_id as string,
+      is_mandatory: it.is_mandatory as boolean,
+      minimum_remaining_validity_days: it.minimum_remaining_validity_days as number | null,
+      waiver_permitted: false,
+    }));
+  });
+  if (rows.length === 0) return;
+  await supabase.from("crew_matrix_line_documents").upsert(rows, { onConflict: "line_id,document_type_id" });
+}
+
 // Line/header content can only change while the matrix is still a
 // draft — everything from "submit" onward moves status only, via
 // the dedicated workflow actions below.
@@ -175,7 +217,7 @@ export async function createCrewMatrix(formData: FormData) {
   if (newId) {
     const { data: requirements } = await supabase
       .from("site_manning_requirements")
-      .select("job_role_id, minimum_headcount")
+      .select("job_role_id, minimum_headcount, preferred_document_template_id")
       .eq("offshore_site_id", offshoreSiteId);
     if (requirements && requirements.length > 0) {
       const lines = requirements.map((r, i) => ({
@@ -190,8 +232,17 @@ export async function createCrewMatrix(formData: FormData) {
       }));
       const { data: newLines } = await supabase.from("crew_matrix_lines").insert(lines).select("id, job_role_id");
       if (newLines && newLines.length > 0) {
+        const typedLines = newLines as { id: string; job_role_id: string }[];
         const clientId = await resolveClientIdForProject(supabase, projectId);
-        await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, newLines as { id: string; job_role_id: string }[]);
+        await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, typedLines);
+
+        const templateByRole = new Map<string, string | null>();
+        for (const r of requirements) templateByRole.set(r.job_role_id as string, (r.preferred_document_template_id as string | null) ?? null);
+        await applyPreferredDocumentTemplates(
+          supabase,
+          access.orgId!,
+          typedLines.map((l) => ({ id: l.id, preferred_document_template_id: templateByRole.get(l.job_role_id) ?? null }))
+        );
       }
     }
   }
@@ -1174,7 +1225,7 @@ export async function generateDraftFromManning(projectId: string, offshoreSiteId
 
   const { data: requirements, error: reqError } = await supabase
     .from("site_manning_requirements")
-    .select("job_role_id, minimum_headcount")
+    .select("job_role_id, minimum_headcount, preferred_document_template_id")
     .eq("offshore_site_id", offshoreSiteId);
   if (reqError) return { error: reqError.message };
   if (!requirements || requirements.length === 0) {
@@ -1233,8 +1284,17 @@ export async function generateDraftFromManning(projectId: string, offshoreSiteId
   if (linesError) return { error: linesError.message, id: newId };
 
   if (newLines && newLines.length > 0) {
+    const typedLines = newLines as { id: string; job_role_id: string }[];
     const clientId = await resolveClientIdForProject(supabase, projectId);
-    await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, newLines as { id: string; job_role_id: string }[]);
+    await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, typedLines);
+
+    const templateByRole = new Map<string, string | null>();
+    for (const r of requirements) templateByRole.set(r.job_role_id as string, (r.preferred_document_template_id as string | null) ?? null);
+    await applyPreferredDocumentTemplates(
+      supabase,
+      access.orgId!,
+      typedLines.map((l) => ({ id: l.id, preferred_document_template_id: templateByRole.get(l.job_role_id) ?? null }))
+    );
   }
 
   revalidateMatrix();
