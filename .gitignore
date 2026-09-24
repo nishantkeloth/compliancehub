@@ -42,3 +42,6 @@ next-env.d.ts
 
 # scratch / working files, not part of the app (specs, previews, zips, tests)
 /Claude outputs/
+
+# legacy data migration staging (never committed)
+/_migration-data/
