@@ -220,7 +220,7 @@ export async function createResourceProfileLink(crewId: string, crewMatrixLineId
     .eq("id", crewMatrixLineId)
     .single();
   const matrixOrgId = (Array.isArray(line?.crew_matrices) ? line?.crew_matrices[0]?.org_id : (line?.crew_matrices as { org_id?: string } | undefined)?.org_id) as string | undefined;
-  if (lineErr || !line || matrixOrgId !== access.orgId) return { error: "Line not found." };
+  if (lineErr || !line || matrixOrgId !== access.orgId) return { error: "Manning line not found." };
 
   const { data: crew, error: crewErr } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", access.orgId).single();
   if (crewErr || !crew) return { error: "Crew member not found." };
@@ -259,7 +259,7 @@ export async function reserveCandidateForLine(crewId: string, crewMatrixId: stri
     .eq("id", crewMatrixLineId)
     .eq("crew_matrix_id", crewMatrixId)
     .single();
-  if (lineErr || !line) return { error: "Line not found." };
+  if (lineErr || !line) return { error: "Manning line not found." };
 
   const { data: crewRow, error: crewErr } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", access.orgId).single();
   if (crewErr || !crewRow) return { error: "Crew member not found." };

@@ -338,7 +338,7 @@ export async function saveGeneratedMatrix(generationId: string, payloadJson: str
     return { error: "Invalid payload." };
   }
   if (!payload.title?.trim()) return { error: "Title is required." };
-  if (!payload.lines?.length) return { error: "Add at least one line." };
+  if (!payload.lines?.length) return { error: "Add at least one manning line." };
 
   const { data: gen } = await supabase.from("ai_generations").select("id, project_id, offshore_site_id, status").eq("id", generationId).single();
   if (!gen || !gen.project_id || !gen.offshore_site_id) return { error: "Could not find the AI generation to save." };
@@ -367,7 +367,7 @@ export async function saveGeneratedMatrix(generationId: string, payloadJson: str
     const resolvedLines = [];
     for (const l of payload.lines) {
       const jobRoleId = l.job_role_id ?? (l.new_job_role_name ? await ensure("job_roles", l.new_job_role_name, createdRoles, { created_by: userId }) : null);
-      if (!jobRoleId) return { error: "Every line needs a job role (map it or create it)." };
+      if (!jobRoleId) return { error: "Every manning line needs a job role (map it or create it)." };
       if (l.job_role_alias && l.job_role_id) aliasRows.push({ org_id: orgId, entity_type: "job_role", alias: l.job_role_alias, target_id: l.job_role_id, created_by: userId });
       const docs = [];
       for (const d of l.documents) {

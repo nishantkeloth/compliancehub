@@ -342,7 +342,7 @@ export async function copyCrewMatrixLine(lineId: string, crewMatrixId: string) {
   await assertDraft(supabase, crewMatrixId);
 
   const { data: source, error: sourceError } = await supabase.from("crew_matrix_lines").select("*").eq("id", lineId).single();
-  if (sourceError || !source) return { error: "Could not find that line." };
+  if (sourceError || !source) return { error: "Could not find that manning line." };
 
   const { count } = await supabase
     .from("crew_matrix_lines")

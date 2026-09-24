@@ -99,7 +99,7 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
             setCopyNotice(`Site created, but couldn't copy roles: ${copyRes.error}`);
           } else if (copyRes?.copied) {
             const fromName = sites.find((s) => s.id === copyFromSiteId)?.name ?? "that site";
-            setCopyNotice(`Copied ${copyRes.copied} role${copyRes.copied === 1 ? "" : "s"} from ${fromName} — use "Generate from manning requirements" below to pull them in as matrix lines.`);
+            setCopyNotice(`Copied ${copyRes.copied} role${copyRes.copied === 1 ? "" : "s"} from ${fromName} — use "Generate from manning requirements" below to pull them in as manning lines.`);
           } else {
             setCopyNotice("Site created — the site you copied from has no roles set up yet, so none were copied.");
           }
@@ -334,8 +334,8 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
             If the selected site already has manning requirements, its roles and headcounts are
-            copied in as starting lines — otherwise you&rsquo;ll add lines on the matrix page after
-            saving. Either way, you can add, edit, or remove lines afterward.
+            copied in as starting manning lines — otherwise you&rsquo;ll add manning lines on the matrix page after
+            saving. Either way, you can add, edit, or remove manning lines afterward.
           </p>
           <button
             onClick={submitBlank}
@@ -356,9 +356,9 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
       ) : (
         <>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
-            Creates a new draft matrix, pre-filled with one line per role currently defined in this
+            Creates a new draft matrix, pre-filled with one manning line per role currently defined in this
             site&rsquo;s manning requirements, and with effective dates and expected POB copied from
-            the selected project. You can edit, add, or remove lines afterward — nothing here changes
+            the selected project. You can edit, add, or remove manning lines afterward — nothing here changes
             the existing manning requirements.
           </p>
           <button

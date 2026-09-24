@@ -230,7 +230,7 @@ export async function generatePositionsFromMatrix(requestId: string) {
     .order("sort_order", { ascending: true });
   if (linesError) return { error: linesError.message };
   if (!lines || lines.length === 0) {
-    return { error: "The selected crew matrix has no lines to generate positions from." };
+    return { error: "The selected crew matrix has no manning lines to generate positions from." };
   }
 
   const rows: Record<string, unknown>[] = [];

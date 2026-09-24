@@ -156,9 +156,9 @@ export default function MatrixDetail({
   );
 
   const validationIssues: string[] = [];
-  if (lines.length === 0) validationIssues.push("This matrix has no lines yet.");
+  if (lines.length === 0) validationIssues.push("This matrix has no manning lines yet.");
   if (matrix.expected_pob != null && totalHeadcount !== matrix.expected_pob) {
-    validationIssues.push(`Line headcount totals ${totalHeadcount}, which doesn't match expected POB of ${matrix.expected_pob}.`);
+    validationIssues.push(`Manning line headcount totals ${totalHeadcount}, which doesn't match expected POB of ${matrix.expected_pob}.`);
   }
   for (const l of lines) {
     if (l.client_approval_required && matrix.status === "draft") {
@@ -168,7 +168,7 @@ export default function MatrixDetail({
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "overview", label: "Overview" },
-    { key: "lines", label: `Lines (${lines.length})` },
+    { key: "lines", label: `Manning Lines (${lines.length})` },
     { key: "staffing", label: "Staffing Plan" },
     { key: "versions", label: `Versions (${versions.length})` },
   ];
@@ -366,7 +366,7 @@ export default function MatrixDetail({
               <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Plan</div>
               <Row label="Effective dates" value={`${matrix.effective_from ?? "…"} – ${matrix.effective_to ?? "…"}`} />
               <Row label="Expected POB" value={matrix.expected_pob} />
-              <Row label="Total required headcount (lines)" value={totalHeadcount} />
+              <Row label="Total required headcount (manning lines)" value={totalHeadcount} />
               <Row label="Day / Night / Other shift" value={`${totalDay} / ${totalNight} / ${totalOther}`} />
               {matrix.client_approval_reference && <Row label="Client approval reference" value={matrix.client_approval_reference} />}
               {matrix.approved_at && <Row label="Approved at" value={new Date(matrix.approved_at).toLocaleString()} />}
@@ -379,7 +379,7 @@ export default function MatrixDetail({
             </div>
             <div className={`${cardCls} p-4`} style={cardStyle}>
               <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Headcount by role</div>
-              {roleTotals.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No lines yet.</div>}
+              {roleTotals.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No manning lines yet.</div>}
               {roleTotals.map(([role, count]) => (
                 <Row key={role} label={role} value={count} />
               ))}
@@ -617,7 +617,7 @@ function WorkflowActions({
   const buttons: React.ReactNode[] = [];
 
   if (status === "draft" && canSubmit) {
-    buttons.push(btn(hasLines ? "Submit for approval" : "Submit for approval (add a line first)", onSubmit, "primary"));
+    buttons.push(btn(hasLines ? "Submit for approval" : "Submit for approval (add a manning line first)", onSubmit, "primary"));
   }
   if (status === "pending_internal_approval" && canApproveInternal) {
     buttons.push(btn("Approve", () => setOpenAction("approveInternal"), "primary"));

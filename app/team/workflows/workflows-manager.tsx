@@ -23,7 +23,7 @@ type Member = { id: string; fullName: string };
 // evaluateSkipCondition) — this maps it to a human label for the one
 // entity type it applies to.
 const SKIP_CONDITIONS: Record<string, { value: string; label: string }[]> = {
-  crew_matrix: [{ value: "no_lines_require_client_approval", label: "Skip automatically when no line on the matrix requires client approval" }],
+  crew_matrix: [{ value: "no_lines_require_client_approval", label: "Skip automatically when no manning line on the matrix requires client approval" }],
 };
 
 type RunFn = (fn: () => Promise<{ error?: string | null } | undefined>) => void;

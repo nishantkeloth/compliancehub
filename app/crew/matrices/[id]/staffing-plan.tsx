@@ -300,7 +300,7 @@ export default function StaffingPlanView({
   const colorForCategory = (category: string | null) => categoryColorMap.get(category ?? UNCATEGORIZED_KEY) ?? CATEGORY_BAND_COLORS[0];
 
   if (orderedLines.length === 0) {
-    return <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No lines yet — add lines under the Lines tab first.</div>;
+    return <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No manning lines yet — add manning lines under the Manning Lines tab first.</div>;
   }
 
   if (columns.length === 0) {

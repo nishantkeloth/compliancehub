@@ -176,7 +176,7 @@ export default function LinesEditor({
   };
 
   const submitDelete = (line: Line) => {
-    if (!window.confirm(`Delete line ${line.line_number} (${line.job_role_name})?`)) return;
+    if (!window.confirm(`Delete manning line ${line.line_number} (${line.job_role_name})?`)) return;
     setError(null);
     startTransition(async () => {
       const res = await deleteCrewMatrixLine(line.id, crewMatrixId);
@@ -222,12 +222,12 @@ export default function LinesEditor({
     <div>
       {!isDraft && (
         <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
-          Lines can only be edited while this matrix is a draft — create a new version to make changes.
+          Manning lines can only be edited while this matrix is a draft — create a new version to make changes.
         </div>
       )}
       {isDraft && canManage && !editingEnabled && (
         <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
-          Click <strong>Edit</strong> above to change lines, requirements, or document checkboxes.
+          Click <strong>Edit</strong> above to change manning lines, requirements, or document checkboxes.
         </div>
       )}
       {error && <div className="text-sm mb-3" style={{ color: "var(--ch-fail)" }}>{error}</div>}
@@ -244,12 +244,12 @@ export default function LinesEditor({
           />
         ) : (
           <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-3">
-            + Add line
+            + Add manning line
           </button>
         ))}
 
       <div className="space-y-2">
-        {lines.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No lines yet.</div>}
+        {lines.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No manning lines yet.</div>}
         {lines.map((line, i) =>
           editingId === line.id ? (
             <LineForm
@@ -419,7 +419,7 @@ function LineForm({
       <textarea className={`${inputCls} w-full mb-3`} style={inputStyle} placeholder="Remarks" rows={2} value={values.remarks} onChange={setField("remarks")} />
       <div className="flex items-center gap-2">
         <button onClick={() => onSubmit(values)} disabled={busy || !values.jobRoleId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-          Save line
+          Save manning line
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>

@@ -182,7 +182,7 @@ export async function sendMatrixSharePackage(input: {
       })),
     };
   });
-  if (orderedLines.length === 0) return { error: "This matrix has no lines to share yet." };
+  if (orderedLines.length === 0) return { error: "This matrix has no manning lines to share yet." };
 
   const lineJobRoleIds = Array.from(new Set(orderedLines.map((l) => l.job_role_id)));
   const usedDocTypeIds = new Set<string>();
