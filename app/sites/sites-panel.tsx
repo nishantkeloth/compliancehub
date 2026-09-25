@@ -12,6 +12,7 @@ import {
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { COUNTRIES } from "@/lib/countries";
 import { REGIONS } from "@/lib/regions";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
 type Client = { id: string; name: string };
@@ -113,6 +114,7 @@ export default function OffshoreSitesPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
+  const guide = useGuideMaybe();
 
   const contractorLabel = (id: string | null) => {
     const contractor = contractors.find((c) => c.id === id);
@@ -132,6 +134,7 @@ export default function OffshoreSitesPanel({
         setBgError(`Couldn't save "${optimisticItem.name}": ${res.error}`);
         return;
       }
+      if (res?.id) guide?.notifyCompletion("site.saved", { recordId: res.id });
       router.refresh();
     });
   };
@@ -175,7 +178,13 @@ export default function OffshoreSitesPanel({
           onCancel={() => setAdding(false)}
         />
       ) : (
-        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add offshore site</button>
+        <button
+          onClick={() => setAdding(true)}
+          data-guide-id="sites.new-button"
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4"
+        >
+          + Add offshore site
+        </button>
       )}
 
       <div className="space-y-2 mt-4">
@@ -208,6 +217,7 @@ export default function OffshoreSitesPanel({
                 <button
                   onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
                   disabled={isTempId(s.id)}
+                  data-guide-id={`sites.manning-toggle:${s.id}`}
                   className="text-xs font-semibold disabled:opacity-40"
                   style={{ color: "var(--ch-navy)" }}
                 >
@@ -419,7 +429,12 @@ function OffshoreSiteForm({
             <option value="inactive">Inactive</option>
           </select>
         </label>
-        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button
+          onClick={save}
+          disabled={submitted || !name.trim()}
+          data-guide-id="sites.form.save"
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+        >
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
@@ -444,6 +459,7 @@ function ManningRequirementsEditor({
   const [headcount, setHeadcount] = useState("1");
   const [error, setError] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
+  const guide = useGuideMaybe();
 
   const add = () => {
     if (!jobRoleId) return;
@@ -468,6 +484,7 @@ function ManningRequirementsEditor({
         setBgError(res.error);
         return;
       }
+      guide?.notifyCompletion("site.manning.set", { recordId: siteId });
       router.refresh();
     });
   };
@@ -494,7 +511,12 @@ function ManningRequirementsEditor({
           ))}
         </select>
         <input type="number" min={1} className={`${inputCls} w-24`} style={inputStyle} value={headcount} onChange={(e) => setHeadcount(e.target.value)} />
-        <button onClick={add} disabled={!jobRoleId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+        <button
+          onClick={add}
+          disabled={!jobRoleId}
+          data-guide-id="sites.manning.set-button"
+          className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+        >
           Set requirement
         </button>
       </div>

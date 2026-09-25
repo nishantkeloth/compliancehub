@@ -161,6 +161,7 @@ export default async function AppShell({
       userDisplayName={access.fullName ?? user.email ?? ""}
       roleName={access.roleName ?? ""}
       initials={initials}
+      userScopeKey={user.id}
       active={active}
       title={title}
       headerRight={headerRight}

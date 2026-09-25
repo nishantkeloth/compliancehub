@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createProject, deleteProject } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 import { StatusPill } from "@/app/contracts/contracts-manager";
 import { COUNTRIES } from "@/lib/countries";
 import { REGIONS } from "@/lib/regions";
@@ -53,6 +54,7 @@ export default function ProjectsManager({
   const [adding, setAdding] = useState(!!defaultContractId);
   const [bgError, setBgError] = useState<string | null>(null);
   const [bgWarning, setBgWarning] = useState<string | null>(null);
+  const guide = useGuideMaybe();
 
   const submitCreate = (fd: FormData, optimisticItem: Project) => {
     setBgError(null);
@@ -67,11 +69,12 @@ export default function ProjectsManager({
         return;
       }
       if (res?.warning) setBgWarning(res.warning);
-      if (res?.id) {
+      const guided = res?.id ? guide?.notifyCompletion("project.saved", { recordId: res.id }) : false;
+      if (res?.id && !guided) {
         router.push(`/projects/${res.id}`);
         return;
       }
-      router.refresh();
+      if (!guided) router.refresh();
     });
   };
 
@@ -110,7 +113,13 @@ export default function ProjectsManager({
             onCancel={() => setAdding(false)}
           />
         ) : (
-          <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add project</button>
+          <button
+            onClick={() => setAdding(true)}
+            data-guide-id="projects.new-button"
+            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4"
+          >
+            + Add project
+          </button>
         ))}
 
       <div className="space-y-2 mt-4">
@@ -332,7 +341,12 @@ function ProjectForm({
         <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
       </label>
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={submitted || !isValid} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button
+          onClick={save}
+          disabled={submitted || !isValid}
+          data-guide-id="projects.form.save"
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+        >
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

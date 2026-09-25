@@ -13,6 +13,9 @@ import { usePathname } from "next/navigation";
 import { useSyncExternalStore } from "react";
 import AssistantPanel from "./assistant-panel";
 import ChatWidget from "./chat-widget";
+import { GuideProvider } from "@/components/guide/guide-context";
+import GuideOverlay from "@/components/guide/guide-overlay";
+import GuideShell from "@/components/guide/guide-shell";
 
 export type NavItem = { href: string; key: string; label: string };
 export type NavSection = { title: string; items: NavItem[] };
@@ -99,6 +102,7 @@ export default function ShellChrome({
   userDisplayName,
   roleName,
   initials,
+  userScopeKey,
   active,
   title,
   headerRight,
@@ -110,6 +114,10 @@ export default function ShellChrome({
   userDisplayName: string;
   roleName: string;
   initials: string;
+  // Signed-in user's own id — scopes Guided Workflows' sessionStorage
+  // resume state so switching accounts in the same tab never resumes
+  // someone else's in-progress guide (lib/guide/state.ts).
+  userScopeKey: string;
   // Both optional: when a page still passes them explicitly (root,
   // actions, inspections, platform), that wins. Otherwise they're derived
   // from the current pathname against navSections.
@@ -127,6 +135,7 @@ export default function ShellChrome({
   const [openSections, setOpen] = useOpenSections();
 
   return (
+    <GuideProvider userScopeKey={userScopeKey}>
     <div className="flex min-h-screen" style={{ background: "var(--ch-paper)" }}>
       <aside
         className="w-[236px] shrink-0 flex flex-col sticky top-0 h-screen"
@@ -229,6 +238,9 @@ export default function ShellChrome({
       </main>
       <AssistantPanel />
       <ChatWidget />
+      <GuideOverlay />
+      <GuideShell />
     </div>
+    </GuideProvider>
   );
 }

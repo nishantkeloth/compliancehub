@@ -419,6 +419,7 @@ export default function MatrixDetail({
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
+            data-guide-id={t.key === "lines" ? "matrix.tab.lines" : undefined}
             className="text-xs font-semibold rounded-lg px-3 py-1.5"
             style={tab === t.key ? { background: "var(--ch-navy)", color: "#fff" } : { background: "var(--ch-paper)", color: "var(--ch-sub)" }}
           >

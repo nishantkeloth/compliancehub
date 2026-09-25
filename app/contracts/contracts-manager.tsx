@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createContract, deleteContract } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 
 type Contract = {
   id: string;
@@ -85,6 +86,7 @@ export default function ContractsManager({
   const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [bgError, setBgError] = useState<string | null>(null);
+  const guide = useGuideMaybe();
 
   const submitCreate = (fd: FormData, optimisticItem: Contract) => {
     setBgError(null);
@@ -97,11 +99,17 @@ export default function ContractsManager({
         setBgError(`Couldn't save "${optimisticItem.contract_title}": ${res.error}`);
         return;
       }
-      if (res?.id) {
+      // Real completion event — only fired after the server action
+      // actually returns a saved record id. If a Guided Workflows step is
+      // waiting on "contract.saved", it takes over navigation from here
+      // (on to /projects); otherwise this falls through to the normal
+      // "go to the contract I just created" behavior.
+      const guided = res?.id ? guide?.notifyCompletion("contract.saved", { recordId: res.id }) : false;
+      if (res?.id && !guided) {
         router.push(`/contracts/${res.id}`);
         return;
       }
-      router.refresh();
+      if (!guided) router.refresh();
     });
   };
 
@@ -142,7 +150,11 @@ export default function ContractsManager({
             onCancel={() => setAdding(false)}
           />
         ) : (
-          <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">
+          <button
+            onClick={() => setAdding(true)}
+            data-guide-id="contracts.new-button"
+            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4"
+          >
             + Add contract
           </button>
         ))}
@@ -236,7 +248,7 @@ function ContractForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="contracts.form.client">
           Client
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
             {clients.length === 0 && <option value="">No clients yet</option>}
@@ -268,7 +280,12 @@ function ContractForm({
         You&rsquo;ll fill in dates, value, service scope, and team on the contract page after saving.
       </p>
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={submitted || !title.trim() || !clientId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button
+          onClick={save}
+          disabled={submitted || !title.trim() || !clientId}
+          data-guide-id="contracts.form.save"
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+        >
           Save
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

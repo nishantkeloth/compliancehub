@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createCrewMatrix, generateDraftFromManning } from "../actions";
 import { createOffshoreSite } from "@/app/crew/setup/actions";
 import AiGenerate from "./ai-generate";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 
 type Project = {
   id: string;
@@ -53,6 +54,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const guide = useGuideMaybe();
 
   // AI mode needs a real, already-created site before AiGenerate can mount
   // (it calls the AI + saves the eventual matrix against a real site id) —
@@ -110,7 +112,8 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
         setError(res.error);
         return;
       }
-      if (res?.id) router.push(`/crew/matrices/${res.id}`);
+      const guided = res?.id ? guide?.notifyCompletion("matrix.draft.created", { recordId: res.id }) : false;
+      if (res?.id && !guided) router.push(`/crew/matrices/${res.id}`);
     });
   };
 
@@ -159,6 +162,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
         <button
           type="button"
           onClick={() => setMode("blank")}
+          data-guide-id="matrix.mode.blank"
           className="rounded-lg px-4 py-2 text-sm font-semibold border"
           style={mode === "blank" ? { background: "var(--ch-navy-soft)", color: "var(--ch-navy)", borderColor: "var(--ch-navy-soft)" } : { borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
         >
@@ -269,6 +273,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
           <button
             onClick={submitBlank}
             disabled={submitting || !projectId || !newSiteName.trim() || !title.trim()}
+            data-guide-id="matrix.form.save"
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             {submitting ? "Creating…" : "Create draft matrix"}

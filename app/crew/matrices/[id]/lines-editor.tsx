@@ -18,6 +18,7 @@ import {
   addLineClientRequirement,
   removeLineClientRequirement,
 } from "../actions";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 
 export type Ref = { id: string; name: string };
 // Named, reusable document requirement templates (Crew Setup → Document
@@ -149,6 +150,7 @@ export default function LinesEditor({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const guide = useGuideMaybe();
 
   const canEdit = isDraft && canManage && editingEnabled;
 
@@ -167,6 +169,7 @@ export default function LinesEditor({
         return;
       }
       setAdding(false);
+      guide?.notifyCompletion("matrix.line.added", { recordId: crewMatrixId });
       refresh();
     });
   };
@@ -256,7 +259,11 @@ export default function LinesEditor({
             onCancel={() => setAdding(false)}
           />
         ) : (
-          <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-3">
+          <button
+            onClick={() => setAdding(true)}
+            data-guide-id="matrix.lines.add-button"
+            className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-3"
+          >
             + Add manning line
           </button>
         ))}
@@ -442,7 +449,12 @@ function LineForm({
         <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.remarks} onChange={setField("remarks")} />
       </label>
       <div className="flex items-center gap-2">
-        <button onClick={() => onSubmit(values)} disabled={busy || !values.jobRoleId} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button
+          onClick={() => onSubmit(values)}
+          disabled={busy || !values.jobRoleId}
+          data-guide-id="matrix.line.save"
+          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+        >
           Save manning line
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
