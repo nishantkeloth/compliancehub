@@ -159,6 +159,9 @@ export default function MatrixDetail({
   // only gates starting a NEW send from here).
   const canSendToClient = matrix.status === "approved" || matrix.status === "active";
   const orderedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
+  // Passed to the Site tab so it can spot a role that's checked in Manning
+  // Requirements but has no matching line yet (see SiteTab's "Sync now").
+  const lineRoleIds = Array.from(new Set(lines.map((l) => l.job_role_id)));
 
   const totalHeadcount = lines.reduce((sum, l) => sum + (l.required_headcount ?? 0), 0);
   const totalDay = lines.reduce((sum, l) => sum + (l.day_shift_quantity ?? 0), 0);
@@ -480,6 +483,7 @@ export default function MatrixDetail({
           crewMatrixId={matrix.id}
           isDraft={isDraft}
           editingEnabled={editing}
+          existingLineRoleIds={lineRoleIds}
           site={site}
           contractors={contractors}
           clients={clients}

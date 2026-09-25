@@ -261,6 +261,7 @@ export default function SiteTab({
   crewMatrixId,
   isDraft,
   editingEnabled,
+  existingLineRoleIds,
   site,
   contractors,
   clients,
@@ -286,6 +287,13 @@ export default function SiteTab({
   // page-level toggle isn't shown at all) so site details stay editable
   // independent of the matrix's own draft/edit state.
   editingEnabled: boolean;
+  // job_role_id of every line this matrix already has — used only to spot
+  // a role that's checked here but has no matching line yet (checked
+  // before this matrix existed, checked from the standalone Sites page,
+  // or a sync that failed partway) and offer a one-click "Sync now" to
+  // catch it up. Toggling a role live already keeps the two in step; this
+  // is just for whatever was already checked before that existed.
+  existingLineRoleIds: string[];
   site: SiteInfo;
   contractors: Contractor[];
   clients: ClientRef[];
@@ -330,6 +338,31 @@ export default function SiteTab({
     startTransition(async () => {
       const res = await syncManningLineFromSiteRequirement(crewMatrixId, jobRoleId, active, minimumHeadcount, preferredDocumentTemplateId);
       if (res?.error) setBgError(res.error);
+      router.refresh();
+    });
+  };
+
+  // Roles checked off here that this matrix has no line for yet — normally
+  // empty, since toggling a role live keeps the two in step, but a role
+  // checked before this matrix existed (or from the standalone Sites page,
+  // which only ever writes the site-level requirement, never a matrix
+  // line) shows up here until "Sync now" is clicked.
+  const missingFromLines = isDraft ? items.filter((r) => !isTempId(r.id) && !existingLineRoleIds.includes(r.job_role_id)) : [];
+  const [syncingAll, setSyncingAll] = useState(false);
+
+  const syncAllMissing = () => {
+    if (syncingAll || missingFromLines.length === 0) return;
+    setBgError(null);
+    setSyncingAll(true);
+    startTransition(async () => {
+      for (const r of missingFromLines) {
+        const res = await syncManningLineFromSiteRequirement(crewMatrixId, r.job_role_id, true, r.minimum_headcount, r.preferred_document_template_id);
+        if (res?.error) {
+          setBgError(res.error);
+          break;
+        }
+      }
+      setSyncingAll(false);
       router.refresh();
     });
   };
@@ -535,6 +568,19 @@ export default function SiteTab({
           template&rsquo;s document checklist already applied.
         </div>
         <BgErrorBanner error={bgError} />
+        {missingFromLines.length > 0 && (
+          <div className="text-xs rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-3 flex-wrap" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+            <span>
+              {missingFromLines.length} checked role{missingFromLines.length === 1 ? "" : "s"} {missingFromLines.length === 1 ? "isn’t" : "aren’t"} reflected as
+              manning lines yet.
+            </span>
+            {canManageManning && (
+              <button onClick={syncAllMissing} disabled={syncingAll} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+                {syncingAll ? "Syncing…" : "Sync now"}
+              </button>
+            )}
+          </div>
+        )}
         {jobRoles.length === 0 ? (
           <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No job roles configured yet — add some under Crew Setup.</div>
         ) : (
