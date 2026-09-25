@@ -333,26 +333,33 @@ export default function SiteTab({
   // surfaced but don't roll back the site_manning_requirements change that
   // already succeeded — the checklist and the matrix's lines can be
   // reconciled by re-toggling if the two ever disagree.
-  const syncLine = (
+  //
+  // Returns the error (if any) without starting its own transition or
+  // calling router.refresh() itself — every caller below awaits this
+  // alongside its own site_manning_requirements write (submit/delete)
+  // inside ONE startTransition, then refreshes once for both. This used
+  // to be two separate startTransition/router.refresh() pairs per click —
+  // two full network round trips to two server actions, followed by two
+  // full page data refetches — which is what made checking a role feel
+  // slow. Awaiting both writes together and refreshing once cuts that in
+  // half without changing what gets written or when errors surface.
+  const runSyncLine = async (
     jobRoleId: string,
     active: boolean,
     minimumHeadcount: number,
     preferredDocumentTemplateId: string | null,
     forceTemplateApply = false
-  ) => {
-    if (!isDraft) return;
-    startTransition(async () => {
-      const res = await syncManningLineFromSiteRequirement(
-        crewMatrixId,
-        jobRoleId,
-        active,
-        minimumHeadcount,
-        preferredDocumentTemplateId,
-        forceTemplateApply
-      );
-      if (res?.error) setBgError(res.error);
-      router.refresh();
-    });
+  ): Promise<string | null> => {
+    if (!isDraft) return null;
+    const res = await syncManningLineFromSiteRequirement(
+      crewMatrixId,
+      jobRoleId,
+      active,
+      minimumHeadcount,
+      preferredDocumentTemplateId,
+      forceTemplateApply
+    );
+    return res?.error ?? null;
   };
 
   // Roles checked off here that this matrix has no line for yet — normally
@@ -392,28 +399,30 @@ export default function SiteTab({
       };
       addOptimistic(optimisticItem);
       startTransition(async () => {
-        const res = await submit(role.id, 1, null);
+        const [res, syncError] = await Promise.all([submit(role.id, 1, null), runSyncLine(role.id, true, 1, null)]);
         if (res?.error) {
           removeOptimistic(optimisticItem.id);
           setBgError(res.error);
           return;
         }
+        if (syncError) setBgError(syncError);
         router.refresh();
       });
-      syncLine(role.id, true, 1, null);
     } else {
       const existing = byRoleId.get(role.id);
       if (!existing || isTempId(existing.id)) return;
       const index = items.findIndex((r) => r.id === existing.id);
       removeOptimistic(existing.id);
       startTransition(async () => {
-        const res = await deleteManningRequirement(existing.id);
+        const [res, syncError] = await Promise.all([deleteManningRequirement(existing.id), runSyncLine(role.id, false, 0, null)]);
         if (res?.error) {
           restoreOptimistic(existing, index);
           setBgError(res.error);
+        } else if (syncError) {
+          setBgError(syncError);
         }
+        router.refresh();
       });
-      syncLine(role.id, false, 0, null);
     }
   };
 
@@ -428,15 +437,18 @@ export default function SiteTab({
     setBgError(null);
     updateOptimistic(req.id, { minimum_headcount: value });
     startTransition(async () => {
-      const res = await submit(req.job_role_id, value, req.preferred_document_template_id);
+      const [res, syncError] = await Promise.all([
+        submit(req.job_role_id, value, req.preferred_document_template_id),
+        runSyncLine(req.job_role_id, true, value, req.preferred_document_template_id),
+      ]);
       if (res?.error) {
         updateOptimistic(req.id, { minimum_headcount: req.minimum_headcount });
         setBgError(res.error);
         return;
       }
+      if (syncError) setBgError(syncError);
       router.refresh();
     });
-    syncLine(req.job_role_id, true, value, req.preferred_document_template_id);
   };
 
   const setTemplate = (req: ManningReq, templateId: string) => {
@@ -444,18 +456,22 @@ export default function SiteTab({
     const nextTemplateId = templateId || null;
     updateOptimistic(req.id, { preferred_document_template_id: nextTemplateId });
     startTransition(async () => {
-      const res = await submit(req.job_role_id, req.minimum_headcount, nextTemplateId);
+      const [res, syncError] = await Promise.all([
+        submit(req.job_role_id, req.minimum_headcount, nextTemplateId),
+        // Picking a template here is a deliberate choice, so push it onto
+        // this matrix's own line's Required Document Types right away
+        // (force=true) — not just when a bare, never-populated line
+        // happens to pick it up.
+        nextTemplateId ? runSyncLine(req.job_role_id, true, req.minimum_headcount, nextTemplateId, true) : Promise.resolve(null),
+      ]);
       if (res?.error) {
         updateOptimistic(req.id, { preferred_document_template_id: req.preferred_document_template_id });
         setBgError(res.error);
         return;
       }
+      if (syncError) setBgError(syncError);
       router.refresh();
     });
-    // Picking a template here is a deliberate choice, so push it onto this
-    // matrix's own line's Required Document Types right away (force=true) —
-    // not just when a bare, never-populated line happens to pick it up.
-    if (nextTemplateId) syncLine(req.job_role_id, true, req.minimum_headcount, nextTemplateId, true);
   };
 
   // ---- Site details, editable in place (previously only editable from the
