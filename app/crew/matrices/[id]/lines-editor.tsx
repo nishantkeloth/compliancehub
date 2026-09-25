@@ -303,6 +303,7 @@ export default function LinesEditor({
                 <div className="ml-auto flex items-center gap-1.5">
                   <button
                     onClick={() => setExpandedId(expandedId === line.id ? null : line.id)}
+                    data-guide-id="matrix.line.requirements-toggle"
                     className="text-xs font-semibold ch-link-navy"
                   >
                     {expandedId === line.id ? "Hide requirements" : `Requirements (${line.skills.length + line.documents.length + line.competencies.length + line.clientRequirements.length})`}
@@ -328,6 +329,7 @@ export default function LinesEditor({
                     documentTypes={documentTypes}
                     documentTemplates={documentTemplates}
                     onChange={refresh}
+                    onSaved={() => guide?.notifyCompletion("matrix.line.requirements.set", { recordId: crewMatrixId })}
                   />
                 </div>
               )}
@@ -471,6 +473,7 @@ function LineRequirements({
   documentTypes,
   documentTemplates,
   onChange,
+  onSaved,
 }: {
   crewMatrixId: string;
   line: Line;
@@ -479,6 +482,13 @@ function LineRequirements({
   documentTypes: Ref[];
   documentTemplates: DocTemplate[];
   onChange: () => void;
+  // Fired after any real add (skill/document/competency/client
+  // requirement) succeeds — lets an active guide's matrix.line.requirements
+  // step advance on real engagement with this line's requirements, same
+  // "only after a real server action succeeds" rule every other guide
+  // completion event follows. Not fired on removal — only adding counts as
+  // "set".
+  onSaved?: () => void;
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -490,7 +500,9 @@ function LineRequirements({
   // instead of flashing back immediately (a transition that only wrapped
   // the optimistic dispatch would settle right away, before the request
   // even lands).
-  const run = (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void) => {
+  // `isAdd` distinguishes an add from a remove (both share this same
+  // helper) — onSaved should only fire for the former.
+  const run = (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void, isAdd = false) => {
     setError(null);
     startTransition(async () => {
       optimistic?.();
@@ -500,6 +512,7 @@ function LineRequirements({
         return;
       }
       onChange();
+      if (isAdd) onSaved?.();
     });
   };
 
@@ -515,6 +528,7 @@ function LineRequirements({
         documentTypes={documentTypes}
         documentTemplates={documentTemplates.filter((t) => t.job_role_id === line.job_role_id)}
         onChange={onChange}
+        onSaved={onSaved}
       />
       <CompetenciesPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} run={run} />
       <ClientRequirementsPanel crewMatrixId={crewMatrixId} line={line} canEdit={canEdit} run={run} />
@@ -533,7 +547,7 @@ function SkillsPanel({
   line: Line;
   canEdit: boolean;
   skills: Ref[];
-  run: (fn: () => Promise<{ error?: string } | undefined>) => void;
+  run: (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void, isAdd?: boolean) => void;
 }) {
   const available = skills.filter((s) => !line.skills.some((ls) => ls.skill_id === s.id));
   const [selected, setSelected] = useState(available[0]?.id ?? "");
@@ -559,7 +573,7 @@ function SkillsPanel({
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
-          <button onClick={() => selected && run(() => addLineSkill(line.id, crewMatrixId, selected))} className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold">Add</button>
+          <button onClick={() => selected && run(() => addLineSkill(line.id, crewMatrixId, selected), undefined, true)} data-guide-id="matrix.line.skills.add-button" className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold">Add</button>
         </div>
       )}
     </div>
@@ -575,6 +589,7 @@ function DocumentsPanel({
   documentTypes,
   documentTemplates,
   onChange,
+  onSaved,
 }: {
   crewMatrixId: string;
   line: Line;
@@ -582,6 +597,7 @@ function DocumentsPanel({
   documentTypes: Ref[];
   documentTemplates: DocTemplate[];
   onChange: () => void;
+  onSaved?: () => void;
 }) {
   // Local state, not tied to a full-page refresh: a checkbox toggle used to
   // wait on `router.refresh()` (re-fetching every line's full requirement
@@ -637,6 +653,7 @@ function DocumentsPanel({
         setDocs((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: realId } : d)));
       }
       onChange();
+      onSaved?.();
       return realId;
     });
     pendingAdds.current.set(tempId, pending);
@@ -820,7 +837,7 @@ function CompetenciesPanel({
   crewMatrixId: string;
   line: Line;
   canEdit: boolean;
-  run: (fn: () => Promise<{ error?: string } | undefined>) => void;
+  run: (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void, isAdd?: boolean) => void;
 }) {
   const [name, setName] = useState("");
   const [grade, setGrade] = useState("");
@@ -832,7 +849,7 @@ function CompetenciesPanel({
     fd.set("competencyName", name.trim());
     fd.set("minimumGrade", grade.trim());
     fd.set("notes", notes.trim());
-    run(() => addLineCompetency(line.id, crewMatrixId, fd));
+    run(() => addLineCompetency(line.id, crewMatrixId, fd), undefined, true);
     setName("");
     setGrade("");
     setNotes("");
@@ -874,7 +891,7 @@ function ClientRequirementsPanel({
   crewMatrixId: string;
   line: Line;
   canEdit: boolean;
-  run: (fn: () => Promise<{ error?: string } | undefined>) => void;
+  run: (fn: () => Promise<{ error?: string } | undefined>, optimistic?: () => void, isAdd?: boolean) => void;
 }) {
   const [text, setText] = useState("");
   const [mandatory, setMandatory] = useState(true);
@@ -884,7 +901,7 @@ function ClientRequirementsPanel({
     const fd = new FormData();
     fd.set("requirementText", text.trim());
     if (!mandatory) fd.set("isMandatory", "off");
-    run(() => addLineClientRequirement(line.id, crewMatrixId, fd));
+    run(() => addLineClientRequirement(line.id, crewMatrixId, fd), undefined, true);
     setText("");
   };
 

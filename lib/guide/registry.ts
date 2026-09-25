@@ -27,8 +27,18 @@ import type { GuidedWorkflow } from "./types";
 // can never actually succeed (see the discovery report) — offering it
 // here would be guiding the user into a dead end. The two branches that
 // DO work:
-//   - Blank draft → add the manning line yourself (matrix.create.blank
-//     → matrix.line.add): manual, always available.
+//   - Blank draft → add the manning line yourself, then set that
+//     line's requirements (matrix.create.blank → matrix.line.add →
+//     matrix.line.requirements): manual, always available. The guide
+//     doesn't stop at "role + headcount, Save" — matrix.line.add's own
+//     instruction walks every field on that form (shift split,
+//     rotation, employment/nationality/language preferences, minimum
+//     experience, mobilization lead time, and especially the Client
+//     approval required flag), and matrix.line.requirements is a
+//     dedicated, skippable follow-on step for the line's required
+//     documents/skills/competencies/client requirements — the actual
+//     eligibility checks candidates get screened against later, not
+//     just the headline role/headcount.
 //   - AI Create from Documents (matrix.create.ai): upload/paste a
 //     requirement, review the AI's proposed lines — resolve any
 //     unmapped role/document/skill, tick every assumption and open
@@ -36,15 +46,16 @@ import type { GuidedWorkflow } from "./types";
 //     confirmed (AiGenerate's own proposal/save split already enforces
 //     this; the guide just points at it). Converges on the same goal as
 //     the manual path, since saving a generated proposal creates the
-//     matrix AND its lines together in one step — there's no separate
-//     "add a line" step after it.
+//     matrix AND its lines AND their requirements together in one step
+//     — there's no separate "add a line"/"set requirements" step after
+//     it.
 // Both branches converge on an optional (skippable) "assign crew to a
 // slot" continuation on the Staffing Plan tab, matching the spec's
 // "show later stages as optional continuation" — the workflow's real
 // goal, "Draft matrix created", is already reached before that point.
 export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
   id: "crew-matrix-full",
-  version: 2,
+  version: 3,
   title: "Create a crew matrix",
   goal: "Draft matrix created",
   startPoints: [
@@ -101,8 +112,9 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       label: "Create the draft crew matrix",
       route: "/crew/matrices/new",
       targetIds: ["matrix.mode.blank", "matrix.form.save"],
-      instruction: "Blank draft mode is selected. Give the matrix a Title, then Create draft matrix.",
-      why: "This creates a new offshore site together with the draft matrix in one step — there's no separate site-picker on this screen.",
+      instruction:
+        "Blank draft mode is selected. Site type defaults to “vessel” — change it if this site is a rig/platform/barge/camp/FPSO/other. Title is required. Effective from/to and Expected POB come pre-filled from the project (confirm or adjust them); Notes is optional. Then Create draft matrix.",
+      why: "This creates a new offshore site together with the draft matrix in one step — there's no separate site-picker on this screen. Effective dates and POB drive downstream compliance/readiness checks, so it's worth confirming them here rather than leaving the project's defaults unchecked.",
       prerequisites: ["matrix.mode.choice"],
       completionEvent: "matrix.draft.created",
       producesRecord: "matrixId",
@@ -116,11 +128,27 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       label: "Define the manning requirement",
       route: "/crew/matrices/{matrixId}",
       targetIds: ["matrix.tab.lines", "matrix.lines.add-button", "matrix.line.save"],
-      instruction: "Open the Lines tab, click “+ Add manning line”, choose the role, set the headcount, then Save manning line.",
-      why: "This is the matrix's actual manning demand — role and headcount — that positions get filled against.",
+      instruction:
+        "Open the Lines tab, click “+ Add manning line”. Job role is the only required field — but review every option on this form before saving, since these are what positions get matched and staffed against: Required headcount (defaults to 1), Day/Night/Other shift quantity split, Rotation template, Employment type / Nationality / Language preferences, Minimum experience (years), Mobilization lead time (days), the “Client approval required” flag (critical — determines whether an assigned candidate needs client sign-off before mobilizing), and Remarks. Then Save manning line.",
+      why: "This is the matrix's actual manning demand. Headcount and role drive staffing; the rest — rotation, preferences, experience, lead time, and especially Client approval required — drive eligibility checks, mobilization timing, and approval routing later, so getting them right here avoids rework on every line added from scratch afterward.",
       prerequisites: ["matrix.create.blank"],
       completionEvent: "matrix.line.added",
       canSkip: false,
+      onMissingTarget: "unsupported",
+      unsupportedMessage: "You don't have permission to edit this matrix, or it's no longer a draft.",
+      next: "matrix.line.requirements",
+    },
+    {
+      id: "matrix.line.requirements",
+      label: "Set this line's requirements",
+      route: "/crew/matrices/{matrixId}",
+      targetIds: ["matrix.tab.lines", "matrix.line.requirements-toggle", "matrix.line.skills.add-button"],
+      instruction:
+        "Optional but recommended: open “Requirements” on the manning line you just added. Required documents are usually pre-filled from the role's document template — check they're right (mandatory vs optional, waiver allowed, minimum remaining validity) or “Apply template” if none loaded. Add Required skills, and if this role needs them, Required competency grades and Client-specific requirements. Every one of these becomes a real eligibility check candidates get screened against on the Staffing Plan tab.",
+      why: "A line with only a role and headcount looks complete but has no actual screening behind it — documents, skills, competencies and client requirements are what the app checks before letting someone be assigned or mobilized against this line.",
+      prerequisites: ["matrix.line.add"],
+      completionEvent: "matrix.line.requirements.set",
+      canSkip: true,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to edit this matrix, or it's no longer a draft.",
       next: "staffing.assign",
@@ -148,7 +176,7 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       targetIds: ["matrix.tab.staffing", "matrix.staffing.assign-button"],
       instruction: "Optional next step: open the Staffing Plan tab, pick a candidate against a line, set a start date, then Assign.",
       why: "The draft matrix itself is already done — this just starts filling it. Compliance/eligibility checks on each candidate are the app's own, not something this guide adds.",
-      prerequisites: ["matrix.create.blank", "matrix.create.ai"],
+      prerequisites: ["matrix.line.requirements", "matrix.create.ai"],
       completionEvent: "matrix.staffing.assigned",
       canSkip: true,
       onMissingTarget: "unsupported",
