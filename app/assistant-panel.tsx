@@ -12,7 +12,6 @@
 import { useRef, useState, useTransition, type FormEvent } from "react";
 import { askAssistant, type AssistantMessage } from "./assistant/actions";
 import { matchGuideIntent } from "@/lib/guide/intent";
-import { getWorkflow } from "@/lib/guide/registry";
 import { useGuideMaybe } from "@/components/guide/guide-context";
 import type { GuideIntentMatch } from "@/lib/guide/types";
 
@@ -59,7 +58,12 @@ export default function AssistantPanel() {
     setMessages((cur) => [
       ...cur,
       { role: "user", content: question },
-      { role: "assistant", content: `I can walk you through this step by step, highlighting each field on the real screens as we go. Ready to start from ${getWorkflow(match.workflowId)?.startPoints.find((p) => p.id === match.startPointId)?.label.replace(/^Start from /, "").toLowerCase() ?? "the beginning"}?` },
+      // Doesn't commit to a specific starting point here — startGuide()
+      // below opens the "Where should we start?" picker instead of
+      // jumping straight to match.startPointId, so someone who's already
+      // created the contract (or the project) isn't marched back through
+      // steps they've done.
+      { role: "assistant", content: "I can walk you through this step by step, highlighting each field on the real screens as we go. Tap below and I'll ask where you'd like to pick up." },
     ]);
     setInput("");
     scrollToBottom();
@@ -98,7 +102,14 @@ export default function AssistantPanel() {
 
   const startGuide = () => {
     if (!guideProposal || !guide) return;
-    guide.start(guideProposal.workflowId, guideProposal.startPointId);
+    // Always asks "Where should we start?" (GuideShell's picker) rather
+    // than jumping straight to guideProposal.startPointId — that field
+    // only reflects whatever fixed chip or keyword was matched, not
+    // whether the person has already created that contract/project on a
+    // previous run. The picker is the same one "Change start" opens
+    // mid-guide, so returning users pick up from where they actually are
+    // instead of being marched through steps they've already done.
+    guide.openPicker(guideProposal.workflowId);
     setGuideProposal(null);
     setOpen(false);
   };
