@@ -185,50 +185,17 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
   ],
 };
 
-// A second, independent workflow — deliberately kept small — to prove the
-// framework is a real graph of reusable workflows rather than one
-// hard-coded tour bolted to Crew Matrix. Covers the STANDING manning
-// requirement on a site (Sites page), separate from a specific matrix's
-// own lines above.
-//
-// Sites are no longer created from the Sites page at all (see
-// app/sites/sites-panel.tsx) — every crew matrix creation mode creates
-// its new offshore site as part of that flow instead, so this workflow
-// no longer has a "create the site" step of its own. It starts directly
-// from picking an EXISTING site (one already created via a crew matrix)
-// and setting its manning requirements. Because there's no longer a
-// just-created site id to carry through recordRefs, the "Manning
-// requirements" toggle target is a plain, unscoped data-guide-id
-// (sites.manning-toggle) rather than a per-site {siteId} template — the
-// instruction tells the user to pick their own site from the list.
-export const SITE_MANNING_SETUP_WORKFLOW: GuidedWorkflow = {
-  id: "site-manning-setup",
-  version: 3,
-  title: "Set up a site's manning requirements",
-  goal: "Manning requirements set",
-  startPoints: [
-    { id: "site", label: "Start from Vessel/Site", description: "Set standing manning requirements on an existing offshore site.", firstStepId: "site.manning.set" },
-  ],
-  steps: [
-    {
-      id: "site.manning.set",
-      label: "Set its manning requirements",
-      route: "/sites",
-      targetIds: ["sites.manning-toggle", "sites.manning.set-button"],
-      instruction: "Pick the site you want to configure, click “Manning requirements” on it, choose a role and minimum headcount, then Set requirement.",
-      why: "A site's standing manning requirements are what “Generate from manning requirements” reads from when creating a matrix for that same, already-set-up site — though see the discovery report for why that particular mode doesn't currently reach an existing site from the New Matrix screen. Sites themselves are created automatically as part of crew matrix creation (Blank draft or AI Create from Documents), not from this page.",
-      prerequisites: [],
-      completionEvent: "site.manning.set",
-      canSkip: false,
-      onMissingTarget: "unsupported",
-      unsupportedMessage: "You don't have permission to manage crew setup data, or no offshore site exists yet — create one first via a new crew matrix.",
-    },
-  ],
-};
+// The standalone "Set up a site's manning requirements" workflow (Sites
+// page) was removed at the user's request — sites are only ever created
+// as part of crew matrix creation now, and standing manning requirements
+// on an existing site are a small enough edit that a separate guided
+// tour for it wasn't wanted. Setting a site's manning requirements is
+// still fully supported on the Sites page itself (see
+// app/sites/sites-panel.tsx) — it's just not one of the guide's offered
+// walkthroughs.
 
 export const GUIDE_REGISTRY: Record<string, GuidedWorkflow> = {
   [CREW_MATRIX_FULL_WORKFLOW.id]: CREW_MATRIX_FULL_WORKFLOW,
-  [SITE_MANNING_SETUP_WORKFLOW.id]: SITE_MANNING_SETUP_WORKFLOW,
 };
 
 export function getWorkflow(id: string): GuidedWorkflow | null {

@@ -26,10 +26,6 @@ const RULES: Rule[] = [
     match: { workflowId: "crew-matrix-full", startPointId: "project" },
   },
   {
-    keywords: [/\bmanning requirement/i, /\bvessel\b/i, /\boffshore site\b/i, /\bsite\b/i],
-    match: { workflowId: "site-manning-setup", startPointId: "site" },
-  },
-  {
     keywords: [/\bcrew matrix\b/i, /\bmatrix\b/i],
     match: { workflowId: "crew-matrix-full", startPointId: "matrix" },
   },

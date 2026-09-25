@@ -30,7 +30,6 @@ const SUGGESTIONS = [
 // typing the same wording works too.
 const GUIDE_SUGGESTIONS: { label: string; match: GuideIntentMatch }[] = [
   { label: "🧭 Guide me through creating a crew matrix", match: { workflowId: "crew-matrix-full", startPointId: "contract" } },
-  { label: "🧭 Guide me through setting up a site's manning requirements", match: { workflowId: "site-manning-setup", startPointId: "site" } },
 ];
 
 export default function AssistantPanel() {
