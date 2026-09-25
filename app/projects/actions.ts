@@ -41,9 +41,13 @@ const revalidateProjects = (id?: string) => {
 };
 
 const PROJECT_STATUSES = ["planned", "mobilizing", "active", "demobilizing", "completed", "cancelled"] as const;
-function projectStatus(formData: FormData): (typeof PROJECT_STATUSES)[number] {
+// Returns null for a blank/invalid status instead of silently coercing to
+// "planned" — status is mandatory on the create form (app/projects/
+// projects-manager.tsx) so both callers below turn a null here into a
+// real error, same reasoning as Contract Status (app/contracts/actions.ts).
+function projectStatus(formData: FormData): (typeof PROJECT_STATUSES)[number] | null {
   const v = str(formData, "status");
-  return (PROJECT_STATUSES as readonly string[]).includes(v) ? (v as (typeof PROJECT_STATUSES)[number]) : "planned";
+  return (PROJECT_STATUSES as readonly string[]).includes(v) ? (v as (typeof PROJECT_STATUSES)[number]) : null;
 }
 const CONTRACT_BLOCKING_STATUSES = new Set(["completed", "cancelled"]);
 const CONTRACT_ACTIVATABLE_STATUSES = new Set(["awarded", "active"]);
@@ -87,6 +91,7 @@ export async function createProject(formData: FormData) {
   }
 
   const status = projectStatus(formData);
+  if (!status) return { error: "Status is required." };
   if (status === "active" && !CONTRACT_ACTIVATABLE_STATUSES.has(contract.status)) {
     return { error: `A project can't be activated while its contract is ${contract.status} — the contract must be Awarded or Active first.` };
   }
@@ -164,6 +169,7 @@ export async function updateProject(id: string, formData: FormData) {
   }
 
   const status = projectStatus(formData);
+  if (!status) return { error: "Status is required." };
   if (status === "active" && !CONTRACT_ACTIVATABLE_STATUSES.has(contract.status)) {
     return { error: `A project can't be activated while its contract is ${contract.status} — the contract must be Awarded or Active first.` };
   }

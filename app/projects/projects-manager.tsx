@@ -175,7 +175,13 @@ function ProjectForm({
   onCancel: () => void;
 }) {
   const [values, setValues] = useState({
-    contractId: defaultContractId || contracts[0]?.id || "",
+    // Blank unless a specific contract's own page linked here with
+    // ?contractId= — never silently defaulted to contracts[0], which
+    // used to pre-select "whichever contract is first alphabetically"
+    // and let people save a project against the wrong contract without
+    // noticing (and made the guide's field-walk skip straight past this
+    // field, since a pre-filled value reads as "already answered").
+    contractId: defaultContractId || "",
     contractorId: "",
     projectName: "",
     clientReference: "",
@@ -192,7 +198,11 @@ function ProjectForm({
     expectedPob: "",
     projectManagerUserId: "",
     operationsCoordinatorUserId: "",
-    status: "planned",
+    // Blank, not "planned" — status is mandatory (see isValid below) so
+    // the person creating the project picks the real starting status
+    // themselves instead of inheriting a default by omission, same
+    // reasoning as Contract Status (app/contracts/contracts-manager.tsx).
+    status: "",
     notes: "",
   });
   const [submitted, setSubmitted] = useState(false);
@@ -208,6 +218,7 @@ function ProjectForm({
   const isValid =
     values.projectName.trim() &&
     values.contractId &&
+    values.status &&
     values.country &&
     values.operatingRegion &&
     values.plannedStartDate &&
@@ -248,7 +259,7 @@ function ProjectForm({
             value={values.contractId}
             onChange={(e) => setValues((v) => ({ ...v, contractId: e.target.value, contractorId: "" }))}
           >
-            {contracts.length === 0 && <option value="">No contracts yet</option>}
+            <option value="">{contracts.length === 0 ? "No contracts yet" : "Select a contract…"}</option>
             {contracts.map((c) => (
               <option key={c.id} value={c.id} disabled={c.status === "completed" || c.status === "cancelled"}>
                 {c.contract_title} {(c.status === "completed" || c.status === "cancelled") ? `(${c.status})` : ""}
@@ -265,9 +276,10 @@ function ProjectForm({
             ))}
           </select>
         </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Status
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="projects.form.status">
+          Status <span style={{ color: "var(--ch-fail)" }}>*</span>
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.status} onChange={set("status")}>
+            <option value="">Select status…</option>
             {PROJECT_STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}

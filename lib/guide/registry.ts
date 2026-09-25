@@ -94,7 +94,8 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       route: "/projects",
       targetIds: ["projects.new-button", "projects.form.save"],
       fields: [
-        { id: "projects.form.contract", label: "Contract", hint: "Confirm this is the contract you just created (or pick the right one)." },
+        { id: "projects.form.contract", label: "Contract", hint: "Pick the contract you just created (or the right one, if you have more than one)." },
+        { id: "projects.form.status", label: "Status", hint: "Pick the project's current status — there's no default, so choose the one that's actually true today." },
         { id: "projects.form.name", label: "Project name", hint: "The project or campaign's name." },
         { id: "projects.form.country", label: "Country", hint: "Where this project operates." },
         { id: "projects.form.region", label: "Operating region", hint: "The specific operating region within that country." },
@@ -102,7 +103,7 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
         { id: "projects.form.end-date", label: "Planned end", hint: "When the project is planned to end." },
         { id: "projects.form.pob", label: "Expected POB", hint: "Expected people on board — drives readiness/compliance checks downstream." },
       ],
-      instruction: "Click “+ Add project”, choose the Contract you just created, fill in the required fields (Country, Operating region, planned dates, Expected POB), then Save.",
+      instruction: "Click “+ Add project”, then fill in every field marked with a red star — Contract, Status, Project name, Country, Operating region, planned dates, Expected POB — then Save.",
       why: "The crew matrix you're heading toward is created under a project, not directly under a contract.",
       prerequisites: ["contract.create"],
       completionEvent: "project.saved",
