@@ -20,7 +20,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   const { data: matrix } = await supabase
     .from("crew_matrices")
     .select(
-      "*, projects(project_name, operating_region), offshore_sites(id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status)"
+      "*, projects(project_name, operating_region), offshore_sites(id, name, code, site_type, country, operating_region, port_or_heliport, crew_change_location, status, notes, contractor_id, project_id, standard_rotation_template_id)"
     )
     .eq("id", id)
     .eq("org_id", access.orgId)
@@ -60,6 +60,9 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       { data: manningRequirements },
       { data: documentTemplates },
       { data: documentTemplateItems },
+      { data: contractors },
+      { data: clients },
+      { data: projects },
     ],
     workflowStage,
   ] = await Promise.all([
@@ -149,6 +152,12 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       .from("document_requirement_template_items")
       .select("id, template_id, document_type_id, is_mandatory, minimum_remaining_validity_days")
       .eq("org_id", access.orgId),
+    // Site tab — EPC contractor/client/project lookups so the site's own
+    // details (previously only editable from the standalone Offshore Sites
+    // page) can be edited in place here too, same fields, same action.
+    supabase.from("contractors").select("id, name, client_id").eq("org_id", access.orgId).order("name"),
+    supabase.from("clients").select("id, name").eq("org_id", access.orgId).order("name"),
+    supabase.from("projects").select("id, project_name, contractor_id").eq("org_id", access.orgId).order("project_name"),
     ]),
     // The current stage of this matrix's in-progress approval workflow
     // (see lib/workflow.ts) — null once it's approved/rejected/cancelled,
@@ -465,6 +474,10 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     port_or_heliport?: string | null;
     crew_change_location?: string | null;
     status?: string | null;
+    notes?: string | null;
+    contractor_id?: string | null;
+    project_id?: string | null;
+    standard_rotation_template_id?: string | null;
   } | null;
   // Phase 16 — the matrix's own region, for splitting Available Candidates
   // into region-matched vs other-region groups. Site's region wins when
@@ -573,7 +586,14 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
         port_or_heliport: site?.port_or_heliport ?? null,
         crew_change_location: site?.crew_change_location ?? null,
         status: site?.status ?? null,
+        notes: site?.notes ?? null,
+        contractor_id: site?.contractor_id ?? null,
+        project_id: site?.project_id ?? null,
+        standard_rotation_template_id: site?.standard_rotation_template_id ?? null,
       }}
+      contractors={contractors ?? []}
+      clients={clients ?? []}
+      projects={projects ?? []}
       manningRequirements={(manningRequirements ?? []).map((m) => ({
         id: m.id as string,
         offshore_site_id: m.offshore_site_id as string,

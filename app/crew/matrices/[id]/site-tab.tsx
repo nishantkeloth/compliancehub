@@ -2,8 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setManningRequirement, deleteManningRequirement } from "@/app/crew/setup/actions";
+import { setManningRequirement, deleteManningRequirement, updateOffshoreSite } from "@/app/crew/setup/actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import { COUNTRIES } from "@/lib/countries";
+import { REGIONS } from "@/lib/regions";
 import type { Ref, DocTemplate } from "./lines-editor";
 
 export type SiteInfo = {
@@ -16,6 +18,10 @@ export type SiteInfo = {
   port_or_heliport: string | null;
   crew_change_location: string | null;
   status: string | null;
+  notes: string | null;
+  contractor_id: string | null;
+  project_id: string | null;
+  standard_rotation_template_id: string | null;
 };
 export type ManningReq = {
   id: string;
@@ -25,8 +31,21 @@ export type ManningReq = {
   preferred_document_template_id: string | null;
 };
 
+// Same shapes as app/sites/sites-panel.tsx (the standalone Offshore Sites
+// page) — kept here too so the Crew Matrix's Site tab can edit every field
+// that page used to be the only place to edit.
+export type Contractor = { id: string; name: string; client_id: string };
+export type ClientRef = { id: string; name: string };
+export type ProjectRef = { id: string; project_name: string; contractor_id: string | null };
+
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
+const inputCls = "border rounded-lg px-3 py-2 text-sm";
+const inputStyle = { borderColor: "var(--ch-line)" };
+const lbl = "text-xs";
+const lblStyle = { color: "var(--ch-sub)" };
+
+const SITE_TYPES = ["vessel", "rig", "platform", "barge", "camp", "fpso", "other"];
 
 function BgErrorBanner({ error }: { error: string | null }) {
   if (!error) return null;
@@ -56,18 +75,206 @@ function Row({ label, value }: { label: string; value: string | null | undefined
   );
 }
 
+type SiteFormState = {
+  name: string;
+  code: string;
+  siteType: string;
+  contractorId: string;
+  projectId: string;
+  country: string;
+  operatingRegion: string;
+  portOrHeliport: string;
+  crewChangeLocation: string;
+  rotationTemplateId: string;
+  status: string;
+  notes: string;
+};
+
+function siteToFormState(site: SiteInfo): SiteFormState {
+  return {
+    name: site.name ?? "",
+    code: site.code ?? "",
+    siteType: site.site_type ?? "other",
+    contractorId: site.contractor_id ?? "",
+    projectId: site.project_id ?? "",
+    country: site.country ?? "",
+    operatingRegion: site.operating_region ?? "",
+    portOrHeliport: site.port_or_heliport ?? "",
+    crewChangeLocation: site.crew_change_location ?? "",
+    rotationTemplateId: site.standard_rotation_template_id ?? "",
+    status: site.status ?? "active",
+    notes: site.notes ?? "",
+  };
+}
+
+function SiteEditForm({
+  form,
+  setForm,
+  contractors,
+  eligibleProjects,
+  rotationTemplates,
+  error,
+  saving,
+  onSave,
+  onCancel,
+}: {
+  form: SiteFormState;
+  setForm: (updater: (prev: SiteFormState) => SiteFormState) => void;
+  contractors: Contractor[];
+  eligibleProjects: ProjectRef[];
+  rotationTemplates: Ref[];
+  error: string | null;
+  saving: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const set = <K extends keyof SiteFormState>(key: K, value: SiteFormState[K]) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
+  return (
+    <div className="space-y-2.5">
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <label className={lbl} style={lblStyle}>
+          Site name
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.name} onChange={(e) => set("name", e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Code
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.code} onChange={(e) => set("code", e.target.value)} />
+        </label>
+      </div>
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <label className={lbl} style={lblStyle}>
+          Site type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.siteType} onChange={(e) => set("siteType", e.target.value)}>
+            {SITE_TYPES.map((t) => (
+              <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Status
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.status} onChange={(e) => set("status", e.target.value)}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+      </div>
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <label className={lbl} style={lblStyle}>
+          EPC contractor
+          <select
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={form.contractorId}
+            onChange={(e) => setForm((prev) => ({ ...prev, contractorId: e.target.value, projectId: "" }))}
+          >
+            <option value="">No EPC contractor</option>
+            {contractors.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Project
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.projectId} onChange={(e) => set("projectId", e.target.value)}>
+            <option value="">
+              {eligibleProjects.length ? "No project" : form.contractorId ? "No projects under this contractor" : "No contractor-less projects"}
+            </option>
+            {eligibleProjects.map((p) => (
+              <option key={p.id} value={p.id}>{p.project_name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <label className={lbl} style={lblStyle}>
+          Country
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.country} onChange={(e) => set("country", e.target.value)}>
+            <option value="">Country…</option>
+            {form.country && !COUNTRIES.includes(form.country as (typeof COUNTRIES)[number]) && (
+              <option value={form.country}>{form.country} (unmatched — pick below)</option>
+            )}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Operating region
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.operatingRegion} onChange={(e) => set("operatingRegion", e.target.value)}>
+            <option value="">Operating region…</option>
+            {form.operatingRegion && !REGIONS.includes(form.operatingRegion) && (
+              <option value={form.operatingRegion}>{form.operatingRegion} (unmatched — pick below)</option>
+            )}
+            {REGIONS.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <label className={lbl} style={lblStyle}>
+          Port / heliport
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.portOrHeliport} onChange={(e) => set("portOrHeliport", e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Crew-change location
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.crewChangeLocation} onChange={(e) => set("crewChangeLocation", e.target.value)} />
+        </label>
+      </div>
+      <label className={`${lbl} block`} style={lblStyle}>
+        Standard rotation template
+        <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.rotationTemplateId} onChange={(e) => set("rotationTemplateId", e.target.value)}>
+          <option value="">No standard rotation</option>
+          {rotationTemplates.map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className={`${lbl} block`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} />
+      </label>
+      {error && (
+        <div className="text-xs" style={{ color: "var(--ch-fail)" }}>
+          {error}
+        </div>
+      )}
+      <div className="flex items-center gap-2 pt-1">
+        <button onClick={onSave} disabled={saving || !form.name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button onClick={onCancel} disabled={saving} className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50" style={{ borderColor: "var(--ch-line)" }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SiteTab({
   site,
+  contractors,
+  clients,
+  projects,
+  rotationTemplates,
   jobRoles,
   manningRequirements,
   documentTemplates,
   canManageManning,
+  canEditSite,
 }: {
   site: SiteInfo;
+  contractors: Contractor[];
+  clients: ClientRef[];
+  projects: ProjectRef[];
+  rotationTemplates: Ref[];
   jobRoles: Ref[];
   manningRequirements: ManningReq[];
   documentTemplates: DocTemplate[];
   canManageManning: boolean;
+  canEditSite: boolean;
 }) {
   const router = useRouter();
   const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(manningRequirements);
@@ -162,22 +369,108 @@ export default function SiteTab({
     });
   };
 
+  // ---- Site details, editable in place (previously only editable from the
+  // standalone Offshore Sites page) ----
+  const [editingSite, setEditingSite] = useState(false);
+  const [siteForm, setSiteForm] = useState<SiteFormState>(() => siteToFormState(site));
+  const [siteSaving, setSiteSaving] = useState(false);
+  const [siteError, setSiteError] = useState<string | null>(null);
+  const [, startSiteTransition] = useTransition();
+
+  const startEditSite = () => {
+    setSiteForm(siteToFormState(site));
+    setSiteError(null);
+    setEditingSite(true);
+  };
+
+  const eligibleProjects = siteForm.contractorId
+    ? projects.filter((p) => p.contractor_id === siteForm.contractorId || p.contractor_id === null)
+    : projects.filter((p) => p.contractor_id === null);
+
+  const contractorLabel = (id: string | null) => {
+    const contractor = contractors.find((c) => c.id === id);
+    if (!contractor) return null;
+    const client = clients.find((cl) => cl.id === contractor.client_id);
+    return client ? `${contractor.name} (${client.name})` : contractor.name;
+  };
+
+  const saveSite = () => {
+    if (!siteForm.name.trim() || siteSaving) return;
+    setSiteError(null);
+    setSiteSaving(true);
+    const fd = new FormData();
+    fd.set("name", siteForm.name.trim());
+    fd.set("code", siteForm.code.trim());
+    fd.set("siteType", siteForm.siteType);
+    fd.set("contractorId", siteForm.contractorId);
+    fd.set("projectId", siteForm.projectId);
+    fd.set("country", siteForm.country.trim());
+    fd.set("operatingRegion", siteForm.operatingRegion.trim());
+    fd.set("portOrHeliport", siteForm.portOrHeliport.trim());
+    fd.set("crewChangeLocation", siteForm.crewChangeLocation.trim());
+    fd.set("standardRotationTemplateId", siteForm.rotationTemplateId);
+    fd.set("status", siteForm.status);
+    fd.set("notes", siteForm.notes.trim());
+    startSiteTransition(async () => {
+      const res = await updateOffshoreSite(site.id, fd);
+      setSiteSaving(false);
+      if (res?.error) {
+        setSiteError(res.error);
+        return;
+      }
+      setEditingSite(false);
+      router.refresh();
+    });
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div className={`${cardCls} p-4`} style={cardStyle}>
-        <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Site</div>
-        <Row label="Name" value={site.name} />
-        <Row label="Code" value={site.code} />
-        <Row label="Type" value={site.site_type} />
-        <Row label="Country" value={site.country} />
-        <Row label="Operating region" value={site.operating_region} />
-        <Row label="Port / heliport" value={site.port_or_heliport} />
-        <Row label="Crew-change location" value={site.crew_change_location} />
-        <Row label="Status" value={site.status} />
-        <div className="text-xs mt-3" style={{ color: "var(--ch-sub)" }}>
-          To change these details, edit the site from{" "}
-          <a href="/sites" className="ch-link-navy font-semibold">Offshore Sites</a>.
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Site</div>
+          {canEditSite && !editingSite && (
+            <button onClick={startEditSite} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>
+              Edit
+            </button>
+          )}
         </div>
+        {editingSite ? (
+          <SiteEditForm
+            form={siteForm}
+            setForm={setSiteForm}
+            contractors={contractors}
+            eligibleProjects={eligibleProjects}
+            rotationTemplates={rotationTemplates}
+            error={siteError}
+            saving={siteSaving}
+            onSave={saveSite}
+            onCancel={() => setEditingSite(false)}
+          />
+        ) : (
+          <>
+            <Row label="Name" value={site.name} />
+            <Row label="Code" value={site.code} />
+            <Row label="Type" value={site.site_type} />
+            <Row label="EPC contractor" value={contractorLabel(site.contractor_id)} />
+            <Row label="Project" value={projects.find((p) => p.id === site.project_id)?.project_name} />
+            <Row label="Country" value={site.country} />
+            <Row label="Operating region" value={site.operating_region} />
+            <Row label="Port / heliport" value={site.port_or_heliport} />
+            <Row label="Crew-change location" value={site.crew_change_location} />
+            <Row label="Standard rotation" value={rotationTemplates.find((r) => r.id === site.standard_rotation_template_id)?.name} />
+            <Row label="Status" value={site.status} />
+            {site.notes && (
+              <div className="text-xs mt-3 pt-2 border-t" style={{ color: "var(--ch-sub)", borderColor: "var(--ch-line)" }}>
+                {site.notes}
+              </div>
+            )}
+            {!canEditSite && (
+              <div className="text-xs mt-3" style={{ color: "var(--ch-sub)" }}>
+                You don&rsquo;t have permission to edit site details.
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div className={`${cardCls} p-4`} style={cardStyle}>
@@ -186,9 +479,8 @@ export default function SiteTab({
         </div>
         <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
           Check off every role this site needs, with its minimum headcount — used when generating a matrix
-          from manning requirements, and shared with the Offshore Sites page. Optionally pick a document
-          template per role too, so a generated matrix&rsquo;s line for that role starts with that
-          template&rsquo;s document checklist already applied.
+          from manning requirements. Optionally pick a document template per role too, so a generated matrix&rsquo;s
+          line for that role starts with that template&rsquo;s document checklist already applied.
         </div>
         <BgErrorBanner error={bgError} />
         {jobRoles.length === 0 ? (

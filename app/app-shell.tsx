@@ -67,9 +67,11 @@ export default async function AppShell({
   if (can(access, "projects.view")) {
     contractItems.push({ href: "/projects", key: "projects", label: "Projects" });
   }
-  if (can(access, "crew.manage")) {
-    contractItems.push({ href: "/sites", key: "sites", label: "Offshore Sites" });
-  }
+  // Offshore Sites removed from the sidebar per Nishant's request — same
+  // treatment as Vessel Roster/Contractors above: page and data untouched,
+  // still reachable directly at /sites, but full site management (create,
+  // edit every field, manning requirements) now also lives on the Crew
+  // Matrix's own Site tab, so day-to-day use doesn't need this page anymore.
 
   const crewItems: NavItem[] = [];
   if (can(access, "crew.view")) {

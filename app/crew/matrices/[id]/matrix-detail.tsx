@@ -26,7 +26,7 @@ import LinesEditor, { type Line, type Ref, type DocTypeRef, type DocTemplate } f
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
-import SiteTab, { type SiteInfo, type ManningReq } from "./site-tab";
+import SiteTab, { type SiteInfo, type ManningReq, type Contractor, type ClientRef, type ProjectRef } from "./site-tab";
 
 type Matrix = {
   id: string;
@@ -61,6 +61,9 @@ const lblStyle = { color: "var(--ch-sub)" };
 export default function MatrixDetail({
   matrix,
   site,
+  contractors,
+  clients,
+  projects,
   manningRequirements,
   lines,
   history,
@@ -86,6 +89,9 @@ export default function MatrixDetail({
 }: {
   matrix: Matrix;
   site: SiteInfo;
+  contractors: Contractor[];
+  clients: ClientRef[];
+  projects: ProjectRef[];
   manningRequirements: ManningReq[];
   lines: Line[];
   history: HistoryRow[];
@@ -472,10 +478,15 @@ export default function MatrixDetail({
       {tab === "site" && (
         <SiteTab
           site={site}
+          contractors={contractors}
+          clients={clients}
+          projects={projects}
+          rotationTemplates={rotationTemplates}
           jobRoles={jobRoles}
           manningRequirements={manningRequirements}
           documentTemplates={documentTemplates}
           canManageManning={canAssignCrew}
+          canEditSite={canAssignCrew}
         />
       )}
 
