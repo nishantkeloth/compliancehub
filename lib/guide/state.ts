@@ -18,6 +18,13 @@ export type GuideState = {
   workflowVersion: number;
   currentStepId: string;
   completedStepIds: string[];
+  // Ordered step ids actually visited on THIS run, current step last —
+  // e.g. ["contract.create", "project.create", "matrix.mode.choice",
+  // "matrix.create.blank"]. Steps form a graph (a creation-mode choice
+  // can diverge into different real paths), so "the step before this
+  // one" isn't a fixed array position — Previous/progress-dots walk this
+  // list instead of workflow.steps.
+  history: string[];
   recordRefs: Record<string, string>;
   paused: boolean;
   startedAt: string;

@@ -10,14 +10,21 @@
 // workflows/steps defined in lib/guide/registry.ts (the allow-listed
 // registry) — nothing here accepts an arbitrary route, selector or step
 // from chat/AI input.
+//
+// Steps form a graph (see lib/guide/types.ts's `next`/`kind: "choice"`),
+// not a flat array walked by index — a creation-mode choice can diverge
+// into different real paths before converging back on the same goal.
+// `state.history` is the ordered list of step ids actually visited on
+// this run; Previous and the progress dots walk that, not
+// `workflow.steps`.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getWorkflow } from "@/lib/guide/registry";
 import { clearGuideState, loadGuideState, saveGuideState, type GuideState } from "@/lib/guide/state";
 import type { GuidedStep, GuidedWorkflow } from "@/lib/guide/types";
 
-function fillRoute(route: string, recordRefs: Record<string, string>): string {
-  return route.replace(/\{(\w+)\}/g, (_, key: string) => recordRefs[key] ?? "");
+function fillTemplate(input: string, recordRefs: Record<string, string>): string {
+  return input.replace(/\{(\w+)\}/g, (_, key: string) => recordRefs[key] ?? "");
 }
 
 // A route template with an unresolved {placeholder} means the record it
@@ -31,29 +38,21 @@ type GuideContextValue = {
   state: GuideState | null;
   workflow: GuidedWorkflow | null;
   currentStep: GuidedStep | null;
-  currentStepIndex: number;
   resolvedRoute: string | null;
-  // Steps whose route already resolves (all record placeholders filled)
-  // and whose prerequisites are complete — what the shell shows as
-  // available vs. still-locked in the compact overview.
   start: (workflowId: string, startPointId: string) => void;
   pause: () => void;
   resume: () => void;
   previous: () => void;
   next: () => void;
   skip: () => void;
+  // "choice"-kind steps only — advances straight to the picked option's
+  // next step id. No completion event: the pick itself is the action.
+  choose: (nextStepId: string) => void;
   changeStart: () => void;
   end: () => void;
   notifyCompletion: (eventName: string, payload?: { recordId?: string }) => boolean;
-  // True while the start-point picker should be shown instead of the
-  // running overlay (initial activation, or "Change starting point").
   pickingStart: boolean;
-  // Which workflow the picker is choosing a start point for — set by
-  // openPicker() (fresh activation) or changeStart() (mid-guide).
   pickingWorkflowId: string | null;
-  // Fresh activation for a specific, already-known workflow (e.g. from an
-  // assistant-panel "Guide me: <workflow title>" suggestion) — opens
-  // straight to that workflow's start-point picker.
   openPicker: (workflowId: string) => void;
   closePicker: () => void;
 };
@@ -92,7 +91,7 @@ export function GuideProvider({ userScopeKey, children }: { userScopeKey: string
       return;
     }
     const step = wf.steps.find((s) => s.id === saved.currentStepId);
-    if (!step) {
+    if (!step || !Array.isArray(saved.history) || saved.history.length === 0) {
       clearGuideState();
       return;
     }
@@ -109,13 +108,9 @@ export function GuideProvider({ userScopeKey, children }: { userScopeKey: string
     () => (state && workflow ? workflow.steps.find((s) => s.id === state.currentStepId) ?? null : null),
     [state, workflow]
   );
-  const currentStepIndex = useMemo(
-    () => (workflow && currentStep ? workflow.steps.findIndex((s) => s.id === currentStep.id) : -1),
-    [workflow, currentStep]
-  );
   const resolvedRoute = useMemo(() => {
     if (!currentStep || !state) return null;
-    const route = fillRoute(currentStep.route, state.recordRefs);
+    const route = fillTemplate(currentStep.route, state.recordRefs);
     return routeIsResolved(route) ? route : null;
   }, [currentStep, state]);
 
@@ -140,6 +135,7 @@ export function GuideProvider({ userScopeKey, children }: { userScopeKey: string
       workflowVersion: wf.version,
       currentStepId: startPoint.firstStepId,
       completedStepIds: [],
+      history: [startPoint.firstStepId],
       recordRefs: {},
       paused: false,
       startedAt: new Date().toISOString(),
@@ -151,33 +147,49 @@ export function GuideProvider({ userScopeKey, children }: { userScopeKey: string
   const pause = useCallback(() => setState((s) => (s ? { ...s, paused: true } : s)), []);
   const resume = useCallback(() => setState((s) => (s ? { ...s, paused: false } : s)), []);
 
-  const goToStep = useCallback((stepId: string) => {
-    setState((s) => (s ? { ...s, currentStepId: stepId, paused: false } : s));
+  const previous = useCallback(() => {
+    setState((s) => {
+      if (!s || s.history.length <= 1) return s;
+      const history = s.history.slice(0, -1);
+      return { ...s, history, currentStepId: history[history.length - 1], paused: false };
+    });
   }, []);
 
-  const previous = useCallback(() => {
-    if (!workflow || currentStepIndex <= 0) return;
-    goToStep(workflow.steps[currentStepIndex - 1].id);
-  }, [workflow, currentStepIndex, goToStep]);
+  // Shared by notifyCompletion, skip and choose: marks `stepId` done and
+  // moves to `nextId` (undefined = the workflow's own goal — end it).
+  const advanceTo = useCallback((wf: GuidedWorkflow, stepId: string, nextId: string | undefined, recordRefs: Record<string, string>) => {
+    setState((s) => {
+      if (!s) return s;
+      const completedStepIds = s.completedStepIds.includes(stepId) ? s.completedStepIds : [...s.completedStepIds, stepId];
+      if (!nextId || !wf.steps.some((st) => st.id === nextId)) {
+        clearGuideState();
+        return null;
+      }
+      return { ...s, completedStepIds, recordRefs, currentStepId: nextId, history: [...s.history, nextId], paused: false };
+    });
+  }, []);
 
   const next = useCallback(() => {
-    if (!workflow || !state || currentStepIndex < 0) return;
+    if (!workflow || !state) return;
     // Only when the current step is actually done — Next never skips an
     // incomplete business action (doc 1.5: "Next (only if the step permits it)").
     if (!state.completedStepIds.includes(state.currentStepId)) return;
-    if (currentStepIndex + 1 < workflow.steps.length) {
-      goToStep(workflow.steps[currentStepIndex + 1].id);
-    } else {
-      // Reached the workflow's goal milestone.
-      setState(null);
-      clearGuideState();
-    }
-  }, [workflow, state, currentStepIndex, goToStep]);
+    const step = workflow.steps.find((s) => s.id === state.currentStepId);
+    if (!step) return;
+    advanceTo(workflow, step.id, step.next, state.recordRefs);
+  }, [workflow, state, advanceTo]);
 
   const skip = useCallback(() => {
-    if (!currentStep?.canSkip) return;
-    next();
-  }, [currentStep, next]);
+    if (!currentStep?.canSkip || !workflow || !state) return;
+    advanceTo(workflow, currentStep.id, currentStep.next, state.recordRefs);
+  }, [currentStep, workflow, state, advanceTo]);
+
+  const choose = useCallback((nextStepId: string) => {
+    if (!currentStep || currentStep.kind !== "choice" || !workflow || !state) return;
+    const valid = currentStep.options?.some((o) => o.next === nextStepId);
+    if (!valid) return;
+    advanceTo(workflow, currentStep.id, nextStepId, state.recordRefs);
+  }, [currentStep, workflow, state, advanceTo]);
 
   const changeStart = useCallback(() => {
     if (state) setPendingWorkflowId(state.workflowId);
@@ -211,34 +223,21 @@ export function GuideProvider({ userScopeKey, children }: { userScopeKey: string
       // Matched against the live `state`, not a stale closure — this
       // function is recreated whenever `state` changes (see deps below),
       // so the check below always reflects the current step.
-      if (!state) return false;
-      const wf = getWorkflow(state.workflowId);
-      const step = wf?.steps.find((st) => st.id === state.currentStepId);
-      if (!wf || !step || step.completionEvent !== eventName) return false;
+      if (!state || !workflow) return false;
+      const step = workflow.steps.find((st) => st.id === state.currentStepId);
+      if (!step || step.kind === "choice" || step.completionEvent !== eventName) return false;
 
-      setState((s) => {
-        if (!s) return s;
-        const completedStepIds = s.completedStepIds.includes(step.id) ? s.completedStepIds : [...s.completedStepIds, step.id];
-        const recordRefs = step.producesRecord && payload?.recordId ? { ...s.recordRefs, [step.producesRecord]: payload.recordId } : s.recordRefs;
-        const idx = wf.steps.findIndex((st) => st.id === step.id);
-        const nextStep = wf.steps[idx + 1];
-        if (!nextStep) {
-          // Goal milestone reached — nothing left to advance to.
-          clearGuideState();
-          return null;
-        }
-        return { ...s, completedStepIds, recordRefs, currentStepId: nextStep.id, paused: false };
-      });
+      const recordRefs = step.producesRecord && payload?.recordId ? { ...state.recordRefs, [step.producesRecord]: payload.recordId } : state.recordRefs;
+      advanceTo(workflow, step.id, step.next, recordRefs);
       return true;
     },
-    [state]
+    [state, workflow, advanceTo]
   );
 
   const value: GuideContextValue = {
     state,
     workflow,
     currentStep,
-    currentStepIndex,
     resolvedRoute,
     start,
     pause,
@@ -246,6 +245,7 @@ export function GuideProvider({ userScopeKey, children }: { userScopeKey: string
     previous,
     next,
     skip,
+    choose,
     changeStart,
     end,
     notifyCompletion,

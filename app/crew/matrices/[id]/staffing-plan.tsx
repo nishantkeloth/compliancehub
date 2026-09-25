@@ -53,6 +53,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { Line, DocTypeRef } from "./lines-editor";
 import { DOCUMENT_STATUS_COLORS } from "@/lib/document-status";
 import { assignCandidateToMatrix, unassignCandidateFromMatrix, reserveCandidateForLine, unreserveCandidate } from "./staffing-actions";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 import { requestRosterChange } from "./roster-change-actions";
 import { REASON_CODES } from "./roster-change-shared";
 import {
@@ -979,6 +980,7 @@ function RowActions({
   onUnassigned: (crewId: string) => void;
   onReservationChanged?: (crewId: string, reservation: ReservationInfo | null) => void;
 }) {
+  const guide = useGuideMaybe();
   const today = new Date().toISOString().slice(0, 10);
   const [busy, setBusy] = useState<"assign" | "unassign" | "request" | "reserve" | "unreserve" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1029,6 +1031,7 @@ function RowActions({
     // immediately, with the dates just entered, rather than waiting on the
     // slower full-page refresh below to land before the UI reflects it.
     onAssigned(crewId, { assignment_start_date: assignDate, assignment_planned_end_date: plannedEndDate || null });
+    guide?.notifyCompletion("matrix.staffing.assigned", { recordId: crewMatrixId });
     onChanged?.();
   };
 
@@ -1247,6 +1250,7 @@ function RowActions({
                   <button
                     onClick={doAssign}
                     disabled={busy !== null}
+                    data-guide-id="matrix.staffing.assign-button"
                     className="text-[11px] font-semibold rounded px-2 py-1 border disabled:opacity-50"
                     style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
                   >

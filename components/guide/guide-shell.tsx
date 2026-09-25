@@ -2,12 +2,16 @@
 
 // Guided Workflows — GuideShell.
 //
-// The progress chrome doc section 1.5 asks for: a compact "Step X of N"
-// overview, and Pause/Resume/Previous/Next/Skip/Change starting
-// point/End guide. Docked bottom-left (AssistantPanel already owns
-// bottom-right) as a slim bar on desktop; below sm it becomes a full-
-// width bottom sheet so it never sits over the highlighted control on a
-// phone screen (doc 4.8).
+// The progress chrome doc section 1.5 asks for: a compact overview, and
+// Pause/Resume/Previous/Next/Skip/Change starting point/End guide.
+// Docked bottom-left (AssistantPanel already owns bottom-right) as a
+// slim bar on desktop; below sm it becomes a full-width bottom sheet so
+// it never sits over the highlighted control on a phone screen (doc 4.8).
+//
+// Progress is shown as "Step N" (N = state.history.length, the steps
+// actually visited on this run) rather than "Step N of TOTAL" — steps
+// form a graph (see lib/guide/types.ts), so a workflow with a creation-
+// mode choice doesn't have one fixed total step count to claim.
 import { getWorkflow } from "@/lib/guide/registry";
 import { useGuide } from "./guide-context";
 
@@ -16,7 +20,7 @@ const barStyle = { borderColor: "var(--ch-line)" };
 
 export default function GuideShell() {
   const guide = useGuide();
-  const { state, workflow, currentStep, currentStepIndex, pickingStart, pickingWorkflowId } = guide;
+  const { state, workflow, currentStep, pickingStart, pickingWorkflowId } = guide;
 
   if (pickingStart && pickingWorkflowId) {
     const wf = getWorkflow(pickingWorkflowId);
@@ -47,11 +51,11 @@ export default function GuideShell() {
     );
   }
 
-  if (!state || !workflow || !currentStep || currentStepIndex < 0) return null;
+  if (!state || !workflow || !currentStep) return null;
 
-  const total = workflow.steps.length;
-  const stepNum = currentStepIndex + 1;
+  const stepNum = state.history.length;
   const currentDone = state.completedStepIds.includes(currentStep.id);
+  const isChoice = currentStep.kind === "choice";
 
   return (
     <div
@@ -69,35 +73,50 @@ export default function GuideShell() {
       </div>
 
       <div className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>
-        Step {stepNum} of {total}: {currentStep.label}
+        Step {stepNum}: {currentStep.label}
         {state.paused && <span className="ml-1.5 font-semibold" style={{ color: "var(--ch-fail)" }}>· Paused</span>}
         {currentDone && !state.paused && <span className="ml-1.5 font-semibold" style={{ color: "var(--ch-pass)" }}>· Done</span>}
       </div>
 
-      {/* Progress dots — filled = completed, ringed = current */}
+      {/* Progress dots — one per step actually visited this run; filled = a
+          past step (all past steps are, by definition, done — the engine
+          only ever advances on a real completion event), ringed = current. */}
       <div className="flex items-center gap-1 mb-2.5">
-        {workflow.steps.map((s, i) => (
+        {state.history.map((stepId, i) => (
           <span
-            key={s.id}
+            key={`${stepId}-${i}`}
             className="h-1.5 flex-1 rounded-full"
-            style={{
-              background: state.completedStepIds.includes(s.id)
-                ? "var(--ch-pass)"
-                : i === currentStepIndex
-                ? "var(--ch-navy)"
-                : "var(--ch-line)",
-            }}
+            style={{ background: i < stepNum - 1 ? "var(--ch-pass)" : "var(--ch-navy)" }}
           />
         ))}
       </div>
 
+      {isChoice ? (
+        <div className="space-y-1.5 mb-2.5">
+          <p className="text-xs" style={{ color: "var(--ch-ink)" }}>{currentStep.instruction}</p>
+          {currentStep.options?.map((opt) => (
+            <button
+              key={opt.next}
+              onClick={() => guide.choose(opt.next)}
+              className="block w-full text-left rounded-lg border px-3 py-2 hover:bg-[var(--ch-paper)]"
+              style={{ borderColor: "var(--ch-line)" }}
+            >
+              <div className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{opt.label}</div>
+              {opt.description && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>{opt.description}</div>}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={guide.previous} disabled={currentStepIndex === 0} className="text-xs font-semibold disabled:opacity-30" style={{ color: "var(--ch-navy)" }}>
+        <button onClick={guide.previous} disabled={state.history.length <= 1} className="text-xs font-semibold disabled:opacity-30" style={{ color: "var(--ch-navy)" }}>
           ← Previous
         </button>
-        <button onClick={guide.next} disabled={!currentDone} className="text-xs font-semibold disabled:opacity-30" style={{ color: "var(--ch-navy)" }}>
-          Next →
-        </button>
+        {!isChoice && (
+          <button onClick={guide.next} disabled={!currentDone} className="text-xs font-semibold disabled:opacity-30" style={{ color: "var(--ch-navy)" }}>
+            Next →
+          </button>
+        )}
         {currentStep.canSkip && (
           <button onClick={guide.skip} className="text-xs font-semibold" style={{ color: "var(--ch-sub)" }}>Skip</button>
         )}

@@ -1,28 +1,54 @@
-// Guided Workflows — Phase 1 vertical slice.
+// Guided Workflows.
 //
 // A GuidedStep never carries a raw selector, script or arbitrary route —
-// only a stable `targetId` (matched against a `data-guide-id` attribute
+// only stable `data-guide-id` target ids (matched against attributes
 // already rendered by the real screen) and a `route` path that uses the
 // app's own Next.js routes. Nothing here can point at an invented field:
-// if `targetId` isn't actually on the page, GuideOverlay reports it as
+// if a target isn't actually on the page, GuideOverlay reports it as
 // missing rather than guessing at a position. See app/crew/matrices for
 // the reference on how a completion event is fired only after a real
 // server action succeeds (never on click/input alone).
+//
+// Steps form a graph, not a flat sequence: each step names its own
+// `next` step id (undefined = the workflow's goal milestone is reached).
+// This is what lets one creation-mode choice (Blank draft vs AI Create
+// from Documents) diverge into two different real paths that converge
+// back on the same "draft matrix created" goal, without the engine
+// pretending every branch has the same length.
+export type ChoiceOption = {
+  label: string;
+  description?: string;
+  // Step id this option leads to.
+  next: string;
+};
+
 export type GuidedStep = {
   id: string;
   label: string;
   // Path this step's target lives on. Relative, no query string — the
   // guide only ever pushes routes the app itself defines.
   route: string;
-  // Matches a `data-guide-id="<id>"` attribute on the real DOM node. An
-  // array, not a single id, because one guided step often spans a
-  // reveal-then-fill sequence on the same screen (e.g. open a tab, click
-  // "+ Add", then Save) — authored earliest-element-first,
+  // "target" (default): highlights a real DOM node and waits for a real
+  // completion event. "choice": no DOM target at all — GuideShell renders
+  // `options` as buttons, and picking one advances immediately (the
+  // choice itself is the whole action, so there's no server event to
+  // wait on). Used for the one place this app makes the user pick
+  // between real, mutually exclusive paths (crew matrix creation mode).
+  kind?: "target" | "choice";
+  options?: ChoiceOption[];
+  // Matches a `data-guide-id="<id>"` attribute on the real DOM node.
+  // Required when kind is "target" (or omitted, since "target" is the
+  // default). An array, not a single id, because one guided step often
+  // spans a reveal-then-fill sequence on the same screen (e.g. open a
+  // tab, click "+ Add", then Save) — authored earliest-element-first,
   // most-specific-element-last. GuideOverlay highlights the LAST id in
   // this list that's currently present in the DOM, so the highlight
   // tracks how far the user has actually gotten rather than assuming a
-  // fixed layout or that earlier elements have unmounted.
-  targetIds: string[];
+  // fixed layout or that earlier elements have unmounted. May contain
+  // "{recordKey}" placeholders filled from the workflow's recorded refs
+  // (e.g. "sites.manning-toggle:{siteId}") for a target that only makes
+  // sense scoped to one specific record.
+  targetIds?: string[];
   // Short instruction shown in the tooltip/shell. Kept as plain text (not
   // an instructionKey/i18n table) since this app has no i18n layer yet —
   // a real deployment with one would swap this for a lookup.
@@ -33,21 +59,27 @@ export type GuidedStep = {
   prerequisites: string[];
   // The event name this step waits for (fired by notifyCompletion() from
   // the real component after its real server action returns success).
-  // Advancement never happens on a bare click or route change.
-  completionEvent: string;
+  // Advancement never happens on a bare click or route change. Required
+  // when kind is "target".
+  completionEvent?: string;
   // When this step's completion fires with a record id in its payload,
   // store it under this key (e.g. "matrixId") so a later step's `route`
-  // can reference it as "{matrixId}" — the only templating this engine
-  // does; the id always comes from a real server action's own return
-  // value, never guessed.
+  // or `targetIds` can reference it as "{matrixId}" — the only
+  // templating this engine does; the id always comes from a real server
+  // action's own return value, never guessed.
   producesRecord?: string;
   canSkip: boolean;
-  onMissingTarget: "wait" | "recover" | "unsupported";
+  onMissingTarget?: "wait" | "recover" | "unsupported";
   // Shown when onMissingTarget is "unsupported" and the target truly isn't
   // reachable (e.g. the user lacks permission, so the real button never
   // rendered in the first place — the guide defers to that, it never
   // grants access itself).
   unsupportedMessage?: string;
+  // The step id this one leads to once it completes (or, for a "choice"
+  // step, once one of its `options` is picked — that value then wins over
+  // this field). Undefined means completing this step reaches the
+  // workflow's goal milestone.
+  next?: string;
 };
 
 export type StartPoint = {

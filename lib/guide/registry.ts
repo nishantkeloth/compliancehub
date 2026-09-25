@@ -1,37 +1,56 @@
 import type { GuidedWorkflow } from "./types";
 
-// Guided Workflows registry — Phase 1 vertical slice.
+// Guided Workflows registry.
 //
 // This is the allow-listed source of truth the doc's section 5.1/5.2
-// requires: workflow graphs, not a single hard-coded tour, and the ONLY
-// place a workflow/step id is defined. The chat entry point (see
-// lib/guide/intent.ts) can only ever resolve to a (workflowId,
-// startPointId) pair that exists here — it never emits a route, selector
-// or step definition itself.
+// requires: a step GRAPH (via each step's `next`), not a single
+// hard-coded linear tour, and the ONLY place a workflow/step id is
+// defined. The chat entry point (see lib/guide/intent.ts) can only ever
+// resolve to a (workflowId, startPointId) pair that exists here — it
+// never emits a route, selector or step definition itself.
 //
-// Coverage note (see the Phase 0 discovery report for the full picture):
-// the New Crew Matrix screen's "Blank draft" mode always creates a brand
-// new offshore site as part of creating the matrix — there is no way to
-// pick an existing site there. So this workflow's "vessel/site" and
-// "create the matrix" steps are genuinely the same screen in this app,
-// not two — the guide reflects that honestly rather than pretending a
-// separate site-picker step exists. Manning is defined afterward as a
-// manning LINE on the matrix's own Lines tab (crew_matrix_lines), which is
-// the real, always-reachable equivalent of "define the manning
-// requirement" for a specific draft matrix. The site's own STANDING
-// manning requirements (site_manning_requirements, used only by
-// "Generate from manning requirements" mode) are a separate concept,
-// covered by the second workflow below — see the discovery report for why
-// that generate-mode is currently unreachable in practice.
+// Coverage note (see the Phase 0 discovery report for the full picture
+// on the app as a whole, and the Phase 15 discovery report addendum for
+// this branch): the New Crew Matrix screen's "Blank draft" mode always
+// creates a brand new offshore site as part of creating the matrix —
+// there is no way to pick an existing site there. So this workflow's
+// "vessel/site" and "create the matrix" steps are genuinely the same
+// screen in this app for that mode, not two — the guide reflects that
+// honestly rather than pretending a separate site-picker step exists.
+//
+// Crew matrix creation offers three real modes on one screen (Blank
+// draft / Generate from manning requirements / AI Create from
+// Documents); only two are wired into this workflow as a genuine
+// branch (matrix.mode.choice). "Generate from manning requirements" is
+// deliberately left out of the branch: as currently built it always
+// pairs a brand-new, requirement-less site with the generate call, so it
+// can never actually succeed (see the discovery report) — offering it
+// here would be guiding the user into a dead end. The two branches that
+// DO work:
+//   - Blank draft → add the manning line yourself (matrix.create.blank
+//     → matrix.line.add): manual, always available.
+//   - AI Create from Documents (matrix.create.ai): upload/paste a
+//     requirement, review the AI's proposed lines — resolve any
+//     unmapped role/document/skill, tick every assumption and open
+//     question — then save. Nothing is written until that review is
+//     confirmed (AiGenerate's own proposal/save split already enforces
+//     this; the guide just points at it). Converges on the same goal as
+//     the manual path, since saving a generated proposal creates the
+//     matrix AND its lines together in one step — there's no separate
+//     "add a line" step after it.
+// Both branches converge on an optional (skippable) "assign crew to a
+// slot" continuation on the Staffing Plan tab, matching the spec's
+// "show later stages as optional continuation" — the workflow's real
+// goal, "Draft matrix created", is already reached before that point.
 export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
   id: "crew-matrix-full",
-  version: 1,
+  version: 2,
   title: "Create a crew matrix",
   goal: "Draft matrix created",
   startPoints: [
     { id: "contract", label: "Start from Client/Contract", description: "Create or choose a contract first.", firstStepId: "contract.create" },
     { id: "project", label: "Start from Project", description: "I already have a contract — create the project.", firstStepId: "project.create" },
-    { id: "matrix", label: "Start from Crew Matrix", description: "I already have a project — create the draft matrix.", firstStepId: "matrix.create" },
+    { id: "matrix", label: "Start from Crew Matrix", description: "I already have a project — create the draft matrix.", firstStepId: "matrix.mode.choice" },
   ],
   steps: [
     {
@@ -47,6 +66,7 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to manage contracts, or a client needs to exist first (Clients).",
+      next: "project.create",
     },
     {
       id: "project.create",
@@ -61,20 +81,35 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to manage projects, or no contract exists yet.",
+      next: "matrix.mode.choice",
     },
     {
-      id: "matrix.create",
+      id: "matrix.mode.choice",
+      label: "Choose how to build the matrix",
+      route: "/crew/matrices/new",
+      kind: "choice",
+      instruction: "Fill in Project and give the new site a name first — both apply either way — then pick how to build it:",
+      prerequisites: ["project.create"],
+      canSkip: false,
+      options: [
+        { label: "Blank draft", description: "Add manning lines yourself afterward.", next: "matrix.create.blank" },
+        { label: "✦ AI Create from Documents", description: "Upload or paste a requirement — review the AI's proposal before anything saves.", next: "matrix.create.ai" },
+      ],
+    },
+    {
+      id: "matrix.create.blank",
       label: "Create the draft crew matrix",
       route: "/crew/matrices/new",
       targetIds: ["matrix.mode.blank", "matrix.form.save"],
-      instruction: "Blank draft mode is already selected. Choose the Project, give the new site a name, give the matrix a Title, then Create draft matrix.",
+      instruction: "Blank draft mode is selected. Give the matrix a Title, then Create draft matrix.",
       why: "This creates a new offshore site together with the draft matrix in one step — there's no separate site-picker on this screen.",
-      prerequisites: ["project.create"],
+      prerequisites: ["matrix.mode.choice"],
       completionEvent: "matrix.draft.created",
       producesRecord: "matrixId",
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to manage crew matrices, or no project exists yet.",
+      next: "matrix.line.add",
     },
     {
       id: "matrix.line.add",
@@ -83,11 +118,41 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       targetIds: ["matrix.tab.lines", "matrix.lines.add-button", "matrix.line.save"],
       instruction: "Open the Lines tab, click “+ Add manning line”, choose the role, set the headcount, then Save manning line.",
       why: "This is the matrix's actual manning demand — role and headcount — that positions get filled against.",
-      prerequisites: ["matrix.create"],
+      prerequisites: ["matrix.create.blank"],
       completionEvent: "matrix.line.added",
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to edit this matrix, or it's no longer a draft.",
+      next: "staffing.assign",
+    },
+    {
+      id: "matrix.create.ai",
+      label: "Generate the matrix with AI",
+      route: "/crew/matrices/new",
+      targetIds: ["matrix.mode.ai", "matrix.ai.continue-button", "matrix.ai.choose-file-button", "matrix.ai.generate-button", "matrix.ai.save-button"],
+      instruction:
+        "Upload the client's manning document (or paste the text), then Generate draft with AI. Review what comes back: map or create any role/document/skill flagged in red, tick every assumption and open question, then Create draft matrix — nothing is saved until you do.",
+      why: "AI extraction never silently creates an approved record — this is a proposal you review and correct first, same as the spec requires.",
+      prerequisites: ["matrix.mode.choice"],
+      completionEvent: "matrix.ai.draft.created",
+      producesRecord: "matrixId",
+      canSkip: false,
+      onMissingTarget: "unsupported",
+      unsupportedMessage: "AI generation isn't enabled for this company (Settings → AI), or you don't have permission to manage crew matrices.",
+      next: "staffing.assign",
+    },
+    {
+      id: "staffing.assign",
+      label: "Assign crew to a position",
+      route: "/crew/matrices/{matrixId}",
+      targetIds: ["matrix.tab.staffing", "matrix.staffing.assign-button"],
+      instruction: "Optional next step: open the Staffing Plan tab, pick a candidate against a line, set a start date, then Assign.",
+      why: "The draft matrix itself is already done — this just starts filling it. Compliance/eligibility checks on each candidate are the app's own, not something this guide adds.",
+      prerequisites: ["matrix.create.blank", "matrix.create.ai"],
+      completionEvent: "matrix.staffing.assigned",
+      canSkip: true,
+      onMissingTarget: "unsupported",
+      unsupportedMessage: "You don't have permission to edit this matrix's roster, or it's no longer a draft.",
     },
   ],
 };
@@ -99,7 +164,7 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
 // own lines above.
 export const SITE_MANNING_SETUP_WORKFLOW: GuidedWorkflow = {
   id: "site-manning-setup",
-  version: 1,
+  version: 2,
   title: "Set up a site's manning requirements",
   goal: "Manning requirements set",
   startPoints: [
@@ -118,6 +183,7 @@ export const SITE_MANNING_SETUP_WORKFLOW: GuidedWorkflow = {
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to manage crew setup data.",
+      next: "site.manning.set",
     },
     {
       id: "site.manning.set",
@@ -125,7 +191,7 @@ export const SITE_MANNING_SETUP_WORKFLOW: GuidedWorkflow = {
       route: "/sites",
       targetIds: ["sites.manning-toggle:{siteId}", "sites.manning.set-button"],
       instruction: "Click “Manning requirements” on the site you just created, pick a role and minimum headcount, then Set requirement.",
-      why: "A site's standing manning requirements are what “Generate from manning requirements” reads from when creating a matrix for that same, already-set-up site.",
+      why: "A site's standing manning requirements are what “Generate from manning requirements” reads from when creating a matrix for that same, already-set-up site — though see the discovery report for why that particular mode doesn't currently reach an existing site from the New Matrix screen.",
       prerequisites: ["site.create"],
       completionEvent: "site.manning.set",
       canSkip: false,

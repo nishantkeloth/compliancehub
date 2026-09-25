@@ -180,6 +180,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
           <button
             type="button"
             onClick={() => setMode("ai")}
+            data-guide-id="matrix.mode.ai"
             className="rounded-lg px-4 py-2 text-sm font-semibold border"
             style={mode === "ai" ? { background: "var(--ch-navy-soft)", color: "var(--ch-navy)", borderColor: "var(--ch-navy-soft)" } : { borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}
           >
@@ -297,6 +298,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
             <button
               onClick={continueToAi}
               disabled={submitting || !projectId || !newSiteName.trim()}
+              data-guide-id="matrix.ai.continue-button"
               className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
             >
               {submitting ? "Creating site…" : "Continue"}

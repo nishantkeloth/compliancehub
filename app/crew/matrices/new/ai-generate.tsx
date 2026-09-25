@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { aiAvailability, generateMatrixDraft, saveGeneratedMatrix, discardGeneration, type MappedProposal, type MappedLine } from "../ai-actions";
+import { useGuideMaybe } from "@/components/guide/guide-context";
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
@@ -100,6 +101,7 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
   const [resolved, setResolved] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const guide = useGuideMaybe();
 
   useEffect(() => {
     aiAvailability().then(setAvailability).catch((e) => setAvailability({ enabled: false, reason: e instanceof Error ? e.message : String(e), maxUploadMb: 20, documentCapable: false }));
@@ -181,7 +183,8 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
         setError(res.error);
         return;
       }
-      if (res?.id) router.push(`/crew/matrices/${res.id}`);
+      const guided = res?.id ? guide?.notifyCompletion("matrix.ai.draft.created", { recordId: res.id }) : false;
+      if (res?.id && !guided) router.push(`/crew/matrices/${res.id}`);
     });
   };
 
@@ -223,6 +226,7 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
+                  data-guide-id="matrix.ai.choose-file-button"
                   className="rounded-lg border px-4 py-2 text-sm font-semibold"
                   style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
                 >
@@ -251,7 +255,7 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
         )}
         {error && <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>}
         {attempts.length > 0 && <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>{attempts.map((a) => `${a.model}: ${a.outcome}`).join(" · ")}</div>}
-        <button onClick={generate} disabled={busy || !projectId || !offshoreSiteId || (mode === "document" && !file && !pasted.trim()) || !availability} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button onClick={generate} disabled={busy || !projectId || !offshoreSiteId || (mode === "document" && !file && !pasted.trim()) || !availability} data-guide-id="matrix.ai.generate-button" className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           {busy ? "Generating… (this can take up to a minute)" : "Generate draft with AI"}
         </button>
         <p className="text-[11px] mt-3" style={{ color: "var(--ch-sub)" }}>
@@ -410,7 +414,7 @@ export default function AiGenerate({ projectId, offshoreSiteId, projectName, sit
         </div>
       )}
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={save} disabled={!canSave} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+        <button onClick={save} disabled={!canSave} data-guide-id="matrix.ai.save-button" className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           {busy ? "Saving…" : "Create draft matrix"}
         </button>
         <span className="text-xs" style={{ color: "var(--ch-sub)" }}>

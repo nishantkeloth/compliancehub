@@ -47,7 +47,9 @@ export default function GuideOverlay() {
   const [missing, setMissing] = useState(false);
   const missingSinceRef = useRef<number | null>(null);
 
-  const active = !!state && !state.paused && !pickingStart && !!currentStep && resolvedRoute === pathname;
+  // "choice"-kind steps have no DOM target at all — GuideShell renders
+  // their options as buttons instead; nothing to highlight here.
+  const active = !!state && !state.paused && !pickingStart && !!currentStep && currentStep.kind !== "choice" && resolvedRoute === pathname;
 
   useEffect(() => {
     if (!active || !currentStep) {
@@ -61,7 +63,7 @@ export default function GuideOverlay() {
     let scrolled = false;
 
     const measure = () => {
-      const ids = fillIds(currentStep.targetIds, state?.recordRefs ?? {});
+      const ids = fillIds(currentStep.targetIds ?? [], state?.recordRefs ?? {});
       const el = findTarget(ids);
       if (!el) {
         if (missingSinceRef.current == null) missingSinceRef.current = Date.now();
