@@ -122,8 +122,8 @@ export default function MatrixDetail({
   // apart from the general `run`/startTransition above so its "Regenerating…"
   // state doesn't flicker on while an unrelated workflow action is pending.
   const [staffingPending, startStaffingTransition] = useTransition();
-  type TabKey = "overview" | "lines" | "site" | "staffing" | "versions";
-  const VALID_TABS: TabKey[] = ["overview", "lines", "site", "staffing", "versions"];
+  type TabKey = "overview" | "site" | "lines" | "staffing" | "versions";
+  const VALID_TABS: TabKey[] = ["overview", "site", "lines", "staffing", "versions"];
   // Regenerate calls router.refresh(), which re-suspends this page while the
   // server component re-fetches — React remounts the client tree when that
   // resolves, which would silently reset a plain useState("overview") back
@@ -184,8 +184,8 @@ export default function MatrixDetail({
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "overview", label: "Overview" },
-    { key: "lines", label: `Manning Lines (${lines.length})` },
     { key: "site", label: "Site" },
+    { key: "lines", label: `Manning Lines (${lines.length})` },
     { key: "staffing", label: "Staffing Plan" },
     { key: "versions", label: `Versions (${versions.length})` },
   ];
@@ -477,6 +477,9 @@ export default function MatrixDetail({
 
       {tab === "site" && (
         <SiteTab
+          crewMatrixId={matrix.id}
+          isDraft={isDraft}
+          editingEnabled={editing}
           site={site}
           contractors={contractors}
           clients={clients}

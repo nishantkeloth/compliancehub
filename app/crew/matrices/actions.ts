@@ -673,6 +673,89 @@ export async function deleteCrewMatrixLine(lineId: string, crewMatrixId: string)
   return {};
 }
 
+// Site tab's manning-requirements checklist doubles as this matrix's own
+// manning line list when opened from inside a specific matrix: checking a
+// role also adds a crew_matrix_line for it here (and unchecking removes
+// it), so roles/headcounts checked off on the Site tab don't have to be
+// re-entered on the Manning Lines tab too. Only touches the line's job
+// role + headcount — richer fields (shifts, rotation template, remarks,
+// extra documents) are still edited from the Manning Lines tab itself,
+// same as any manually added line. If a line for this role already exists
+// in this matrix (added manually, or by an earlier toggle), it's reused —
+// this never creates a second line for the same role.
+export async function syncManningLineFromSiteRequirement(
+  crewMatrixId: string,
+  jobRoleId: string,
+  active: boolean,
+  requiredHeadcount: number,
+  preferredDocumentTemplateId: string | null
+) {
+  const { supabase, access, userId } = await requireManage();
+  await assertDraft(supabase, crewMatrixId);
+
+  const { data: existing, error: existingErr } = await supabase
+    .from("crew_matrix_lines")
+    .select("id")
+    .eq("crew_matrix_id", crewMatrixId)
+    .eq("job_role_id", jobRoleId);
+  if (existingErr) return { error: existingErr.message };
+  const existingIds = (existing ?? []).map((l) => l.id as string);
+
+  if (!active) {
+    if (existingIds.length > 0) {
+      const { error } = await supabase.from("crew_matrix_lines").delete().in("id", existingIds);
+      if (error) return { error: error.message };
+    }
+    revalidateMatrix(crewMatrixId);
+    return {};
+  }
+
+  if (existingIds.length > 0) {
+    const { error } = await supabase
+      .from("crew_matrix_lines")
+      .update({ required_headcount: requiredHeadcount, updated_by: userId })
+      .in("id", existingIds);
+    if (error) return { error: error.message };
+    revalidateMatrix(crewMatrixId);
+    return { id: existingIds[0] };
+  }
+
+  const { count } = await supabase
+    .from("crew_matrix_lines")
+    .select("id", { count: "exact", head: true })
+    .eq("crew_matrix_id", crewMatrixId);
+
+  const { data: line, error } = await supabase
+    .from("crew_matrix_lines")
+    .insert({
+      org_id: access.orgId,
+      crew_matrix_id: crewMatrixId,
+      line_number: (count ?? 0) + 1,
+      job_role_id: jobRoleId,
+      required_headcount: requiredHeadcount,
+      sort_order: count ?? 0,
+      created_by: userId,
+      updated_by: userId,
+    })
+    .select("id")
+    .single();
+  if (error) return { error: error.message };
+
+  if (line?.id) {
+    const { data: matrixRow } = await supabase.from("crew_matrices").select("project_id").eq("id", crewMatrixId).maybeSingle();
+    const clientId = matrixRow?.project_id ? await resolveClientIdForProject(supabase, matrixRow.project_id as string) : null;
+    await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, [{ id: line.id as string, job_role_id: jobRoleId }]);
+    if (preferredDocumentTemplateId) {
+      await applyPreferredDocumentTemplates(supabase, access.orgId!, [
+        { id: line.id as string, preferred_document_template_id: preferredDocumentTemplateId },
+      ]);
+    }
+  }
+
+  revalidateMatrix(crewMatrixId);
+  return { id: line?.id as string | undefined };
+}
+
 export async function reorderCrewMatrixLines(crewMatrixId: string, orderedLineIds: string[]) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);

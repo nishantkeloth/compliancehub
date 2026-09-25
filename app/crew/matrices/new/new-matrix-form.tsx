@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewMatrix, generateDraftFromManning } from "../actions";
 import { createOffshoreSite } from "@/app/crew/setup/actions";
@@ -15,7 +15,6 @@ type Project = {
   country: string | null;
   operating_region: string | null;
 };
-type Site = { id: string; name: string; project_id: string | null };
 
 const SITE_TYPES = ["vessel", "rig", "platform", "barge", "camp", "fpso", "other"];
 
@@ -26,19 +25,16 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 
 type Mode = "blank" | "generate" | "ai";
 
-export default function NewMatrixForm({ projects, sites, aiVisible }: { projects: Project[]; sites: Site[]; aiVisible: boolean }) {
+// Every mode on this screen creates a brand-new offshore site as part of
+// creating the matrix — there's no picking from existing sites here at all.
+// Full site management (editing every field, attaching manning
+// requirements) happens afterward from the matrix's own Site tab.
+export default function NewMatrixForm({ projects, aiVisible }: { projects: Project[]; aiVisible: boolean }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [mode, setMode] = useState<Mode>("blank");
   const defaultProject = projects[0];
   const [projectId, setProjectId] = useState(defaultProject?.id ?? "");
-  // Used by "Generate from manning requirements" and "Generate with AI" only
-  // — both need an EXISTING site whose manning requirements are already set
-  // up, so they keep the pick-from-existing dropdown. "Blank draft" always
-  // creates a brand-new site instead (see newSiteName/newSiteType below) —
-  // a freshly created site can't have manning requirements to generate from,
-  // so there's nothing for those two modes to do with one.
-  const [offshoreSiteId, setOffshoreSiteId] = useState("");
   const [title, setTitle] = useState("");
   const [newSiteName, setNewSiteName] = useState("");
   const [newSiteType, setNewSiteType] = useState("vessel");
@@ -58,12 +54,18 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const eligibleSites = useMemo(() => sites.filter((s) => s.project_id === projectId), [sites, projectId]);
+  // AI mode needs a real, already-created site before AiGenerate can mount
+  // (it calls the AI + saves the eventual matrix against a real site id) —
+  // so AI mode gets one extra step: create the site, then hand off to
+  // AiGenerate. Once set, the Project/Site fields above are replaced by
+  // AiGenerate's own flow.
+  const [aiSiteId, setAiSiteId] = useState<string | null>(null);
+  const [aiSiteName, setAiSiteName] = useState("");
 
   const onProjectChange = (id: string) => {
     setProjectId(id);
-    setOffshoreSiteId("");
     setError(null);
+    setAiSiteId(null);
     const project = projects.find((p) => p.id === id);
     setEffectiveFrom(project?.planned_start_date ?? "");
     setEffectiveTo(project?.planned_end_date ?? "");
@@ -72,18 +74,22 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
     setNewSiteRegion(project?.operating_region ?? "");
   };
 
+  const createSite = async () => {
+    const siteFd = new FormData();
+    siteFd.set("projectId", projectId);
+    siteFd.set("name", newSiteName.trim());
+    siteFd.set("siteType", newSiteType);
+    siteFd.set("country", newSiteCountry);
+    siteFd.set("operatingRegion", newSiteRegion);
+    return createOffshoreSite(siteFd);
+  };
+
   const submitBlank = () => {
     if (!projectId || !newSiteName.trim() || !title.trim() || submitting) return;
     setError(null);
     setSubmitting(true);
     startTransition(async () => {
-      const siteFd = new FormData();
-      siteFd.set("projectId", projectId);
-      siteFd.set("name", newSiteName.trim());
-      siteFd.set("siteType", newSiteType);
-      siteFd.set("country", newSiteCountry);
-      siteFd.set("operatingRegion", newSiteRegion);
-      const siteRes = await createOffshoreSite(siteFd);
+      const siteRes = await createSite();
       if (siteRes?.error || !siteRes?.id) {
         setSubmitting(false);
         setError(siteRes?.error ?? "Could not create the site.");
@@ -109,11 +115,17 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
   };
 
   const submitGenerate = () => {
-    if (!projectId || !offshoreSiteId || submitting) return;
+    if (!projectId || !newSiteName.trim() || submitting) return;
     setError(null);
     setSubmitting(true);
     startTransition(async () => {
-      const res = await generateDraftFromManning(projectId, offshoreSiteId);
+      const siteRes = await createSite();
+      if (siteRes?.error || !siteRes?.id) {
+        setSubmitting(false);
+        setError(siteRes?.error ?? "Could not create the site.");
+        return;
+      }
+      const res = await generateDraftFromManning(projectId, siteRes.id);
       if (res?.error) {
         setSubmitting(false);
         setError(res.error);
@@ -122,6 +134,24 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
       if (res?.id) router.push(`/crew/matrices/${res.id}`);
     });
   };
+
+  const continueToAi = () => {
+    if (!projectId || !newSiteName.trim() || submitting) return;
+    setError(null);
+    setSubmitting(true);
+    startTransition(async () => {
+      const siteRes = await createSite();
+      setSubmitting(false);
+      if (siteRes?.error || !siteRes?.id) {
+        setError(siteRes?.error ?? "Could not create the site.");
+        return;
+      }
+      setAiSiteName(newSiteName.trim());
+      setAiSiteId(siteRes.id);
+    });
+  };
+
+  const aiReady = mode === "ai" && aiSiteId;
 
   return (
     <div className={`${cardCls} p-5 ${mode === "ai" ? "max-w-5xl" : "max-w-2xl"}`} style={cardStyle}>
@@ -160,62 +190,45 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Project
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={projectId} onChange={(e) => onProjectChange(e.target.value)}>
-            {projects.length === 0 && <option value="">No projects yet</option>}
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.project_name}</option>
-            ))}
-          </select>
-        </label>
+      {!aiReady && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 mb-3">
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+              Project
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={projectId} onChange={(e) => onProjectChange(e.target.value)}>
+                {projects.length === 0 && <option value="">No projects yet</option>}
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.project_name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+              Site name
+              <input
+                className={`${inputCls} w-full mt-1`}
+                style={inputStyle}
+                placeholder="e.g. MV Ocean Guardian"
+                value={newSiteName}
+                onChange={(e) => setNewSiteName(e.target.value)}
+              />
+            </label>
+          </div>
 
-        {mode === "blank" ? (
-          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-            Site name
-            <input
-              className={`${inputCls} w-full mt-1`}
-              style={inputStyle}
-              placeholder="e.g. MV Ocean Guardian"
-              value={newSiteName}
-              onChange={(e) => setNewSiteName(e.target.value)}
-            />
-          </label>
-        ) : (
-          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-            Offshore site
-            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
-              <option value="">Select a site…</option>
-              {eligibleSites.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            {projectId && eligibleSites.length === 0 && (
-              <span className="block mt-1" style={{ color: "var(--ch-sub)" }}>
-                This project has no offshore sites with manning requirements set up yet — use Blank draft, or set up
-                manning requirements for a site first.
-              </span>
-            )}
-          </label>
-        )}
-      </div>
-
-      {mode === "blank" && (
-        <div className="mb-3">
-          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-            Site type
-            <select className={`${inputCls} w-full mt-1 sm:w-1/2`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
-              {SITE_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </label>
-          <p className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>
-            A new site is created together with this matrix. Country, operating region, EPC contractor, port,
-            crew-change location and other details can be filled in afterward from the matrix&rsquo;s Site tab.
-          </p>
-        </div>
+          <div className="mb-3">
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+              Site type
+              <select className={`${inputCls} w-full mt-1 sm:w-1/2`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
+                {SITE_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </label>
+            <p className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>
+              A new site is created together with this matrix. Country, operating region, EPC contractor, port,
+              crew-change location and other details can be filled in afterward from the matrix&rsquo;s Site tab.
+            </p>
+          </div>
+        </>
       )}
 
       {mode === "blank" ? (
@@ -262,24 +275,40 @@ export default function NewMatrixForm({ projects, sites, aiVisible }: { projects
           </button>
         </>
       ) : mode === "ai" ? (
-        <AiGenerate
-          key={`${projectId}-${offshoreSiteId}`}
-          projectId={projectId}
-          offshoreSiteId={offshoreSiteId}
-          projectName={projects.find((p) => p.id === projectId)?.project_name ?? ""}
-          siteName={sites.find((s) => s.id === offshoreSiteId)?.name ?? ""}
-        />
+        aiReady ? (
+          <AiGenerate
+            key={aiSiteId}
+            projectId={projectId}
+            offshoreSiteId={aiSiteId as string}
+            projectName={projects.find((p) => p.id === projectId)?.project_name ?? ""}
+            siteName={aiSiteName}
+          />
+        ) : (
+          <>
+            <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
+              Creates the new site first, then the AI proposes roles and headcounts for it from a client document
+              or the project context. Nothing is saved as a matrix until you review and accept the proposal.
+            </p>
+            <button
+              onClick={continueToAi}
+              disabled={submitting || !projectId || !newSiteName.trim()}
+              className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              {submitting ? "Creating site…" : "Continue"}
+            </button>
+          </>
+        )
       ) : (
         <>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
-            Creates a new draft matrix, pre-filled with one manning line per role currently defined in this
-            site&rsquo;s manning requirements, and with effective dates and expected POB copied from
-            the selected project. You can edit, add, or remove manning lines afterward — nothing here changes
-            the existing manning requirements.
+            Creates the new site, then a new draft matrix for it. Since the site is brand new it won&rsquo;t have
+            any manning requirements yet, so the draft starts with no manning lines — with effective dates and
+            expected POB copied from the selected project. Add manning lines on the matrix page afterward, or set
+            up this site&rsquo;s manning requirements first (from its Site tab) before generating.
           </p>
           <button
             onClick={submitGenerate}
-            disabled={submitting || !projectId || !offshoreSiteId}
+            disabled={submitting || !projectId || !newSiteName.trim()}
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             {submitting ? "Generating…" : "Generate draft from manning requirements"}

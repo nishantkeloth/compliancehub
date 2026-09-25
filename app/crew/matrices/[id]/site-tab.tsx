@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setManningRequirement, deleteManningRequirement, updateOffshoreSite } from "@/app/crew/setup/actions";
+import { syncManningLineFromSiteRequirement } from "../actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { COUNTRIES } from "@/lib/countries";
 import { REGIONS } from "@/lib/regions";
@@ -126,7 +127,7 @@ function SiteEditForm({
   error: string | null;
   saving: boolean;
   onSave: () => void;
-  onCancel: () => void;
+  onCancel?: () => void;
 }) {
   const set = <K extends keyof SiteFormState>(key: K, value: SiteFormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -246,15 +247,20 @@ function SiteEditForm({
         <button onClick={onSave} disabled={saving || !form.name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           {saving ? "Saving…" : "Save"}
         </button>
-        <button onClick={onCancel} disabled={saving} className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50" style={{ borderColor: "var(--ch-line)" }}>
-          Cancel
-        </button>
+        {onCancel && (
+          <button onClick={onCancel} disabled={saving} className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50" style={{ borderColor: "var(--ch-line)" }}>
+            Cancel
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
 export default function SiteTab({
+  crewMatrixId,
+  isDraft,
+  editingEnabled,
   site,
   contractors,
   clients,
@@ -266,6 +272,20 @@ export default function SiteTab({
   canManageManning,
   canEditSite,
 }: {
+  // The matrix this Site tab is opened from — checking off a role below
+  // also adds a manning line to THIS matrix (see syncManningLineFromSiteRequirement),
+  // and isDraft/editingEnabled gate that the same way the Manning Lines tab
+  // gates its own editing, since a line can only change while the matrix is
+  // a draft.
+  crewMatrixId: string;
+  isDraft: boolean;
+  // Page-level "Edit" toggle (see matrix-detail.tsx) — when on, the Site
+  // card shows its edit form directly, same as the Manning Lines tab
+  // unlocking via the same flag. The card's own "Edit" link still works as
+  // a fallback when this is off (e.g. a non-draft matrix, where the
+  // page-level toggle isn't shown at all) so site details stay editable
+  // independent of the matrix's own draft/edit state.
+  editingEnabled: boolean;
   site: SiteInfo;
   contractors: Contractor[];
   clients: ClientRef[];
@@ -299,6 +319,21 @@ export default function SiteTab({
     return setManningRequirement(site.id, fd);
   };
 
+  // Keeps this matrix's own crew_matrix_lines in sync with the checklist
+  // below — only while the matrix is still a draft (a line can't change
+  // otherwise, same rule the Manning Lines tab follows). Errors here are
+  // surfaced but don't roll back the site_manning_requirements change that
+  // already succeeded — the checklist and the matrix's lines can be
+  // reconciled by re-toggling if the two ever disagree.
+  const syncLine = (jobRoleId: string, active: boolean, minimumHeadcount: number, preferredDocumentTemplateId: string | null) => {
+    if (!isDraft) return;
+    startTransition(async () => {
+      const res = await syncManningLineFromSiteRequirement(crewMatrixId, jobRoleId, active, minimumHeadcount, preferredDocumentTemplateId);
+      if (res?.error) setBgError(res.error);
+      router.refresh();
+    });
+  };
+
   const toggle = (role: Ref, checked: boolean) => {
     setBgError(null);
     if (checked) {
@@ -319,6 +354,7 @@ export default function SiteTab({
         }
         router.refresh();
       });
+      syncLine(role.id, true, 1, null);
     } else {
       const existing = byRoleId.get(role.id);
       if (!existing || isTempId(existing.id)) return;
@@ -331,6 +367,7 @@ export default function SiteTab({
           setBgError(res.error);
         }
       });
+      syncLine(role.id, false, 0, null);
     }
   };
 
@@ -353,6 +390,7 @@ export default function SiteTab({
       }
       router.refresh();
     });
+    syncLine(req.job_role_id, true, value, req.preferred_document_template_id);
   };
 
   const setTemplate = (req: ManningReq, templateId: string) => {
@@ -372,7 +410,14 @@ export default function SiteTab({
 
   // ---- Site details, editable in place (previously only editable from the
   // standalone Offshore Sites page) ----
-  const [editingSite, setEditingSite] = useState(false);
+  // editingSiteLocal is this card's own fallback toggle (its "Edit" link),
+  // for when there's no page-level editingEnabled to piggyback on (e.g. a
+  // non-draft matrix, where matrix-detail.tsx doesn't render its top "Edit"
+  // button at all) — editingEnabled from the page just as validly puts this
+  // card in edit mode, so the two are combined below rather than one
+  // overriding the other.
+  const [editingSiteLocal, setEditingSiteLocal] = useState(false);
+  const editingSite = editingEnabled || editingSiteLocal;
   const [siteForm, setSiteForm] = useState<SiteFormState>(() => siteToFormState(site));
   const [siteSaving, setSiteSaving] = useState(false);
   const [siteError, setSiteError] = useState<string | null>(null);
@@ -381,7 +426,7 @@ export default function SiteTab({
   const startEditSite = () => {
     setSiteForm(siteToFormState(site));
     setSiteError(null);
-    setEditingSite(true);
+    setEditingSiteLocal(true);
   };
 
   const eligibleProjects = siteForm.contractorId
@@ -418,7 +463,7 @@ export default function SiteTab({
         setSiteError(res.error);
         return;
       }
-      setEditingSite(false);
+      setEditingSiteLocal(false);
       router.refresh();
     });
   };
@@ -444,7 +489,11 @@ export default function SiteTab({
             error={siteError}
             saving={siteSaving}
             onSave={saveSite}
-            onCancel={() => setEditingSite(false)}
+            // Only offered when editing was started locally (this card's own
+            // "Edit" link) — when it's the page-level toggle driving this,
+            // the way out is the page's "Done editing" button, same as the
+            // Manning Lines tab.
+            onCancel={editingSiteLocal ? () => setEditingSiteLocal(false) : undefined}
           />
         ) : (
           <>
@@ -478,9 +527,12 @@ export default function SiteTab({
           Manning requirements
         </div>
         <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-          Check off every role this site needs, with its minimum headcount — used when generating a matrix
-          from manning requirements. Optionally pick a document template per role too, so a generated matrix&rsquo;s
-          line for that role starts with that template&rsquo;s document checklist already applied.
+          Check off every role this site needs, with its minimum headcount.
+          {isDraft
+            ? " Since this matrix is still a draft, checking a role also adds a manning line for it here (unchecking removes it) — see the Manning Lines tab. Richer per-line detail (shifts, rotation, documents, remarks) is still edited there."
+            : " This matrix is no longer a draft, so changes here update the site's manning requirements for future matrices, but won't add or remove lines on this one."}
+          {" "}Optionally pick a document template per role too, so a line for that role starts with that
+          template&rsquo;s document checklist already applied.
         </div>
         <BgErrorBanner error={bgError} />
         {jobRoles.length === 0 ? (
