@@ -584,6 +584,11 @@ export default function SiteTab({
           {" "}Optionally pick a document template per role too, so a line for that role starts with that
           template&rsquo;s document checklist already applied.
         </div>
+        {canManageManning && !editingSite && (
+          <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
+            Click <strong>Edit</strong> above to change manning requirements.
+          </div>
+        )}
         <BgErrorBanner error={bgError} />
         {missingFromLines.length > 0 && (
           <div className="text-xs rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-3 flex-wrap" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
@@ -592,7 +597,7 @@ export default function SiteTab({
               manning lines yet.
             </span>
             {canManageManning && (
-              <button onClick={syncAllMissing} disabled={syncingAll} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+              <button onClick={syncAllMissing} disabled={syncingAll || !editingSite} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
                 {syncingAll ? "Syncing…" : "Sync now"}
               </button>
             )}
@@ -610,7 +615,7 @@ export default function SiteTab({
               return (
                 <div key={role.id} className="flex items-center gap-3 flex-wrap text-xs py-1">
                   <label className="flex items-center gap-2 min-w-[160px]" style={{ color: "var(--ch-ink)" }}>
-                    <input type="checkbox" checked={selected} disabled={!canManageManning || saving} onChange={(e) => toggle(role, e.target.checked)} />
+                    <input type="checkbox" checked={selected} disabled={!canManageManning || saving || !editingSite} onChange={(e) => toggle(role, e.target.checked)} />
                     <span className={selected ? "font-semibold" : ""}>{role.name}</span>
                   </label>
                   {req && (
@@ -620,7 +625,7 @@ export default function SiteTab({
                         <input
                           type="number"
                           min={1}
-                          disabled={!canManageManning || saving}
+                          disabled={!canManageManning || saving || !editingSite}
                           className="border rounded px-1.5 py-0.5 w-16 text-xs"
                           style={{ borderColor: "var(--ch-line)" }}
                           value={headcountDraft[role.id] ?? req.minimum_headcount.toString()}
@@ -629,7 +634,7 @@ export default function SiteTab({
                         />
                       </label>
                       {templatesForRole.length > 0 &&
-                        (canManageManning ? (
+                        (canManageManning && editingSite ? (
                           <select
                             className="border rounded-lg px-2 py-1 text-xs"
                             style={{ borderColor: "var(--ch-line)" }}
