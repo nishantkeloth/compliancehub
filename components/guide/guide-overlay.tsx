@@ -197,7 +197,22 @@ export default function GuideOverlay() {
     // anything to the fields themselves.
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
-    const observer = new MutationObserver(() => measure());
+    // Coalesced through rAF (same pattern as onScrollResize above) instead
+    // of calling measure() straight from the observer callback. Without
+    // this, a single state update that touches several DOM nodes (e.g.
+    // filling a field, which re-renders the whole form) fires this
+    // callback once per mutated node — a burst of synchronous setState
+    // calls stacked in the same tick as whatever the user just did. That
+    // burst has been observed to occasionally eat a click: a mousedown a
+    // fraction of a second before a burst, followed by mouseup after
+    // React has re-rendered the target out from under it, delivers the
+    // click to nothing. Batching every mutation in a frame down to one
+    // measure() keeps the highlight exactly as responsive while cutting
+    // out that churn.
+    const onMutate = () => {
+      raf = requestAnimationFrame(measure);
+    };
+    const observer = new MutationObserver(onMutate);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
 
     return () => {
