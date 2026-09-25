@@ -222,12 +222,15 @@ export default function ContractsManager({
 
 // Every field a contract can carry is shown from the moment it's created —
 // not just a starter subset the user has to come back and fill in later via
-// Edit. The five marked with a red star (Client, Status, Contract title,
-// Planned start, Planned end) are the minimum a contract needs to be usable
-// elsewhere in the app (expiry warnings, mobilization-notice calculations,
-// reporting) and are the ones Guided Workflows' field-walk (registry.ts
-// contract.create step) stops on in order; everything else stays optional
-// and fillable now or later from the contract's own page.
+// Edit. The ones marked with a red star (Client, Status, Contract title,
+// Planned start, Planned end, Currency, Service scope) are the minimum a
+// contract needs — some because other parts of the app depend on them
+// (expiry warnings, mobilization-notice calculations, reporting), Service
+// scope because a contract without at least one service selected doesn't
+// mean anything operationally. They're also the fields Guided Workflows'
+// field-walk (registry.ts contract.create step) stops on in order;
+// everything else stays optional and fillable now or later from the
+// contract's own page.
 function ContractForm({
   clients,
   members,
@@ -271,7 +274,9 @@ function ContractForm({
     values.status &&
     values.contractTitle.trim() &&
     values.plannedStartDate &&
-    values.plannedEndDate;
+    values.plannedEndDate &&
+    values.currency.trim() &&
+    services.length > 0;
 
   const save = () => {
     if (!isValid || submitted) return;
@@ -337,7 +342,7 @@ function ContractForm({
         {field("Actual end", "actualEndDate", "date")}
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
-        {field("Currency", "currency")}
+        {field("Currency", "currency", "text", true, "contracts.form.currency")}
         {field("Estimated value", "estimatedContractValue", "number")}
         {field("Billing model", "billingModel")}
         {field("Mobilization notice (days)", "mobilizationNoticeDays", "number")}
@@ -363,8 +368,10 @@ function ContractForm({
           </select>
         </label>
       </div>
-      <div className="mb-3">
-        <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--ch-sub)" }}>Service scope</div>
+      <div className="mb-3" data-guide-id="contracts.form.service-scope">
+        <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--ch-sub)" }}>
+          Service scope <span style={{ color: "var(--ch-fail)" }}>*</span>
+        </div>
         <div className="grid gap-2 sm:grid-cols-3">
           {CONTRACT_SERVICE_OPTIONS.map((opt) => (
             <label key={opt.key} className="flex items-center gap-2 text-sm" style={{ color: "var(--ch-ink)" }}>

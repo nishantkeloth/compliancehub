@@ -63,6 +63,10 @@ export async function createContract(formData: FormData) {
   if (!plannedStartDate) return { error: "Planned start date is required." };
   const plannedEndDate = optStr(formData, "plannedEndDate");
   if (!plannedEndDate) return { error: "Planned end date is required." };
+  const currency = optStr(formData, "currency");
+  if (!currency) return { error: "Currency is required." };
+  const selectedServices = formData.getAll("services").filter((v): v is string => typeof v === "string" && CONTRACT_SERVICE_KEYS.has(v));
+  if (selectedServices.length === 0) return { error: "Select at least one service in the contract's scope." };
 
   const { data: code, error: codeError } = await supabase.rpc("next_number_range_code", {
     p_org_id: access.orgId,
@@ -84,7 +88,7 @@ export async function createContract(formData: FormData) {
       planned_end_date: plannedEndDate,
       actual_start_date: optStr(formData, "actualStartDate"),
       actual_end_date: optStr(formData, "actualEndDate"),
-      currency: optStr(formData, "currency"),
+      currency,
       estimated_contract_value: optNum(formData, "estimatedContractValue"),
       billing_model: optStr(formData, "billingModel"),
       payment_terms: optStr(formData, "paymentTerms"),
@@ -101,13 +105,13 @@ export async function createContract(formData: FormData) {
   if (error) return { error: error.message };
 
   // Service Scope selected on the create form itself (app/contracts/
-  // contracts-manager.tsx) — applied here in the same action so it doesn't
-  // need a separate trip through the Service Scope tab afterward. Best
-  // effort: the contract has already saved successfully at this point, so
-  // a hiccup here doesn't fail the whole creation — service scope can
-  // always be fixed up from that tab.
-  const selectedServices = formData.getAll("services").filter((v): v is string => typeof v === "string" && CONTRACT_SERVICE_KEYS.has(v));
-  if (contract?.id && selectedServices.length > 0) {
+  // contracts-manager.tsx) — already validated non-empty above, applied
+  // here in the same action so it doesn't need a separate trip through the
+  // Service Scope tab afterward. Best effort past this point: the contract
+  // itself has already saved successfully, so a hiccup inserting the scope
+  // rows doesn't fail the whole creation — scope can always be fixed up
+  // from that tab.
+  if (contract?.id) {
     await supabase.from("contract_services").insert(
       selectedServices.map((service) => ({ org_id: access.orgId, contract_id: contract.id, service }))
     );

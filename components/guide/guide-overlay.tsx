@@ -43,14 +43,22 @@ function findTarget(targetIds: string[]): HTMLElement | null {
 
 // A field's data-guide-id may sit on the fillable control itself or (more
 // commonly here) on the <label> that wraps it — same tolerance as
-// findTarget above. Checkboxes/radios have no natural "empty" state (both
-// checked and unchecked are legitimate answers), so those are always
-// treated as already filled: a step shouldn't force a stop on a boolean
-// flag, just mention it in the step's own instruction text. An element
+// findTarget above. A single standalone checkbox/radio has no natural
+// "empty" state (both checked and unchecked are legitimate answers), so
+// those are always treated as already filled: a step shouldn't force a
+// stop on a boolean flag, just mention it in the step's own instruction
+// text. A CHECKBOX GROUP is different — more than one checkbox inside the
+// matched element (e.g. a "Service scope" field wrapping a whole list of
+// service checkboxes) is treated as "filled" once at least one of them is
+// checked, since a group like that stands in for a single required
+// selection even though no individual box is itself required. An element
 // with no fillable control inside it at all (e.g. a field id accidentally
 // pointed at a button) is likewise treated as filled, so it never blocks
 // the walk.
 function isFieldFilled(el: HTMLElement): boolean {
+  const checkboxes = Array.from(el.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+  if (checkboxes.length > 1) return checkboxes.some((c) => c.checked);
+
   const control = (el.matches("input,select,textarea") ? el : el.querySelector("input,select,textarea")) as
     | HTMLInputElement
     | HTMLSelectElement

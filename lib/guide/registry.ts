@@ -75,6 +75,8 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
         { id: "contracts.form.title", label: "Contract title", hint: "A short name for this contract, e.g. “ADNOC Marine Support 2026”." },
         { id: "contracts.form.planned-start", label: "Planned start", hint: "When the contract is planned to start." },
         { id: "contracts.form.planned-end", label: "Planned end", hint: "When the contract is planned to end — used for the expiry/mobilization-notice warnings elsewhere in the app." },
+        { id: "contracts.form.currency", label: "Currency", hint: "The currency this contract's values are quoted in, e.g. AED or USD." },
+        { id: "contracts.form.service-scope", label: "Service scope", hint: "Check at least one service this contract covers — Catering, Housekeeping, and so on." },
       ],
       instruction: "Click “+ Add contract”, then fill in every field marked with a red star — the rest can be added now or later from the contract's page — and Save.",
       why: "Every project sits under a contract or work order — this is where that record starts.",
