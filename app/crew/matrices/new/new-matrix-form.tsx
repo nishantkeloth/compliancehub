@@ -23,35 +23,32 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
-const lbl = "text-xs";
-const lblStyle = { color: "var(--ch-sub)" };
 
 type Mode = "blank" | "generate" | "ai";
 
-export default function NewMatrixForm({ projects, sites: initialSites, aiVisible }: { projects: Project[]; sites: Site[]; aiVisible: boolean }) {
+export default function NewMatrixForm({ projects, sites, aiVisible }: { projects: Project[]; sites: Site[]; aiVisible: boolean }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [mode, setMode] = useState<Mode>("blank");
   const defaultProject = projects[0];
   const [projectId, setProjectId] = useState(defaultProject?.id ?? "");
+  // Used by "Generate from manning requirements" and "Generate with AI" only
+  // — both need an EXISTING site whose manning requirements are already set
+  // up, so they keep the pick-from-existing dropdown. "Blank draft" always
+  // creates a brand-new site instead (see newSiteName/newSiteType below) —
+  // a freshly created site can't have manning requirements to generate from,
+  // so there's nothing for those two modes to do with one.
   const [offshoreSiteId, setOffshoreSiteId] = useState("");
   const [title, setTitle] = useState("");
-  // Sites created inline below (via "+ New site") are appended here so the
-  // dropdown picks them up immediately — no full page reload needed just to
-  // create the site a matrix is going to be built for.
-  const [sites, setSites] = useState<Site[]>(initialSites);
-  const [addingSite, setAddingSite] = useState(false);
   const [newSiteName, setNewSiteName] = useState("");
   const [newSiteType, setNewSiteType] = useState("vessel");
   // Silently carried over from the selected project's own Country /
   // Operating region (see onProjectChange) — no longer shown as fields
   // here (a new site's location is almost always the project's own), but
   // still sent through to createOffshoreSite so the site record has it.
-  // Editable afterward from the matrix's new Site tab or from Offshore Sites.
+  // Editable afterward from the matrix's Site tab.
   const [newSiteCountry, setNewSiteCountry] = useState(defaultProject?.country ?? "");
   const [newSiteRegion, setNewSiteRegion] = useState(defaultProject?.operating_region ?? "");
-  const [siteSubmitting, setSiteSubmitting] = useState(false);
-  const [siteError, setSiteError] = useState<string | null>(null);
   // Pre-filled from the selected project's own planned dates / expected POB
   // (see onProjectChange) — still just a starting point, freely editable.
   const [effectiveFrom, setEffectiveFrom] = useState(defaultProject?.planned_start_date ?? "");
@@ -66,8 +63,7 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
   const onProjectChange = (id: string) => {
     setProjectId(id);
     setOffshoreSiteId("");
-    setAddingSite(false);
-    setSiteError(null);
+    setError(null);
     const project = projects.find((p) => p.id === id);
     setEffectiveFrom(project?.planned_start_date ?? "");
     setEffectiveTo(project?.planned_end_date ?? "");
@@ -76,48 +72,32 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
     setNewSiteRegion(project?.operating_region ?? "");
   };
 
-  const submitNewSite = () => {
-    if (!projectId || !newSiteName.trim() || siteSubmitting) return;
-    setSiteError(null);
-    setSiteSubmitting(true);
-    const fd = new FormData();
-    fd.set("projectId", projectId);
-    fd.set("name", newSiteName.trim());
-    fd.set("siteType", newSiteType);
-    fd.set("country", newSiteCountry);
-    fd.set("operatingRegion", newSiteRegion);
-    startTransition(async () => {
-      const res = await createOffshoreSite(fd);
-      if (res?.error) {
-        setSiteSubmitting(false);
-        setSiteError(res.error);
-        return;
-      }
-      const newId = res?.id;
-      if (newId) {
-        setSites((cur) => [...cur, { id: newId, name: newSiteName.trim(), project_id: projectId }]);
-        setOffshoreSiteId(newId);
-      }
-      setSiteSubmitting(false);
-      setAddingSite(false);
-      setNewSiteName("");
-      setNewSiteType("vessel");
-    });
-  };
-
   const submitBlank = () => {
-    if (!projectId || !offshoreSiteId || !title.trim() || submitting) return;
+    if (!projectId || !newSiteName.trim() || !title.trim() || submitting) return;
     setError(null);
     setSubmitting(true);
-    const fd = new FormData();
-    fd.set("projectId", projectId);
-    fd.set("offshoreSiteId", offshoreSiteId);
-    fd.set("title", title.trim());
-    fd.set("effectiveFrom", effectiveFrom);
-    fd.set("effectiveTo", effectiveTo);
-    fd.set("expectedPob", expectedPob);
-    fd.set("notes", notes);
     startTransition(async () => {
+      const siteFd = new FormData();
+      siteFd.set("projectId", projectId);
+      siteFd.set("name", newSiteName.trim());
+      siteFd.set("siteType", newSiteType);
+      siteFd.set("country", newSiteCountry);
+      siteFd.set("operatingRegion", newSiteRegion);
+      const siteRes = await createOffshoreSite(siteFd);
+      if (siteRes?.error || !siteRes?.id) {
+        setSubmitting(false);
+        setError(siteRes?.error ?? "Could not create the site.");
+        return;
+      }
+
+      const fd = new FormData();
+      fd.set("projectId", projectId);
+      fd.set("offshoreSiteId", siteRes.id);
+      fd.set("title", title.trim());
+      fd.set("effectiveFrom", effectiveFrom);
+      fd.set("effectiveTo", effectiveTo);
+      fd.set("expectedPob", expectedPob);
+      fd.set("notes", notes);
       const res = await createCrewMatrix(fd);
       if (res?.error) {
         setSubmitting(false);
@@ -190,77 +170,51 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
             ))}
           </select>
         </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Offshore site
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
-            <option value="">Select a site…</option>
-            {eligibleSites.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          {projectId && eligibleSites.length === 0 && !addingSite && (
-            <span className="block mt-1" style={{ color: "var(--ch-sub)" }}>This project has no offshore sites yet.</span>
-          )}
-          {projectId && !addingSite && (
-            <button type="button" onClick={() => setAddingSite(true)} className="block mt-1 text-xs font-semibold ch-link-navy">
-              + New site
-            </button>
-          )}
-        </label>
+
+        {mode === "blank" ? (
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Site name
+            <input
+              className={`${inputCls} w-full mt-1`}
+              style={inputStyle}
+              placeholder="e.g. MV Ocean Guardian"
+              value={newSiteName}
+              onChange={(e) => setNewSiteName(e.target.value)}
+            />
+          </label>
+        ) : (
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Offshore site
+            <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={offshoreSiteId} onChange={(e) => setOffshoreSiteId(e.target.value)}>
+              <option value="">Select a site…</option>
+              {eligibleSites.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            {projectId && eligibleSites.length === 0 && (
+              <span className="block mt-1" style={{ color: "var(--ch-sub)" }}>
+                This project has no offshore sites with manning requirements set up yet — use Blank draft, or set up
+                manning requirements for a site first.
+              </span>
+            )}
+          </label>
+        )}
       </div>
 
-      {addingSite && (
-        <div className="rounded-lg border p-3 mb-3" style={{ borderColor: "var(--ch-line)", background: "var(--ch-paper)" }}>
-          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-navy)" }}>New offshore site</div>
-          {siteError && (
-            <div className="text-xs mb-2 rounded-lg px-2.5 py-1.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{siteError}</div>
-          )}
-          <div className="grid gap-2 sm:grid-cols-2 mb-2">
-            <label className={lbl} style={lblStyle}>
-              Site name
-              <input
-                className={`${inputCls} w-full mt-1`}
-                style={inputStyle}
-                placeholder="e.g. MV Ocean Guardian"
-                value={newSiteName}
-                onChange={(e) => setNewSiteName(e.target.value)}
-                autoFocus
-              />
-            </label>
-            <label className={lbl} style={lblStyle}>
-              Site type
-              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
-                {SITE_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <p className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>
-            Country and operating region are carried over automatically from the selected project.
-            Manning requirements (roles + headcounts) can be set up from the matrix&rsquo;s Site tab once it&rsquo;s created.
+      {mode === "blank" && (
+        <div className="mb-3">
+          <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Site type
+            <select className={`${inputCls} w-full mt-1 sm:w-1/2`} style={inputStyle} value={newSiteType} onChange={(e) => setNewSiteType(e.target.value)}>
+              {SITE_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </label>
+          <p className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>
+            A new site is created together with this matrix. Country, operating region, EPC contractor, port,
+            crew-change location and other details can be filled in afterward from the matrix&rsquo;s Site tab.
           </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={submitNewSite}
-              disabled={siteSubmitting || !newSiteName.trim()}
-              className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-            >
-              {siteSubmitting ? "Creating…" : "Create site"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAddingSite(false);
-                setSiteError(null);
-              }}
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold border"
-              style={{ borderColor: "var(--ch-line)" }}
-            >
-              Cancel
-            </button>
-          </div>
         </div>
       )}
 
@@ -297,13 +251,11 @@ export default function NewMatrixForm({ projects, sites: initialSites, aiVisible
             </label>
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
-            If the selected site already has manning requirements, its roles and headcounts are
-            copied in as starting manning lines — otherwise you&rsquo;ll add manning lines on the matrix page after
-            saving. Either way, you can add, edit, or remove manning lines afterward.
+            You&rsquo;ll add manning lines on the matrix page after saving — a newly created site starts with none.
           </p>
           <button
             onClick={submitBlank}
-            disabled={submitting || !projectId || !offshoreSiteId || !title.trim()}
+            disabled={submitting || !projectId || !newSiteName.trim() || !title.trim()}
             className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             {submitting ? "Creating…" : "Create draft matrix"}
