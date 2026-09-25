@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useGuide } from "./guide-context";
+import type { FieldTarget } from "@/lib/guide/types";
 
 type Rect = { top: number; left: number; width: number; height: number };
 
@@ -40,11 +41,50 @@ function findTarget(targetIds: string[]): HTMLElement | null {
   return found;
 }
 
+// A field's data-guide-id may sit on the fillable control itself or (more
+// commonly here) on the <label> that wraps it — same tolerance as
+// findTarget above. Checkboxes/radios have no natural "empty" state (both
+// checked and unchecked are legitimate answers), so those are always
+// treated as already filled: a step shouldn't force a stop on a boolean
+// flag, just mention it in the step's own instruction text. An element
+// with no fillable control inside it at all (e.g. a field id accidentally
+// pointed at a button) is likewise treated as filled, so it never blocks
+// the walk.
+function isFieldFilled(el: HTMLElement): boolean {
+  const control = (el.matches("input,select,textarea") ? el : el.querySelector("input,select,textarea")) as
+    | HTMLInputElement
+    | HTMLSelectElement
+    | HTMLTextAreaElement
+    | null;
+  if (!control) return true;
+  if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) return true;
+  return control.value.trim().length > 0;
+}
+
+// Walks `fields` in order and returns the first one that's both present in
+// the DOM and still empty — the field GuideOverlay should be spotlighting
+// right now. A field not yet mounted (e.g. the form behind a "+ Add"
+// button hasn't been opened yet) is skipped rather than treated as
+// "empty", so the walk correctly stays on the reveal button (via the
+// normal targetIds fallback) until the form actually exists. Returns null
+// once every mounted field is filled, or there are no fields to walk —
+// callers then fall back to the step's targetIds, which by that point is
+// normally the Save/submit button.
+function findActiveField(fields: FieldTarget[]): { field: FieldTarget; el: HTMLElement } | null {
+  for (const field of fields) {
+    const el = document.querySelector<HTMLElement>(`[data-guide-id="${field.id}"]`);
+    if (!el) continue;
+    if (!isFieldFilled(el)) return { field, el };
+  }
+  return null;
+}
+
 export default function GuideOverlay() {
   const { state, currentStep, resolvedRoute, pickingStart, pause, end } = useGuide();
   const pathname = usePathname();
   const [rect, setRect] = useState<Rect | null>(null);
   const [missing, setMissing] = useState(false);
+  const [activeField, setActiveField] = useState<FieldTarget | null>(null);
   const missingSinceRef = useRef<number | null>(null);
 
   // "choice"-kind steps have no DOM target at all — GuideShell renders
@@ -55,16 +95,27 @@ export default function GuideOverlay() {
     if (!active || !currentStep) {
       setRect(null);
       setMissing(false);
+      setActiveField(null);
       missingSinceRef.current = null;
       return;
     }
 
     let raf = 0;
-    let scrolled = false;
+    // Re-triggers the scroll-into-view when the active field itself
+    // changes (moving from one field to the next should re-scroll, unlike
+    // ordinary re-measures of the same target while typing).
+    let scrolledFor: string | null = null;
 
     const measure = () => {
-      const ids = fillIds(currentStep.targetIds ?? [], state?.recordRefs ?? {});
-      const el = findTarget(ids);
+      // Field-by-field walk takes priority: while any of this step's
+      // fields is still empty, spotlight that field with its own
+      // label/hint instead of the step's whole-form target. Falls through
+      // to the normal targetIds behavior (below) once every field is
+      // filled or the step defines none.
+      const activeFieldMatch = findActiveField(currentStep.fields ?? []);
+      const el = activeFieldMatch ? activeFieldMatch.el : findTarget(fillIds(currentStep.targetIds ?? [], state?.recordRefs ?? {}));
+      setActiveField(activeFieldMatch?.field ?? null);
+
       if (!el) {
         if (missingSinceRef.current == null) missingSinceRef.current = Date.now();
         // Give the route/tab a moment to finish rendering before treating
@@ -76,9 +127,10 @@ export default function GuideOverlay() {
       }
       missingSinceRef.current = null;
       setMissing(false);
-      if (!scrolled) {
+      const scrollKey = activeFieldMatch?.field.id ?? "__target__";
+      if (scrolledFor !== scrollKey) {
         el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-        scrolled = true;
+        scrolledFor = scrollKey;
       }
       const r = el.getBoundingClientRect();
       setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
@@ -178,10 +230,17 @@ export default function GuideOverlay() {
           <span className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5" style={{ background: "var(--ch-navy)", color: "#fff" }}>
             ✦ GUIDE
           </span>
-          <span className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>{currentStep.label}</span>
+          <span className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>{activeField ? activeField.label : currentStep.label}</span>
+          {activeField && (
+            <span className="text-[10px] font-semibold ml-auto" style={{ color: "var(--ch-sub)" }}>{currentStep.label}</span>
+          )}
         </div>
-        <p style={{ color: "var(--ch-ink)" }}>{currentStep.instruction}</p>
-        {currentStep.why && (
+        <p style={{ color: "var(--ch-ink)" }}>{activeField ? (activeField.hint ?? currentStep.instruction) : currentStep.instruction}</p>
+        {/* The "why" collapsible is step-level context — only show it once
+            the field-by-field walk has landed on the step's main target
+            (usually Save), not while still stepping through individual
+            fields, to keep each field's own stop short. */}
+        {!activeField && currentStep.why && (
           <details className="mt-1.5">
             <summary className="text-xs font-semibold cursor-pointer" style={{ color: "var(--ch-sub)" }}>Why is this needed?</summary>
             <p className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>{currentStep.why}</p>

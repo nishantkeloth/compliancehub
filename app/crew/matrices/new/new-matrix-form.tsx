@@ -198,7 +198,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
       {!aiReady && (
         <>
           <div className="grid gap-3 sm:grid-cols-2 mb-3">
-            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="matrix.form.project">
               Project
               <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={projectId} onChange={(e) => onProjectChange(e.target.value)}>
                 {projects.length === 0 && <option value="">No projects yet</option>}
@@ -207,7 +207,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
                 ))}
               </select>
             </label>
-            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="matrix.form.site-name">
               Site name
               <input
                 className={`${inputCls} w-full mt-1`}
@@ -239,7 +239,7 @@ export default function NewMatrixForm({ projects, aiVisible }: { projects: Proje
       {mode === "blank" ? (
         <>
           <div className="mb-3">
-            <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="matrix.form.title">
               Title
               <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="e.g. MV Ocean Guardian — Crew Matrix" value={title} onChange={(e) => setTitle(e.target.value)} />
             </label>

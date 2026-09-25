@@ -22,6 +22,35 @@ export type ChoiceOption = {
   next: string;
 };
 
+// One individually-highlightable field within a "target" step's form,
+// walked in array order. Unlike `targetIds` (which the overlay resolves
+// to a single highlight by "last one present in the DOM"), `fields` are
+// resolved by FILL STATE: GuideOverlay highlights the first field in this
+// list that is present in the DOM but still empty, showing that field's
+// own `label`/`hint` instead of the step's whole-form instruction. Once
+// every field in the list is filled (or the list is empty/omitted), the
+// overlay falls back to the normal `targetIds` behavior — which is
+// normally the form's Save/submit button by then. This never requires a
+// completion event per field (that stays step-level, fired only after a
+// real save): it's purely "which control does the user still need to
+// touch", recomputed on the same poll GuideOverlay already runs.
+export type FieldTarget = {
+  // Matches a `data-guide-id="<id>"` attribute — same matching rules as
+  // targetIds, but each one is expected to wrap or BE a fillable control
+  // (input/select/textarea). A checkbox/radio inside is always treated as
+  // already "filled" (there's no natural empty state for a boolean), so
+  // don't rely on this to force a stop on a checkbox — mention those in
+  // the step's own instruction text instead.
+  id: string;
+  // Short label for this one field, shown in place of the step's label
+  // while this field is the active stop.
+  label: string;
+  // Short hint for this one field, shown in place of the step's
+  // instruction while this field is the active stop. Falls back to the
+  // step's own instruction if omitted.
+  hint?: string;
+};
+
 export type GuidedStep = {
   id: string;
   label: string;
@@ -49,6 +78,10 @@ export type GuidedStep = {
   // (e.g. "sites.manning-toggle:{siteId}") for a target that only makes
   // sense scoped to one specific record.
   targetIds?: string[];
+  // Ordered list of this step's individually-fillable fields — see
+  // FieldTarget. Optional; a step with no `fields` (or every one of them
+  // already filled) behaves exactly as before, spotlighting `targetIds`.
+  fields?: FieldTarget[];
   // Short instruction shown in the tooltip/shell. Kept as plain text (not
   // an instructionKey/i18n table) since this app has no i18n layer yet —
   // a real deployment with one would swap this for a lookup.

@@ -267,7 +267,7 @@ function ContractForm({
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <label className={lbl} style={lblStyle}>
+        <label className={lbl} style={lblStyle} data-guide-id="contracts.form.title">
           Contract title
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} />
         </label>

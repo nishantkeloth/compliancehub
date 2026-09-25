@@ -69,6 +69,10 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       label: "Create the contract",
       route: "/contracts",
       targetIds: ["contracts.new-button", "contracts.form.save"],
+      fields: [
+        { id: "contracts.form.client", label: "Client", hint: "Pick which client this contract is with." },
+        { id: "contracts.form.title", label: "Contract title", hint: "A short name for this contract, e.g. “ADNOC Marine Support 2026”." },
+      ],
       instruction: "Click “+ Add contract”, pick the Client, give it a title, then Save.",
       why: "Every project sits under a contract or work order — this is where that record starts.",
       prerequisites: [],
@@ -84,6 +88,15 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       label: "Create the project",
       route: "/projects",
       targetIds: ["projects.new-button", "projects.form.save"],
+      fields: [
+        { id: "projects.form.contract", label: "Contract", hint: "Confirm this is the contract you just created (or pick the right one)." },
+        { id: "projects.form.name", label: "Project name", hint: "The project or campaign's name." },
+        { id: "projects.form.country", label: "Country", hint: "Where this project operates." },
+        { id: "projects.form.region", label: "Operating region", hint: "The specific operating region within that country." },
+        { id: "projects.form.start-date", label: "Planned start", hint: "When the project is planned to start." },
+        { id: "projects.form.end-date", label: "Planned end", hint: "When the project is planned to end." },
+        { id: "projects.form.pob", label: "Expected POB", hint: "Expected people on board — drives readiness/compliance checks downstream." },
+      ],
       instruction: "Click “+ Add project”, choose the Contract you just created, fill in the required fields (Country, Operating region, planned dates, Expected POB), then Save.",
       why: "The crew matrix you're heading toward is created under a project, not directly under a contract.",
       prerequisites: ["contract.create"],
@@ -112,6 +125,11 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       label: "Create the draft crew matrix",
       route: "/crew/matrices/new",
       targetIds: ["matrix.mode.blank", "matrix.form.save"],
+      fields: [
+        { id: "matrix.form.project", label: "Project", hint: "Confirm this is the project this matrix belongs to." },
+        { id: "matrix.form.site-name", label: "Site name", hint: "Name of the new vessel/rig/platform/site, e.g. “MV Ocean Guardian”." },
+        { id: "matrix.form.title", label: "Matrix title", hint: "A short name for this crew matrix, e.g. “MV Ocean Guardian — Crew Matrix”." },
+      ],
       instruction:
         "Blank draft mode is selected. Site type defaults to “vessel” — change it if this site is a rig/platform/barge/camp/FPSO/other. Title is required. Effective from/to and Expected POB come pre-filled from the project (confirm or adjust them); Notes is optional. Then Create draft matrix.",
       why: "This creates a new offshore site together with the draft matrix in one step — there's no separate site-picker on this screen. Effective dates and POB drive downstream compliance/readiness checks, so it's worth confirming them here rather than leaving the project's defaults unchecked.",
@@ -158,6 +176,14 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       label: "Generate the matrix with AI",
       route: "/crew/matrices/new",
       targetIds: ["matrix.mode.ai", "matrix.ai.continue-button", "matrix.ai.choose-file-button", "matrix.ai.generate-button", "matrix.ai.save-button"],
+      // Same Project/Site name fields as matrix.create.blank (it's the same
+      // shared block on this screen) — once "Continue" creates the site,
+      // these unmount and this list naturally stops matching anything, so
+      // the walk falls through to the AI-specific targetIds below.
+      fields: [
+        { id: "matrix.form.project", label: "Project", hint: "Confirm this is the project this matrix belongs to." },
+        { id: "matrix.form.site-name", label: "Site name", hint: "Name of the new vessel/rig/platform/site, e.g. “MV Ocean Guardian”." },
+      ],
       instruction:
         "Upload the client's manning document (or paste the text), then Generate draft with AI. Review what comes back: map or create any role/document/skill flagged in red, tick every assumption and open question, then Create draft matrix — nothing is saved until you do.",
       why: "AI extraction never silently creates an approved record — this is a proposal you review and correct first, same as the spec requires.",

@@ -230,8 +230,8 @@ function ProjectForm({
     });
   };
 
-  const field = (label: string, key: keyof typeof values, type = "text", required = false) => (
-    <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+  const field = (label: string, key: keyof typeof values, type = "text", required = false, guideId?: string) => (
+    <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id={guideId}>
       {label} {required && <span style={{ color: "var(--ch-fail)" }}>*</span>}
       <input type={type} className={`${inputCls} w-full mt-1`} style={inputStyle} value={values[key]} onChange={set(key)} />
     </label>
@@ -240,7 +240,7 @@ function ProjectForm({
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="projects.form.contract">
           Contract <span style={{ color: "var(--ch-fail)" }}>*</span>
           <select
             className={`${inputCls} w-full mt-1`}
@@ -275,7 +275,7 @@ function ProjectForm({
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <label className={lbl} style={lblStyle}>
+        <label className={lbl} style={lblStyle} data-guide-id="projects.form.name">
           Project name <span style={{ color: "var(--ch-fail)" }}>*</span>
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} placeholder="Project / campaign name" value={values.projectName} onChange={set("projectName")} />
         </label>
@@ -283,7 +283,7 @@ function ProjectForm({
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         {field("Purchase order", "purchaseOrderNumber")}
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="projects.form.country">
           Country <span style={{ color: "var(--ch-fail)" }}>*</span>
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.country} onChange={set("country")}>
             <option value="">Country…</option>
@@ -292,7 +292,7 @@ function ProjectForm({
             ))}
           </select>
         </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="projects.form.region">
           Operating region <span style={{ color: "var(--ch-fail)" }}>*</span>
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.operatingRegion} onChange={set("operatingRegion")}>
             <option value="">Operating region…</option>
@@ -310,13 +310,13 @@ function ProjectForm({
         {field("Demobilization location", "demobilizationLocation")}
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
-        {field("Planned start", "plannedStartDate", "date", true)}
-        {field("Planned end", "plannedEndDate", "date", true)}
+        {field("Planned start", "plannedStartDate", "date", true, "projects.form.start-date")}
+        {field("Planned end", "plannedEndDate", "date", true, "projects.form.end-date")}
         {field("Actual start", "actualStartDate", "date")}
         {field("Actual end", "actualEndDate", "date")}
       </div>
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
-        {field("Expected POB", "expectedPob", "number", true)}
+        {field("Expected POB", "expectedPob", "number", true, "projects.form.pob")}
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Project manager
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.projectManagerUserId} onChange={set("projectManagerUserId")}>
