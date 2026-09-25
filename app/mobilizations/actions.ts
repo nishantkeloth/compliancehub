@@ -72,9 +72,12 @@ async function assertNotTerminal(supabase: Supa, id: string) {
 // "overridden" rather than "fail", so a waived position is not blocked
 // here — that's the whole point of the waiver mechanism.
 async function checkBlockingReadiness(supabase: Supa, orgId: string, requestId: string): Promise<string | null> {
+  // mobilization_positions has two FKs into crew_profiles (selected_crew_id
+  // and reliever_for_crew_id) — an unqualified "crew_profiles(full_name)"
+  // embed is ambiguous to PostgREST, so the column has to be named.
   const { data: positions } = await supabase
     .from("mobilization_positions")
-    .select("id, selected_crew_id, crew_profiles(full_name)")
+    .select("id, selected_crew_id, crew_profiles!selected_crew_id(full_name)")
     .eq("mobilization_request_id", requestId)
     .not("selected_crew_id", "is", null);
 

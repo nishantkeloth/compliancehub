@@ -325,9 +325,13 @@ export async function getMatrixSiteActiveAssignments(
     .single();
   if (matrixErr || !matrix) return { error: "Matrix not found." };
 
+  // crew_assignments has two FKs into crew_profiles (crew_id and
+  // reliever_crew_id, see migration 0006) — an unqualified
+  // "crew_profiles(full_name)" embed is ambiguous to PostgREST ("more than
+  // one relationship was found"), so the column has to be named explicitly.
   const { data: rows, error } = await supabase
     .from("crew_assignments")
-    .select("crew_profiles(full_name)")
+    .select("crew_profiles!crew_id(full_name)")
     .eq("org_id", access.orgId)
     .eq("offshore_site_id", matrix.offshore_site_id)
     .is("end_date", null);
@@ -463,12 +467,72 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
     await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", row.crew_id as string);
   }
 
-  const { error: mobErr } = await supabase
+  // mobilization_requests.crew_matrix_id has no cascade/set-null (migration
+  // 0003), so a matrix with a mobilization against it blocks the matrix
+  // delete below unless those requests are cleared first — and clearing
+  // them has its own dependency chain, since several tables reference
+  // mobilization_requests/mobilization_positions without a cascade either
+  // (migration 0006):
+  //   - crew_assignments.mobilization_request_id / .mobilization_position_id
+  //     (nullable) — real, kept assignment rows; never deleted, just
+  //     unlinked from the mobilization being removed.
+  //   - crew_change_requests.mobilization_request_id (nullable) — same,
+  //     unlinked rather than deleted.
+  //   - boarding_confirmations.mobilization_request_id /
+  //     .mobilization_position_id (NOT NULL, no cascade) — can't be
+  //     unlinked, so these rows are deleted outright; nothing else
+  //     references boarding_confirmations, so that's safe on its own.
+  const { data: mobRequests, error: mobFetchErr } = await supabase
     .from("mobilization_requests")
-    .delete()
+    .select("id")
     .eq("org_id", access.orgId)
     .in("crew_matrix_id", matrixIds);
-  if (mobErr) return { error: mobErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  if (mobFetchErr) return { error: mobFetchErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  const mobIds = (mobRequests ?? []).map((m) => m.id as string);
+
+  if (mobIds.length > 0) {
+    const { data: mobPositions, error: posFetchErr } = await supabase
+      .from("mobilization_positions")
+      .select("id")
+      .in("mobilization_request_id", mobIds);
+    if (posFetchErr) return { error: posFetchErr.message, deletedMatrices: 0, releasedCrew: 0 };
+    const posIds = (mobPositions ?? []).map((p) => p.id as string);
+
+    const { error: unlinkByRequestErr } = await supabase
+      .from("crew_assignments")
+      .update({ mobilization_request_id: null })
+      .eq("org_id", access.orgId)
+      .in("mobilization_request_id", mobIds);
+    if (unlinkByRequestErr) return { error: unlinkByRequestErr.message, deletedMatrices: 0, releasedCrew: 0 };
+
+    if (posIds.length > 0) {
+      const { error: unlinkByPositionErr } = await supabase
+        .from("crew_assignments")
+        .update({ mobilization_position_id: null })
+        .eq("org_id", access.orgId)
+        .in("mobilization_position_id", posIds);
+      if (unlinkByPositionErr) return { error: unlinkByPositionErr.message, deletedMatrices: 0, releasedCrew: 0 };
+    }
+
+    const { error: unlinkChangeErr } = await supabase
+      .from("crew_change_requests")
+      .update({ mobilization_request_id: null })
+      .eq("org_id", access.orgId)
+      .in("mobilization_request_id", mobIds);
+    if (unlinkChangeErr) return { error: unlinkChangeErr.message, deletedMatrices: 0, releasedCrew: 0 };
+
+    const { error: boardingErr } = await supabase
+      .from("boarding_confirmations")
+      .delete()
+      .eq("org_id", access.orgId)
+      .in("mobilization_request_id", mobIds);
+    if (boardingErr) return { error: boardingErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  }
+
+  if (mobIds.length > 0) {
+    const { error: mobErr } = await supabase.from("mobilization_requests").delete().eq("org_id", access.orgId).in("id", mobIds);
+    if (mobErr) return { error: mobErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  }
 
   const { error: wfErr } = await supabase
     .from("workflow_instances")
