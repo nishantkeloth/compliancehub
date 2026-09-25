@@ -163,6 +163,14 @@ export default function MatrixDetail({
   // Requirements but has no matching line yet (see SiteTab's "Sync now").
   const lineRoleIds = Array.from(new Set(lines.map((l) => l.job_role_id)));
 
+  // Gates "Submit for approval" (see WorkflowActions below) — every
+  // manning line needs at least one crew member currently assigned
+  // (staffingCrew is the Staffing Plan's Assigned-tab list, sourced from
+  // crew_assignments at this matrix's site) before the matrix can be
+  // submitted. Doesn't require full headcount, just that no line is
+  // completely unstaffed.
+  const readyToSubmit = lines.length > 0 && lines.every((l) => staffingCrew.some((c) => c.job_role_id === l.job_role_id));
+
   const totalHeadcount = lines.reduce((sum, l) => sum + (l.required_headcount ?? 0), 0);
   const totalDay = lines.reduce((sum, l) => sum + (l.day_shift_quantity ?? 0), 0);
   const totalNight = lines.reduce((sum, l) => sum + (l.night_shift_quantity ?? 0), 0);
@@ -378,7 +386,7 @@ export default function MatrixDetail({
         pendingApprovalStage={workflowStage}
         canActCurrentStage={canActCurrentStage}
         busy={busy}
-        hasLines={lines.length > 0}
+        readyToSubmit={readyToSubmit}
         onSubmit={() => run(() => submitForApproval(matrix.id))}
         onApproveInternal={(comment) => run(() => approveInternal(matrix.id, comment))}
         onRejectInternal={(reason) => run(() => rejectInternal(matrix.id, reason))}
@@ -643,7 +651,7 @@ function WorkflowActions({
   pendingApprovalStage,
   canActCurrentStage,
   busy,
-  hasLines,
+  readyToSubmit,
   onSubmit,
   onApproveInternal,
   onRejectInternal,
@@ -665,7 +673,11 @@ function WorkflowActions({
   pendingApprovalStage: WorkflowStage | null;
   canActCurrentStage: boolean;
   busy: boolean;
-  hasLines: boolean;
+  // Every manning line has at least one crew member currently assigned
+  // (Assigned tab on the Staffing Plan) — Submit for approval is hidden
+  // entirely until this is true, rather than shown with a caveat, so a
+  // draft that isn't staffed yet doesn't invite submitting it too early.
+  readyToSubmit: boolean;
   onSubmit: () => void;
   onApproveInternal: (comment: string) => void;
   onRejectInternal: (reason: string) => void;
@@ -707,8 +719,8 @@ function WorkflowActions({
 
   const buttons: React.ReactNode[] = [];
 
-  if (status === "draft" && canSubmit) {
-    buttons.push(btn(hasLines ? "Submit for approval" : "Submit for approval (add a manning line first)", onSubmit, "primary"));
+  if (status === "draft" && canSubmit && readyToSubmit) {
+    buttons.push(btn("Submit for approval", onSubmit, "primary"));
   }
   if (status === "pending_internal_approval" && canApproveInternal) {
     buttons.push(btn("Approve", () => setOpenAction("approveInternal"), "primary"));
