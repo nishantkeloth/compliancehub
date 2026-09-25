@@ -3,8 +3,8 @@ import { redirect } from "next/navigation";
 import { can, getEffectiveAccess } from "@/lib/rbac";
 import Link from "next/link";
 
-// Bulk Data Migration — company-admin-only home for the two legacy-data
-// tools Nishant asked for:
+// Bulk Data Migration — company-admin-only home for legacy-data and
+// data-reset tools:
 //   1. Crew register import (Excel/CSV export from the old system) — live,
 //      see ./crew-register (upload → review/match → commit).
 //   2. AI-assisted bulk document intake (one folder per crew member,
@@ -12,6 +12,9 @@ import Link from "next/link";
 //      same crew-documents storage/versioning path the single-person
 //      AI intake flow already uses) — live, see ./document-intake
 //      (folder → crew match → AI classify per file → review → commit).
+//   3. Reset crew matrix/site/project/contract data — live, see
+//      ./reset-data (typed-confirmation full wipe, for clearing
+//      test/demo data before go-live).
 //
 // Gated on crew.bulk_intake.manage (0027_bulk_intake_permission.sql),
 // granted to company_admin only — same pattern as ai.configure.
@@ -71,6 +74,26 @@ export default async function BulkIntakePage() {
             style={{ background: "var(--ch-pass-bg, #dcfce7)", color: "var(--ch-pass, #15803d)" }}
           >
             Ready
+          </span>
+        </Link>
+
+        <Link
+          href="/team/bulk-intake/reset-data"
+          className="block bg-white border rounded-xl p-5 hover:shadow-sm transition-shadow"
+          style={{ borderColor: "var(--ch-fail)" }}
+        >
+          <div className="text-sm font-semibold mb-1" style={{ color: "var(--ch-fail)" }}>
+            Reset Crew Matrix / Site / Project / Contract Data →
+          </div>
+          <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
+            Permanently clear crew matrices, offshore sites, projects, and contracts — and everything that hangs off
+            them — before going live. Contractors, Clients, and crew profiles are left untouched.
+          </p>
+          <span
+            className="inline-block text-xs font-semibold px-2.5 py-1 rounded-full"
+            style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}
+          >
+            Destructive
           </span>
         </Link>
       </div>
