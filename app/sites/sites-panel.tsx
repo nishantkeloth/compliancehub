@@ -249,7 +249,6 @@ function OffshoreSiteForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(site?.name ?? "");
-  const [code, setCode] = useState(site?.code ?? "");
   const [siteType, setSiteType] = useState(site?.site_type ?? "other");
   const [contractorId, setContractorId] = useState(site?.contractor_id ?? "");
   const [projectId, setProjectId] = useState(site?.project_id ?? "");
@@ -276,7 +275,6 @@ function OffshoreSiteForm({
     if (!name.trim() || submitted) return;
     const fd = new FormData();
     fd.set("name", name.trim());
-    fd.set("code", code.trim());
     fd.set("siteType", siteType);
     fd.set("contractorId", contractorId);
     fd.set("projectId", projectId);
@@ -290,7 +288,7 @@ function OffshoreSiteForm({
     setSubmitted(true);
     onSubmit(fd, {
       name: name.trim(),
-      code: code.trim() || null,
+      code: site?.code ?? null,
       site_type: siteType,
       contractor_id: contractorId || null,
       project_id: projectId || null,
@@ -311,10 +309,17 @@ function OffshoreSiteForm({
           Site name
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
-        <label className={lbl} style={lblStyle}>
-          Code
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={code} onChange={(e) => setCode(e.target.value)} />
-        </label>
+        {site ? (
+          <label className={lbl} style={lblStyle}>
+            Code
+            <input className={`${inputCls} w-full mt-1`} style={{ ...inputStyle, background: "var(--ch-paper)", color: "var(--ch-sub)" }} value={site.code || "—"} disabled readOnly />
+          </label>
+        ) : (
+          <div className={lbl} style={lblStyle}>
+            Code
+            <div className="mt-1 text-xs" style={{ color: "var(--ch-sub)" }}>Assigned automatically on save.</div>
+          </div>
+        )}
         <label className={lbl} style={lblStyle}>
           Site type
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={siteType} onChange={(e) => setSiteType(e.target.value)}>

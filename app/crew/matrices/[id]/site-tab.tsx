@@ -140,7 +140,8 @@ function SiteEditForm({
         </label>
         <label className={lbl} style={lblStyle}>
           Code
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={form.code} onChange={(e) => set("code", e.target.value)} />
+          <input className={`${inputCls} w-full mt-1`} style={{ ...inputStyle, background: "var(--ch-paper)", color: "var(--ch-sub)" }} value={form.code || "—"} disabled readOnly />
+          <span className="block mt-1" style={{ color: "var(--ch-sub)" }}>Auto-assigned, can&rsquo;t be changed.</span>
         </label>
       </div>
       <div className="grid gap-2.5 sm:grid-cols-2">
@@ -400,7 +401,6 @@ export default function SiteTab({
     setSiteSaving(true);
     const fd = new FormData();
     fd.set("name", siteForm.name.trim());
-    fd.set("code", siteForm.code.trim());
     fd.set("siteType", siteForm.siteType);
     fd.set("contractorId", siteForm.contractorId);
     fd.set("projectId", siteForm.projectId);

@@ -155,6 +155,15 @@ export async function createOffshoreSite(formData: FormData) {
   const name = str(formData, "name");
   if (!name) return { error: "Name is required." };
 
+  // Code is auto-assigned (SIT-00001, ...) the same way Client/Contractor/
+  // Contract/Project/Crew Matrix codes are — no longer taken from form
+  // input, so a caller can't leave it blank or collide with another site's.
+  const { data: code, error: codeError } = await supabase.rpc("next_number_range_code", {
+    p_org_id: access.orgId,
+    p_entity_type: "offshore_site",
+  });
+  if (codeError) return { error: `Could not assign a site code: ${codeError.message}` };
+
   const { data, error } = await supabase
     .from("offshore_sites")
     .insert({
@@ -162,7 +171,7 @@ export async function createOffshoreSite(formData: FormData) {
       contractor_id: optStr(formData, "contractorId"),
       project_id: optStr(formData, "projectId"),
       name,
-      code: optStr(formData, "code"),
+      code,
       site_type: str(formData, "siteType") || "other",
       country: optStr(formData, "country"),
       operating_region: optStr(formData, "operatingRegion"),
@@ -173,15 +182,14 @@ export async function createOffshoreSite(formData: FormData) {
       created_by: userId,
       updated_by: userId,
     })
-    .select("id")
+    .select("id, code")
     .single();
   if (error) return { error: error.message };
   revalidateSetup();
-  // id is new — existing callers (Sites page) ignored the return value
-  // before, so this is additive. The New Crew Matrix form's inline
-  // "+ New site" quick-add uses it to select the site it just created
-  // without a full page reload.
-  return { id: data?.id as string | undefined };
+  // id/code are new — existing callers (Sites page) ignored the return
+  // value before, so this is additive. The New Crew Matrix form's Blank
+  // draft uses id to attach the matrix to the site it just created.
+  return { id: data?.id as string | undefined, code: data?.code as string | undefined };
 }
 
 export async function updateOffshoreSite(id: string, formData: FormData) {
@@ -189,13 +197,16 @@ export async function updateOffshoreSite(id: string, formData: FormData) {
   const name = str(formData, "name");
   if (!name) return { error: "Name is required." };
 
+  // `code` is deliberately NOT accepted here — it's auto-assigned once at
+  // creation (see createOffshoreSite) and never changes afterward, same as
+  // matrix_number/contract codes elsewhere. Any "code" field a caller still
+  // sends is ignored.
   const { error } = await supabase
     .from("offshore_sites")
     .update({
       contractor_id: optStr(formData, "contractorId"),
       project_id: optStr(formData, "projectId"),
       name,
-      code: optStr(formData, "code"),
       site_type: str(formData, "siteType") || "other",
       country: optStr(formData, "country"),
       operating_region: optStr(formData, "operatingRegion"),
