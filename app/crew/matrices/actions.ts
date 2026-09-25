@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { applyApprovedRosterChanges } from "./[id]/roster-change-actions";
 import { startWorkflowInstance, getCurrentStage, actOnCurrentStage, cancelCurrentInstance, canActOnStage } from "@/lib/workflow";
@@ -430,10 +431,19 @@ export async function deleteCrewMatrix(id: string, unassignSiteCrew?: boolean) {
 //      generic entity_type/entity_id pair, not a real foreign key — nothing
 //      blocks the matrix delete, but leaving them would orphan that audit
 //      trail, so they're cleaned up too.
+//   3. boarding_confirmations is insert-only by RLS design (see migration
+//      0006 — "a boarding record is a fact, not an editable form"), with no
+//      delete policy at all. That's correct for normal use, but this bulk
+//      reset is a deliberate full wipe, so it — and every other write below
+//      — runs through the service-role client (bypasses RLS) instead of
+//      quietly deleting zero rows and then hitting mobilization_requests'
+//      foreign key. requireManage() below still gates who can call this at
+//      all; the admin client only ever runs after that check has passed.
 export async function deleteAllCrewMatrices(): Promise<{ error?: string; deletedMatrices: number; releasedCrew: number }> {
-  const { supabase, access, userId } = await requireManage();
+  const { access, userId } = await requireManage();
+  const admin = createAdminClient();
 
-  const { data: matrices, error: matricesErr } = await supabase
+  const { data: matrices, error: matricesErr } = await admin
     .from("crew_matrices")
     .select("id, offshore_site_id")
     .eq("org_id", access.orgId);
@@ -449,7 +459,7 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
   // (unlike deleteCrewMatrix's findBlockingActiveMatrix check, which exists
   // for the single-matrix case where sibling matrices at the same site
   // survive the delete).
-  const { data: activeAssignments, error: assignErr } = await supabase
+  const { data: activeAssignments, error: assignErr } = await admin
     .from("crew_assignments")
     .select("id, crew_id")
     .eq("org_id", access.orgId)
@@ -459,12 +469,12 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
 
   const today = new Date().toISOString().slice(0, 10);
   for (const row of activeAssignments ?? []) {
-    const { error: closeErr } = await supabase
+    const { error: closeErr } = await admin
       .from("crew_assignments")
       .update({ end_date: today, planned_end_date: today, assignment_status: "cancelled", updated_by: userId })
       .eq("id", row.id as string);
     if (closeErr) return { error: closeErr.message, deletedMatrices: 0, releasedCrew: 0 };
-    await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", row.crew_id as string);
+    await admin.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", row.crew_id as string);
   }
 
   // mobilization_requests.crew_matrix_id has no cascade/set-null (migration
@@ -482,7 +492,7 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
   //     .mobilization_position_id (NOT NULL, no cascade) — can't be
   //     unlinked, so these rows are deleted outright; nothing else
   //     references boarding_confirmations, so that's safe on its own.
-  const { data: mobRequests, error: mobFetchErr } = await supabase
+  const { data: mobRequests, error: mobFetchErr } = await admin
     .from("mobilization_requests")
     .select("id")
     .eq("org_id", access.orgId)
@@ -491,14 +501,14 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
   const mobIds = (mobRequests ?? []).map((m) => m.id as string);
 
   if (mobIds.length > 0) {
-    const { data: mobPositions, error: posFetchErr } = await supabase
+    const { data: mobPositions, error: posFetchErr } = await admin
       .from("mobilization_positions")
       .select("id")
       .in("mobilization_request_id", mobIds);
     if (posFetchErr) return { error: posFetchErr.message, deletedMatrices: 0, releasedCrew: 0 };
     const posIds = (mobPositions ?? []).map((p) => p.id as string);
 
-    const { error: unlinkByRequestErr } = await supabase
+    const { error: unlinkByRequestErr } = await admin
       .from("crew_assignments")
       .update({ mobilization_request_id: null })
       .eq("org_id", access.orgId)
@@ -506,7 +516,7 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
     if (unlinkByRequestErr) return { error: unlinkByRequestErr.message, deletedMatrices: 0, releasedCrew: 0 };
 
     if (posIds.length > 0) {
-      const { error: unlinkByPositionErr } = await supabase
+      const { error: unlinkByPositionErr } = await admin
         .from("crew_assignments")
         .update({ mobilization_position_id: null })
         .eq("org_id", access.orgId)
@@ -514,14 +524,14 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
       if (unlinkByPositionErr) return { error: unlinkByPositionErr.message, deletedMatrices: 0, releasedCrew: 0 };
     }
 
-    const { error: unlinkChangeErr } = await supabase
+    const { error: unlinkChangeErr } = await admin
       .from("crew_change_requests")
       .update({ mobilization_request_id: null })
       .eq("org_id", access.orgId)
       .in("mobilization_request_id", mobIds);
     if (unlinkChangeErr) return { error: unlinkChangeErr.message, deletedMatrices: 0, releasedCrew: 0 };
 
-    const { error: boardingErr } = await supabase
+    const { error: boardingErr } = await admin
       .from("boarding_confirmations")
       .delete()
       .eq("org_id", access.orgId)
@@ -530,11 +540,11 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
   }
 
   if (mobIds.length > 0) {
-    const { error: mobErr } = await supabase.from("mobilization_requests").delete().eq("org_id", access.orgId).in("id", mobIds);
+    const { error: mobErr } = await admin.from("mobilization_requests").delete().eq("org_id", access.orgId).in("id", mobIds);
     if (mobErr) return { error: mobErr.message, deletedMatrices: 0, releasedCrew: 0 };
   }
 
-  const { error: wfErr } = await supabase
+  const { error: wfErr } = await admin
     .from("workflow_instances")
     .delete()
     .eq("org_id", access.orgId)
@@ -545,7 +555,7 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
   // Everything else (lines, line documents/skills/competencies/client
   // requirements, status history, shares, reservations, staged roster-change
   // requests) cascades automatically via existing "on delete cascade" FKs.
-  const { error: delErr } = await supabase.from("crew_matrices").delete().eq("org_id", access.orgId).in("id", matrixIds);
+  const { error: delErr } = await admin.from("crew_matrices").delete().eq("org_id", access.orgId).in("id", matrixIds);
   if (delErr) return { error: delErr.message, deletedMatrices: 0, releasedCrew: 0 };
 
   revalidateMatrix();
