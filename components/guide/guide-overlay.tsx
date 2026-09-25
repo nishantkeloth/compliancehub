@@ -113,14 +113,55 @@ export default function GuideOverlay() {
     // changes (moving from one field to the next should re-scroll, unlike
     // ordinary re-measures of the same target while typing).
     let scrolledFor: string | null = null;
+    // Which of this step's fields the user has manually clicked/tabbed
+    // back into, if any — takes priority over the forward "first empty"
+    // walk below. Without this, clicking back into an earlier field to
+    // fix something (e.g. a typo'd date) wouldn't move the highlight
+    // there at all: that field already has SOME value, so the walk would
+    // just keep spotlighting whatever it had already advanced to.
+    // Cleared on focusing anything outside this step's fields, so the
+    // walk resumes normally once the user moves on.
+    let focusedFieldId: string | null = null;
+
+    const onFocusIn = (e: FocusEvent) => {
+      const fields = currentStep.fields;
+      if (!fields?.length) return;
+      const wrapper = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-guide-id]");
+      const id = wrapper?.getAttribute("data-guide-id");
+      const field = id ? fields.find((f) => f.id === id) : undefined;
+      if (field) {
+        focusedFieldId = field.id;
+        measure();
+      }
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const fields = currentStep.fields;
+      if (!fields?.length || !focusedFieldId) return;
+      // relatedTarget is the element gaining focus. If it's still one of
+      // this step's fields, that field's own focusin (which fires right
+      // after) will take over — leave focusedFieldId as-is until then so
+      // there's no flash back to the forward walk in between. Otherwise
+      // (clicked away, or relatedTarget unavailable) release it now.
+      const nextWrapper = (e.relatedTarget as HTMLElement | null)?.closest<HTMLElement>("[data-guide-id]");
+      const nextId = nextWrapper?.getAttribute("data-guide-id");
+      if (!nextId || !fields.some((f) => f.id === nextId)) {
+        focusedFieldId = null;
+        measure();
+      }
+    };
 
     const measure = () => {
       // Field-by-field walk takes priority: while any of this step's
       // fields is still empty, spotlight that field with its own
       // label/hint instead of the step's whole-form target. Falls through
       // to the normal targetIds behavior (below) once every field is
-      // filled or the step defines none.
-      const activeFieldMatch = findActiveField(currentStep.fields ?? []);
+      // filled or the step defines none. A field the user has manually
+      // focused (see onFocusIn/onFocusOut above) overrides this forward
+      // walk for as long as focus stays there, even if it's already filled.
+      const focusedField = focusedFieldId ? currentStep.fields?.find((f) => f.id === focusedFieldId) : undefined;
+      const focusedEl = focusedField ? document.querySelector<HTMLElement>(`[data-guide-id="${focusedField.id}"]`) : null;
+      const activeFieldMatch =
+        focusedField && focusedEl ? { field: focusedField, el: focusedEl } : findActiveField(currentStep.fields ?? []);
       const el = activeFieldMatch ? activeFieldMatch.el : findTarget(fillIds(currentStep.targetIds ?? [], state?.recordRefs ?? {}));
       setActiveField(activeFieldMatch?.field ?? null);
 
@@ -151,6 +192,11 @@ export default function GuideOverlay() {
     };
     window.addEventListener("scroll", onScrollResize, true);
     window.addEventListener("resize", onScrollResize);
+    // focusin/focusout (unlike focus/blur) bubble, so a single listener on
+    // document sees focus land on or leave any field without attaching
+    // anything to the fields themselves.
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
     const observer = new MutationObserver(() => measure());
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
 
@@ -158,6 +204,8 @@ export default function GuideOverlay() {
       window.clearInterval(poll);
       window.removeEventListener("scroll", onScrollResize, true);
       window.removeEventListener("resize", onScrollResize);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
       observer.disconnect();
       cancelAnimationFrame(raf);
     };
