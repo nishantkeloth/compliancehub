@@ -333,10 +333,23 @@ export default function SiteTab({
   // surfaced but don't roll back the site_manning_requirements change that
   // already succeeded — the checklist and the matrix's lines can be
   // reconciled by re-toggling if the two ever disagree.
-  const syncLine = (jobRoleId: string, active: boolean, minimumHeadcount: number, preferredDocumentTemplateId: string | null) => {
+  const syncLine = (
+    jobRoleId: string,
+    active: boolean,
+    minimumHeadcount: number,
+    preferredDocumentTemplateId: string | null,
+    forceTemplateApply = false
+  ) => {
     if (!isDraft) return;
     startTransition(async () => {
-      const res = await syncManningLineFromSiteRequirement(crewMatrixId, jobRoleId, active, minimumHeadcount, preferredDocumentTemplateId);
+      const res = await syncManningLineFromSiteRequirement(
+        crewMatrixId,
+        jobRoleId,
+        active,
+        minimumHeadcount,
+        preferredDocumentTemplateId,
+        forceTemplateApply
+      );
       if (res?.error) setBgError(res.error);
       router.refresh();
     });
@@ -439,6 +452,10 @@ export default function SiteTab({
       }
       router.refresh();
     });
+    // Picking a template here is a deliberate choice, so push it onto this
+    // matrix's own line's Required Document Types right away (force=true) —
+    // not just when a bare, never-populated line happens to pick it up.
+    if (nextTemplateId) syncLine(req.job_role_id, true, req.minimum_headcount, nextTemplateId, true);
   };
 
   // ---- Site details, editable in place (previously only editable from the

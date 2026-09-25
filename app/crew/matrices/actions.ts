@@ -161,6 +161,48 @@ async function applyPreferredDocumentTemplates(supabase: Supa, orgId: string, li
   await supabase.from("crew_matrix_line_documents").upsert(rows, { onConflict: "line_id,document_type_id" });
 }
 
+// Shared by createCrewMatrixLine and syncManningLineFromSiteRequirement:
+// resolves the client (for the org-wide/per-client document defaults that
+// seedLineDocumentsFromTemplate reads) and the offshore site (for the
+// site's own preferred-template-per-role setting) that a line inside this
+// matrix should inherit from.
+async function resolveMatrixDocumentContext(supabase: Supa, crewMatrixId: string) {
+  const { data: matrixRow } = await supabase
+    .from("crew_matrices")
+    .select("project_id, offshore_site_id")
+    .eq("id", crewMatrixId)
+    .maybeSingle();
+  const clientId = matrixRow?.project_id ? await resolveClientIdForProject(supabase, matrixRow.project_id as string) : null;
+  return { clientId, offshoreSiteId: (matrixRow?.offshore_site_id as string | null) ?? null };
+}
+
+// The site's own preferred document template for a role — same source the
+// Site tab's manning-requirements checklist reads/writes
+// (site_manning_requirements.preferred_document_template_id).
+async function siteRolePreferredTemplate(supabase: Supa, offshoreSiteId: string | null, jobRoleId: string): Promise<string | null> {
+  if (!offshoreSiteId) return null;
+  const { data } = await supabase
+    .from("site_manning_requirements")
+    .select("preferred_document_template_id")
+    .eq("offshore_site_id", offshoreSiteId)
+    .eq("job_role_id", jobRoleId)
+    .maybeSingle();
+  return (data?.preferred_document_template_id as string | null) ?? null;
+}
+
+// Returns the ids from `lineIds` that don't yet have ANY row in
+// crew_matrix_line_documents. Used to backfill documents for a line that
+// predates this sync (e.g. checked on the Site tab before a matching
+// manning line existed) without ever touching a line that's already had
+// its documents populated — so a manual edit made on the Manning Lines tab
+// is never silently overwritten by a later headcount sync.
+async function lineIdsMissingDocuments(supabase: Supa, lineIds: string[]): Promise<string[]> {
+  if (lineIds.length === 0) return [];
+  const { data } = await supabase.from("crew_matrix_line_documents").select("line_id").in("line_id", lineIds);
+  const withDocs = new Set((data ?? []).map((r) => r.line_id as string));
+  return lineIds.filter((id) => !withDocs.has(id));
+}
+
 // Line/header content can only change while the matrix is still a
 // draft — everything from "submit" onward moves status only, via
 // the dedicated workflow actions below.
@@ -625,9 +667,19 @@ export async function createCrewMatrixLine(crewMatrixId: string, formData: FormD
   if (error) return { error: error.message };
 
   if (line?.id) {
-    const { data: matrixRow } = await supabase.from("crew_matrices").select("project_id").eq("id", crewMatrixId).maybeSingle();
-    const clientId = matrixRow?.project_id ? await resolveClientIdForProject(supabase, matrixRow.project_id as string) : null;
+    const { clientId, offshoreSiteId } = await resolveMatrixDocumentContext(supabase, crewMatrixId);
     await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, [{ id: line.id as string, job_role_id: jobRoleId }]);
+    // The site may already have a preferred document template picked for
+    // this role (Site tab manning requirements) — apply it here too, same
+    // as a line created through the Site tab sync, so a manually added
+    // line for a role the site already knows about isn't left with only
+    // the generic org-wide/per-client defaults.
+    const preferredTemplateId = await siteRolePreferredTemplate(supabase, offshoreSiteId, jobRoleId);
+    if (preferredTemplateId) {
+      await applyPreferredDocumentTemplates(supabase, access.orgId!, [
+        { id: line.id as string, preferred_document_template_id: preferredTemplateId },
+      ]);
+    }
   }
 
   revalidateMatrix(crewMatrixId);
@@ -683,12 +735,21 @@ export async function deleteCrewMatrixLine(lineId: string, crewMatrixId: string)
 // same as any manually added line. If a line for this role already exists
 // in this matrix (added manually, or by an earlier toggle), it's reused —
 // this never creates a second line for the same role.
+//
+// forceTemplateApply: true when the site's preferred document template
+// itself is what just changed (the Site tab's template dropdown) — then
+// the new template is always pushed onto an existing line's documents,
+// same as clicking "Apply template" on the Manning Lines tab would. Left
+// false for an incidental call (e.g. a headcount edit), where only a line
+// with zero documents so far gets backfilled, so a deliberate edit made on
+// the Manning Lines tab is never silently overwritten.
 export async function syncManningLineFromSiteRequirement(
   crewMatrixId: string,
   jobRoleId: string,
   active: boolean,
   requiredHeadcount: number,
-  preferredDocumentTemplateId: string | null
+  preferredDocumentTemplateId: string | null,
+  forceTemplateApply = false
 ) {
   const { supabase, access, userId } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
@@ -716,6 +777,33 @@ export async function syncManningLineFromSiteRequirement(
       .update({ required_headcount: requiredHeadcount, updated_by: userId })
       .in("id", existingIds);
     if (error) return { error: error.message };
+
+    // Backfill documents for a line that predates this sync — e.g. a role
+    // that was checked on the Site tab before this live-sync feature
+    // existed (see the "Sync now" backfill), or a line added manually
+    // that happens to match this role. Only for lines with zero documents
+    // so far, so an intentional edit on the Manning Lines tab is never
+    // overwritten by a later headcount change here.
+    const bareIds = await lineIdsMissingDocuments(supabase, existingIds);
+    if (bareIds.length > 0) {
+      const { clientId } = await resolveMatrixDocumentContext(supabase, crewMatrixId);
+      await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, bareIds.map((id) => ({ id, job_role_id: jobRoleId })));
+    }
+    if (preferredDocumentTemplateId) {
+      // A line that already has documents only gets the new template
+      // applied when it was the template selection itself that changed
+      // (forceTemplateApply) — never as a side effect of an unrelated
+      // headcount edit.
+      const targetIds = forceTemplateApply ? existingIds : bareIds;
+      if (targetIds.length > 0) {
+        await applyPreferredDocumentTemplates(
+          supabase,
+          access.orgId!,
+          targetIds.map((id) => ({ id, preferred_document_template_id: preferredDocumentTemplateId }))
+        );
+      }
+    }
+
     revalidateMatrix(crewMatrixId);
     return { id: existingIds[0] };
   }
@@ -742,8 +830,7 @@ export async function syncManningLineFromSiteRequirement(
   if (error) return { error: error.message };
 
   if (line?.id) {
-    const { data: matrixRow } = await supabase.from("crew_matrices").select("project_id").eq("id", crewMatrixId).maybeSingle();
-    const clientId = matrixRow?.project_id ? await resolveClientIdForProject(supabase, matrixRow.project_id as string) : null;
+    const { clientId } = await resolveMatrixDocumentContext(supabase, crewMatrixId);
     await seedLineDocumentsFromTemplate(supabase, access.orgId!, clientId, [{ id: line.id as string, job_role_id: jobRoleId }]);
     if (preferredDocumentTemplateId) {
       await applyPreferredDocumentTemplates(supabase, access.orgId!, [
