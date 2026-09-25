@@ -41,9 +41,13 @@ const revalidateContracts = (id?: string) => {
 };
 
 const CONTRACT_STATUSES = ["draft", "awarded", "mobilizing", "active", "suspended", "completed", "cancelled"] as const;
-function contractStatus(formData: FormData): (typeof CONTRACT_STATUSES)[number] {
+// Returns null for a blank/invalid status instead of silently coercing to
+// "draft" — status is one of a contract's mandatory fields (doc: the
+// person creating a contract must pick a real one, never inherit "draft"
+// by omission), so both callers below turn a null here into a real error.
+function contractStatus(formData: FormData): (typeof CONTRACT_STATUSES)[number] | null {
   const v = str(formData, "status");
-  return (CONTRACT_STATUSES as readonly string[]).includes(v) ? (v as (typeof CONTRACT_STATUSES)[number]) : "draft";
+  return (CONTRACT_STATUSES as readonly string[]).includes(v) ? (v as (typeof CONTRACT_STATUSES)[number]) : null;
 }
 
 export async function createContract(formData: FormData) {
@@ -52,6 +56,12 @@ export async function createContract(formData: FormData) {
   if (!clientId) return { error: "Client is required." };
   const title = str(formData, "contractTitle");
   if (!title) return { error: "Contract title is required." };
+  const status = contractStatus(formData);
+  if (!status) return { error: "Status is required." };
+  const plannedStartDate = optStr(formData, "plannedStartDate");
+  if (!plannedStartDate) return { error: "Planned start date is required." };
+  const plannedEndDate = optStr(formData, "plannedEndDate");
+  if (!plannedEndDate) return { error: "Planned end date is required." };
 
   const { data: code, error: codeError } = await supabase.rpc("next_number_range_code", {
     p_org_id: access.orgId,
@@ -69,8 +79,8 @@ export async function createContract(formData: FormData) {
       contract_title: title,
       description: optStr(formData, "description"),
       award_date: optStr(formData, "awardDate"),
-      planned_start_date: optStr(formData, "plannedStartDate"),
-      planned_end_date: optStr(formData, "plannedEndDate"),
+      planned_start_date: plannedStartDate,
+      planned_end_date: plannedEndDate,
       actual_start_date: optStr(formData, "actualStartDate"),
       actual_end_date: optStr(formData, "actualEndDate"),
       currency: optStr(formData, "currency"),
@@ -80,7 +90,7 @@ export async function createContract(formData: FormData) {
       mobilization_notice_days: optNum(formData, "mobilizationNoticeDays"),
       contract_manager_user_id: optStr(formData, "contractManagerUserId"),
       operations_manager_user_id: optStr(formData, "operationsManagerUserId"),
-      status: contractStatus(formData),
+      status,
       notes: optStr(formData, "notes"),
       created_by: userId,
       updated_by: userId,
@@ -98,6 +108,8 @@ export async function updateContract(id: string, formData: FormData) {
   if (!clientId) return { error: "Client is required." };
   const title = str(formData, "contractTitle");
   if (!title) return { error: "Contract title is required." };
+  const status = contractStatus(formData);
+  if (!status) return { error: "Status is required." };
 
   const { error } = await supabase
     .from("contracts")
@@ -118,7 +130,7 @@ export async function updateContract(id: string, formData: FormData) {
       mobilization_notice_days: optNum(formData, "mobilizationNoticeDays"),
       contract_manager_user_id: optStr(formData, "contractManagerUserId"),
       operations_manager_user_id: optStr(formData, "operationsManagerUserId"),
-      status: contractStatus(formData),
+      status,
       notes: optStr(formData, "notes"),
       updated_by: userId,
     })

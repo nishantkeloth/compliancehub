@@ -13,13 +13,14 @@ export default async function ContractsPage() {
   const access = await getEffectiveAccess(supabase, user.id);
   if (!can(access, "contracts.view") || !access.orgId) redirect("/");
 
-  const [{ data: contracts }, { data: clients }] = await Promise.all([
+  const [{ data: contracts }, { data: clients }, { data: members }] = await Promise.all([
     supabase
       .from("contracts")
       .select("id, contract_code, contract_title, status, planned_start_date, planned_end_date, estimated_contract_value, clients(name)")
       .eq("org_id", access.orgId)
       .order("created_at", { ascending: false }),
     supabase.from("clients").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
+    supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).eq("status", "active").order("full_name"),
   ]);
 
   const rows = (contracts ?? []).map((c) => {
@@ -45,6 +46,7 @@ export default async function ContractsPage() {
       <ContractsManager
         contracts={rows}
         clients={clients ?? []}
+        members={members ?? []}
         canManage={can(access, "contracts.manage")}
         canViewValue={can(access, "contracts.view_value")}
       />

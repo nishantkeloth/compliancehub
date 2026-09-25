@@ -71,9 +71,12 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       targetIds: ["contracts.new-button", "contracts.form.save"],
       fields: [
         { id: "contracts.form.client", label: "Client", hint: "Pick which client this contract is with." },
+        { id: "contracts.form.status", label: "Status", hint: "Pick the contract's current status — there's no default, so choose the one that's actually true today." },
         { id: "contracts.form.title", label: "Contract title", hint: "A short name for this contract, e.g. “ADNOC Marine Support 2026”." },
+        { id: "contracts.form.planned-start", label: "Planned start", hint: "When the contract is planned to start." },
+        { id: "contracts.form.planned-end", label: "Planned end", hint: "When the contract is planned to end — used for the expiry/mobilization-notice warnings elsewhere in the app." },
       ],
-      instruction: "Click “+ Add contract”, pick the Client, give it a title, then Save.",
+      instruction: "Click “+ Add contract”, then fill in every field marked with a red star — the rest can be added now or later from the contract's page — and Save.",
       why: "Every project sits under a contract or work order — this is where that record starts.",
       prerequisites: [],
       completionEvent: "contract.saved",

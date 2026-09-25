@@ -25,6 +25,10 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 const lbl = "text-xs";
 const lblStyle = { color: "var(--ch-sub)" };
 
+// Same statuses as the detail page's edit form (app/contracts/[id]/contract-detail.tsx)
+// — kept in sync manually since the enum also lives in the DB check constraint.
+const CONTRACT_STATUSES = ["draft", "awarded", "mobilizing", "active", "suspended", "completed", "cancelled"];
+
 export const STATUS_PILLS: Record<string, { bg: string; fg: string }> = {
   draft: { bg: "var(--ch-paper)", fg: "var(--ch-sub)" },
   awarded: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
@@ -73,11 +77,13 @@ function formatValue(v: number | null) {
 export default function ContractsManager({
   contracts,
   clients,
+  members,
   canManage,
   canViewValue,
 }: {
   contracts: Contract[];
   clients: { id: string; name: string }[];
+  members: { id: string; full_name: string }[];
   canManage: boolean;
   canViewValue: boolean;
 }) {
@@ -140,6 +146,7 @@ export default function ContractsManager({
         (adding ? (
           <ContractForm
             clients={clients}
+            members={members}
             onSubmit={(fd, values) =>
               submitCreate(fd, {
                 id: tempId(),
@@ -212,77 +219,153 @@ export default function ContractsManager({
   );
 }
 
+// Every field a contract can carry is shown from the moment it's created —
+// not just a starter subset the user has to come back and fill in later via
+// Edit. The five marked with a red star (Client, Status, Contract title,
+// Planned start, Planned end) are the minimum a contract needs to be usable
+// elsewhere in the app (expiry warnings, mobilization-notice calculations,
+// reporting) and are the ones Guided Workflows' field-walk (registry.ts
+// contract.create step) stops on in order; everything else stays optional
+// and fillable now or later from the contract's own page.
 function ContractForm({
   clients,
+  members,
   onSubmit,
   onCancel,
 }: {
   clients: { id: string; name: string }[];
+  members: { id: string; full_name: string }[];
   onSubmit: (fd: FormData, values: Omit<Contract, "id" | "contract_code">) => void;
   onCancel: () => void;
 }) {
-  const [clientId, setClientId] = useState(clients[0]?.id ?? "");
-  const [title, setTitle] = useState("");
-  const [contractNumber, setContractNumber] = useState("");
-  const [status, setStatus] = useState("draft");
+  const [values, setValues] = useState({
+    clientId: "",
+    status: "",
+    contractNumber: "",
+    contractTitle: "",
+    awardDate: "",
+    plannedStartDate: "",
+    plannedEndDate: "",
+    actualStartDate: "",
+    actualEndDate: "",
+    currency: "",
+    estimatedContractValue: "",
+    billingModel: "",
+    mobilizationNoticeDays: "",
+    paymentTerms: "",
+    contractManagerUserId: "",
+    operationsManagerUserId: "",
+    description: "",
+    notes: "",
+  });
   const [submitted, setSubmitted] = useState(false);
+  const set = (k: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    setValues((v) => ({ ...v, [k]: e.target.value }));
+
+  const isValid =
+    values.clientId &&
+    values.status &&
+    values.contractTitle.trim() &&
+    values.plannedStartDate &&
+    values.plannedEndDate;
 
   const save = () => {
-    if (!title.trim() || !clientId || submitted) return;
+    if (!isValid || submitted) return;
     const fd = new FormData();
-    fd.set("clientId", clientId);
-    fd.set("contractTitle", title.trim());
-    fd.set("contractNumber", contractNumber.trim());
-    fd.set("status", status);
+    Object.entries(values).forEach(([k, v]) => fd.set(k, v));
     setSubmitted(true);
     onSubmit(fd, {
-      contract_title: title.trim(),
-      status,
-      planned_start_date: null,
-      planned_end_date: null,
-      estimated_contract_value: null,
-      client_name: clients.find((c) => c.id === clientId)?.name ?? "—",
+      contract_title: values.contractTitle.trim(),
+      status: values.status,
+      planned_start_date: values.plannedStartDate || null,
+      planned_end_date: values.plannedEndDate || null,
+      estimated_contract_value: values.estimatedContractValue ? Number(values.estimatedContractValue) : null,
+      client_name: clients.find((c) => c.id === values.clientId)?.name ?? "—",
     });
   };
 
+  const field = (label: string, key: keyof typeof values, type = "text", required = false, guideId?: string) => (
+    <label className={lbl} style={lblStyle} data-guide-id={guideId}>
+      {label} {required && <span style={{ color: "var(--ch-fail)" }}>*</span>}
+      <input type={type} className={`${inputCls} w-full mt-1`} style={inputStyle} value={values[key]} onChange={set(key)} />
+    </label>
+  );
+
   return (
     <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="contracts.form.client">
-          Client
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-            {clients.length === 0 && <option value="">No clients yet</option>}
+          Client <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.clientId} onChange={set("clientId")}>
+            <option value="">{clients.length === 0 ? "No clients yet" : "Select a client…"}</option>
             {clients.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Status
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
-            {["draft", "awarded", "mobilizing", "active", "suspended", "completed", "cancelled"].map((s) => (
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} data-guide-id="contracts.form.status">
+          Status <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.status} onChange={set("status")}>
+            <option value="">Select status…</option>
+            {CONTRACT_STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
         </label>
+        {field("Contract number", "contractNumber")}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 mb-3">
         <label className={lbl} style={lblStyle} data-guide-id="contracts.form.title">
-          Contract title
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} />
+          Contract title <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.contractTitle} onChange={set("contractTitle")} />
         </label>
-        <label className={lbl} style={lblStyle}>
-          Contract number
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} />
+        {field("Award date", "awardDate", "date")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4 mb-3">
+        {field("Planned start", "plannedStartDate", "date", true, "contracts.form.planned-start")}
+        {field("Planned end", "plannedEndDate", "date", true, "contracts.form.planned-end")}
+        {field("Actual start", "actualStartDate", "date")}
+        {field("Actual end", "actualEndDate", "date")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4 mb-3">
+        {field("Currency", "currency")}
+        {field("Estimated value", "estimatedContractValue", "number")}
+        {field("Billing model", "billingModel")}
+        {field("Mobilization notice (days)", "mobilizationNoticeDays", "number")}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 mb-3">
+        {field("Payment terms", "paymentTerms")}
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Contract manager
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.contractManagerUserId} onChange={set("contractManagerUserId")}>
+            <option value="">—</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.full_name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+          Operations manager
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.operationsManagerUserId} onChange={set("operationsManagerUserId")}>
+            <option value="">—</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.full_name}</option>
+            ))}
+          </select>
         </label>
       </div>
-      <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-        You&rsquo;ll fill in dates, value, service scope, and team on the contract page after saving.
-      </p>
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Description
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.description} onChange={set("description")} />
+      </label>
+      <label className={`${lbl} block mb-3`} style={lblStyle}>
+        Notes
+        <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} value={values.notes} onChange={set("notes")} />
+      </label>
       <div className="flex items-center gap-2">
         <button
           onClick={save}
-          disabled={submitted || !title.trim() || !clientId}
+          disabled={submitted || !isValid}
           data-guide-id="contracts.form.save"
           className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
         >
