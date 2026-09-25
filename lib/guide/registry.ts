@@ -145,7 +145,7 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "You don't have permission to manage crew matrices, or no project exists yet.",
-      next: "matrix.line.add",
+      next: "matrix.site.review",
     },
     {
       id: "matrix.line.add",
@@ -199,7 +199,36 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
       canSkip: false,
       onMissingTarget: "unsupported",
       unsupportedMessage: "AI generation isn't enabled for this company (Settings → AI), or you don't have permission to manage crew matrices.",
-      next: "staffing.assign",
+      next: "matrix.site.review",
+    },
+    {
+      // Deliberately terminal for now: the matrix is already created by
+      // the time this step is reached (matrix.create.blank or
+      // matrix.create.ai already fired their own completion event), so
+      // this step's only job is to point the user at the Site tab and
+      // then just sit there. It carries no `completionEvent`, so nothing
+      // ever marks it "completed" and the engine's own advanceTo() is
+      // never called for it — per the architecture note at the top of
+      // this file (and lib/guide/types.ts), advancement only ever
+      // happens on a real completion event or a "choice" pick, never a
+      // bare click, so this intentionally never auto-advances into
+      // Manning Lines / Staffing Plan. Requested by the user: guided help
+      // should land on Site and stop there, no further walkthrough for
+      // now. matrix.line.add / matrix.line.requirements / staffing.assign
+      // are left in the registry unreferenced by this path — their real
+      // completionEvents are still fired by the genuine (non-guide) UI
+      // actions elsewhere, so re-pointing a `next` back to them later is
+      // enough to resume the fuller walkthrough without rebuilding it.
+      id: "matrix.site.review",
+      label: "Review the new site",
+      route: "/crew/matrices/{matrixId}",
+      targetIds: ["matrix.tab.site"],
+      instruction: "The draft matrix is created. Open the Site tab to review the site's manning requirements whenever you're ready — no further guided steps for now.",
+      why: "The draft matrix itself is already done — Site is just where its manning requirements live day to day.",
+      prerequisites: ["matrix.create.blank", "matrix.create.ai"],
+      canSkip: true,
+      onMissingTarget: "unsupported",
+      unsupportedMessage: "You don't have permission to view this matrix.",
     },
     {
       id: "staffing.assign",
