@@ -406,6 +406,88 @@ export async function deleteCrewMatrix(id: string, unassignSiteCrew?: boolean) {
   return {};
 }
 
+// Bulk reset — deletes EVERY crew matrix (every version, every status: draft,
+// submitted, approved, active, everything) in the org, and releases every
+// crew member currently assigned at any site one of those matrices covered.
+// Unlike deleteCrewMatrix above, this isn't restricted to draft matrices and
+// doesn't offer the unassign choice — it's meant for wiping test/setup data
+// clean before going live, not day-to-day matrix management, so the UI gates
+// it behind its own explicit typed confirmation rather than a plain confirm().
+//
+// Two dependency issues the single-matrix delete doesn't have to deal with,
+// since it only ever runs on drafts (which can't have mobilizations or a
+// finished workflow yet):
+//   1. mobilization_requests.crew_matrix_id has no ON DELETE CASCADE/SET
+//      NULL (see migration 0003) — left as-is, deleting a matrix with a
+//      mobilization against it would fail with a foreign-key violation, so
+//      those rows (and their cascade-linked positions/history/comments) are
+//      removed first.
+//   2. workflow_instances / _stages / _events reference the matrix via a
+//      generic entity_type/entity_id pair, not a real foreign key — nothing
+//      blocks the matrix delete, but leaving them would orphan that audit
+//      trail, so they're cleaned up too.
+export async function deleteAllCrewMatrices(): Promise<{ error?: string; deletedMatrices: number; releasedCrew: number }> {
+  const { supabase, access, userId } = await requireManage();
+
+  const { data: matrices, error: matricesErr } = await supabase
+    .from("crew_matrices")
+    .select("id, offshore_site_id")
+    .eq("org_id", access.orgId);
+  if (matricesErr) return { error: matricesErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  if (!matrices || matrices.length === 0) return { deletedMatrices: 0, releasedCrew: 0 };
+
+  const matrixIds = matrices.map((m) => m.id as string);
+  const siteIds = Array.from(new Set(matrices.map((m) => m.offshore_site_id as string)));
+
+  // Release every crew member currently assigned at any site one of these
+  // matrices covers — with every matrix at that site being wiped, there's no
+  // "which matrix do they actually belong to" ambiguity left to protect
+  // (unlike deleteCrewMatrix's findBlockingActiveMatrix check, which exists
+  // for the single-matrix case where sibling matrices at the same site
+  // survive the delete).
+  const { data: activeAssignments, error: assignErr } = await supabase
+    .from("crew_assignments")
+    .select("id, crew_id")
+    .eq("org_id", access.orgId)
+    .in("offshore_site_id", siteIds)
+    .is("end_date", null);
+  if (assignErr) return { error: assignErr.message, deletedMatrices: 0, releasedCrew: 0 };
+
+  const today = new Date().toISOString().slice(0, 10);
+  for (const row of activeAssignments ?? []) {
+    const { error: closeErr } = await supabase
+      .from("crew_assignments")
+      .update({ end_date: today, planned_end_date: today, assignment_status: "cancelled", updated_by: userId })
+      .eq("id", row.id as string);
+    if (closeErr) return { error: closeErr.message, deletedMatrices: 0, releasedCrew: 0 };
+    await supabase.from("crew_profiles").update({ deployment_status: "onshore" }).eq("id", row.crew_id as string);
+  }
+
+  const { error: mobErr } = await supabase
+    .from("mobilization_requests")
+    .delete()
+    .eq("org_id", access.orgId)
+    .in("crew_matrix_id", matrixIds);
+  if (mobErr) return { error: mobErr.message, deletedMatrices: 0, releasedCrew: 0 };
+
+  const { error: wfErr } = await supabase
+    .from("workflow_instances")
+    .delete()
+    .eq("org_id", access.orgId)
+    .eq("entity_type", "crew_matrix")
+    .in("entity_id", matrixIds);
+  if (wfErr) return { error: wfErr.message, deletedMatrices: 0, releasedCrew: 0 };
+
+  // Everything else (lines, line documents/skills/competencies/client
+  // requirements, status history, shares, reservations, staged roster-change
+  // requests) cascades automatically via existing "on delete cascade" FKs.
+  const { error: delErr } = await supabase.from("crew_matrices").delete().eq("org_id", access.orgId).in("id", matrixIds);
+  if (delErr) return { error: delErr.message, deletedMatrices: 0, releasedCrew: 0 };
+
+  revalidateMatrix();
+  return { deletedMatrices: matrixIds.length, releasedCrew: (activeAssignments ?? []).length };
+}
+
 /* ================= Lines ================= */
 
 export async function createCrewMatrixLine(crewMatrixId: string, formData: FormData) {
