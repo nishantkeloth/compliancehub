@@ -21,7 +21,7 @@ import {
   createNewVersion,
 } from "../actions";
 import { StatusPill } from "@/app/contracts/contracts-manager";
-import AiReviewPanel from "./ai-review-panel";
+import AiReviewModal from "./ai-review-panel";
 import LinesEditor, { type Line, type Ref, type DocTypeRef, type DocTemplate } from "./lines-editor";
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
@@ -149,6 +149,10 @@ export default function MatrixDetail({
   // "Send Matrix to Client" is visible on the main screen (e.g. Overview)
   // without switching tabs first.
   const [shareModal, setShareModal] = useState<"send" | "history" | null>(null);
+  // AI Review — kept as its own boolean rather than folded into shareModal:
+  // it's a separate, unrelated feature (AI findings vs. client sharing) that
+  // just happens to also open as a modal from the header button row.
+  const [aiReviewOpen, setAiReviewOpen] = useState(false);
 
   const isDraft = matrix.status === "draft";
   // "Send Matrix to Client" — only once this version has actually been
@@ -328,6 +332,15 @@ export default function MatrixDetail({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {aiVisible && canManage && (
+            <button
+              onClick={() => setAiReviewOpen(true)}
+              className="text-sm font-semibold rounded-lg px-4 py-2 flex items-center gap-1.5"
+              style={{ background: "var(--ch-navy)", color: "#fff" }}
+            >
+              <span className="font-mono">✦</span> AI Review
+            </button>
+          )}
           {canShareMatrix && (
             <>
               <button
@@ -466,7 +479,6 @@ export default function MatrixDetail({
                   ))}
                 </ul>
               )}
-              {aiVisible && canManage && <AiReviewPanel crewMatrixId={matrix.id} isDraft={isDraft} />}
             </div>
           </div>
         ))}
@@ -577,6 +589,7 @@ export default function MatrixDetail({
       {shareModal === "history" && (
         <SharingHistoryPanel crewMatrixId={matrix.id} onClose={() => setShareModal(null)} />
       )}
+      {aiReviewOpen && <AiReviewModal crewMatrixId={matrix.id} isDraft={isDraft} onClose={() => setAiReviewOpen(false)} />}
     </div>
   );
 }
