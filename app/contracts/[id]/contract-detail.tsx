@@ -12,6 +12,7 @@ import {
   deleteContractDocument,
 } from "../actions";
 import { StatusPill } from "../contracts-manager";
+import { CONTRACT_SERVICE_OPTIONS as SERVICE_OPTIONS } from "@/lib/contract-services";
 
 type Contract = {
   id: string;
@@ -43,17 +44,6 @@ type Ref = { id: string; name: string };
 type Member = { id: string; full_name: string };
 
 const CONTRACT_STATUSES = ["draft", "awarded", "mobilizing", "active", "suspended", "completed", "cancelled"];
-const SERVICE_OPTIONS = [
-  { key: "catering", label: "Catering" },
-  { key: "housekeeping", label: "Housekeeping" },
-  { key: "laundry", label: "Laundry" },
-  { key: "provision_supply", label: "Provision supply" },
-  { key: "equipment_supply", label: "Equipment supply" },
-  { key: "camp_management", label: "Camp management" },
-  { key: "waste_management", label: "Waste management" },
-  { key: "container_logistics_support", label: "Container/logistics support" },
-  { key: "other", label: "Other" },
-];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };

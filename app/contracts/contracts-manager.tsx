@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createContract, deleteContract } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { useGuideMaybe } from "@/components/guide/guide-context";
+import { CONTRACT_SERVICE_OPTIONS } from "@/lib/contract-services";
 
 type Contract = {
   id: string;
@@ -258,9 +259,12 @@ function ContractForm({
     description: "",
     notes: "",
   });
+  const [services, setServices] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const set = (k: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setValues((v) => ({ ...v, [k]: e.target.value }));
+  const toggleService = (key: string) =>
+    setServices((s) => (s.includes(key) ? s.filter((k) => k !== key) : [...s, key]));
 
   const isValid =
     values.clientId &&
@@ -273,6 +277,11 @@ function ContractForm({
     if (!isValid || submitted) return;
     const fd = new FormData();
     Object.entries(values).forEach(([k, v]) => fd.set(k, v));
+    // Multiple entries under the same key — read server-side with
+    // formData.getAll("services") (see createContract) and applied to the
+    // new contract in the same action, so Service Scope doesn't need its
+    // own trip through the tab afterward.
+    services.forEach((s) => fd.append("services", s));
     setSubmitted(true);
     onSubmit(fd, {
       contract_title: values.contractTitle.trim(),
@@ -353,6 +362,17 @@ function ContractForm({
             ))}
           </select>
         </label>
+      </div>
+      <div className="mb-3">
+        <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--ch-sub)" }}>Service scope</div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {CONTRACT_SERVICE_OPTIONS.map((opt) => (
+            <label key={opt.key} className="flex items-center gap-2 text-sm" style={{ color: "var(--ch-ink)" }}>
+              <input type="checkbox" checked={services.includes(opt.key)} onChange={() => toggleService(opt.key)} />
+              {opt.label}
+            </label>
+          ))}
+        </div>
       </div>
       <label className={`${lbl} block mb-3`} style={lblStyle}>
         Description

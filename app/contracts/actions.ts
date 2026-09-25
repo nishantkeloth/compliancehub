@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { CONTRACT_SERVICE_KEYS } from "@/lib/contract-services";
 
 async function requireContractsManage() {
   const supabase = await createClient();
@@ -98,6 +99,20 @@ export async function createContract(formData: FormData) {
     .select("id")
     .single();
   if (error) return { error: error.message };
+
+  // Service Scope selected on the create form itself (app/contracts/
+  // contracts-manager.tsx) — applied here in the same action so it doesn't
+  // need a separate trip through the Service Scope tab afterward. Best
+  // effort: the contract has already saved successfully at this point, so
+  // a hiccup here doesn't fail the whole creation — service scope can
+  // always be fixed up from that tab.
+  const selectedServices = formData.getAll("services").filter((v): v is string => typeof v === "string" && CONTRACT_SERVICE_KEYS.has(v));
+  if (contract?.id && selectedServices.length > 0) {
+    await supabase.from("contract_services").insert(
+      selectedServices.map((service) => ({ org_id: access.orgId, contract_id: contract.id, service }))
+    );
+  }
+
   revalidateContracts();
   return { id: contract?.id };
 }
