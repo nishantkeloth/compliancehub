@@ -541,6 +541,51 @@ export async function deleteDocumentRequirementTemplate(id: string) {
   return {};
 }
 
+// Duplicates an existing template's whole document list under a new name
+// (and, usually, a different job role) — so a role that needs the same
+// checklist as another role's template doesn't have to have every document
+// re-checked by hand. The new template starts active regardless of the
+// source's state; its items are independent copies, so editing one
+// template afterward never affects the other.
+export async function copyDocumentRequirementTemplate(sourceTemplateId: string, formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const name = str(formData, "name");
+  const jobRoleId = str(formData, "jobRoleId");
+  if (!name || !jobRoleId) return { error: "Template name and job role are required." };
+
+  const { data: newTemplate, error } = await supabase
+    .from("document_requirement_templates")
+    .insert({ org_id: access.orgId, name, job_role_id: jobRoleId, created_by: userId, updated_by: userId })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23505") return { error: "A template with this name already exists for this role." };
+    return { error: error.message };
+  }
+
+  const { data: sourceItems, error: itemsError } = await supabase
+    .from("document_requirement_template_items")
+    .select("document_type_id, is_mandatory, minimum_remaining_validity_days, sort_order")
+    .eq("template_id", sourceTemplateId);
+  if (itemsError) return { error: itemsError.message };
+
+  if (sourceItems && sourceItems.length > 0) {
+    const rows = sourceItems.map((it) => ({
+      org_id: access.orgId,
+      template_id: newTemplate.id,
+      document_type_id: it.document_type_id,
+      is_mandatory: it.is_mandatory,
+      minimum_remaining_validity_days: it.minimum_remaining_validity_days,
+      sort_order: it.sort_order,
+    }));
+    const { error: copyError } = await supabase.from("document_requirement_template_items").insert(rows);
+    if (copyError) return { error: copyError.message };
+  }
+
+  revalidateSetup();
+  return { id: newTemplate.id as string };
+}
+
 export async function createDocumentRequirementTemplateItem(formData: FormData) {
   const { supabase, access } = await requireCrewManage();
   const templateId = str(formData, "templateId");

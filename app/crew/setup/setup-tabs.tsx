@@ -23,6 +23,7 @@ import {
   createDocumentRequirementTemplate,
   updateDocumentRequirementTemplate,
   deleteDocumentRequirementTemplate,
+  copyDocumentRequirementTemplate,
   createDocumentRequirementTemplateItem,
   updateDocumentRequirementTemplateItem,
   deleteDocumentRequirementTemplateItem,
@@ -1291,6 +1292,7 @@ function DocumentTemplatesPanel({
   const [roleId, setRoleId] = useState(jobRoles[0]?.id ?? "");
   const [adding, setAdding] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [copyingTemplateId, setCopyingTemplateId] = useState<string | null>(null);
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
 
   const docTypeName = (id: string) => documentTypes.find((d) => d.id === id)?.name ?? "—";
@@ -1341,6 +1343,27 @@ function DocumentTemplatesPanel({
         templatesList.restoreOptimistic(template, index);
         setBgError(`Couldn't delete "${template.name}": ${res.error}`);
       }
+    });
+  };
+
+  const submitCopyTemplate = (source: DocTemplate, fd: FormData, values: Omit<DocTemplate, "id">) => {
+    setBgError(null);
+    const optimisticTemplate: DocTemplate = { id: tempId(), ...values };
+    templatesList.addOptimistic(optimisticTemplate);
+    setCopyingTemplateId(null);
+    if (values.job_role_id !== roleId) setRoleId(values.job_role_id);
+    startTransition(async () => {
+      const res = await copyDocumentRequirementTemplate(source.id, fd);
+      if (res?.error) {
+        templatesList.removeOptimistic(optimisticTemplate.id);
+        setBgError(`Couldn't copy "${source.name}": ${res.error}`);
+        return;
+      }
+      // The copied documents only show up once the server data is
+      // re-fetched (they're not optimistic like the template row above),
+      // so expand it right after refresh so the copy is visible at a glance.
+      if (res?.id) setExpandedTemplateId(res.id);
+      router.refresh();
     });
   };
 
@@ -1440,6 +1463,14 @@ function DocumentTemplatesPanel({
                   onSubmit={(fd, values) => submitUpdateTemplate(t, fd, values)}
                   onCancel={() => setEditingTemplateId(null)}
                 />
+              ) : copyingTemplateId === t.id ? (
+                <CopyTemplateForm
+                  key={t.id}
+                  source={t}
+                  jobRoles={jobRoles}
+                  onSubmit={(fd, values) => submitCopyTemplate(t, fd, values)}
+                  onCancel={() => setCopyingTemplateId(null)}
+                />
               ) : (
                 <div key={t.id} className={`${cardCls} p-3`} style={cardStyle}>
                   <div className="flex items-center gap-3 flex-wrap">
@@ -1460,6 +1491,15 @@ function DocumentTemplatesPanel({
                     </button>
                     <button onClick={() => setEditingTemplateId(t.id)} disabled={isTempId(t.id)} className="text-xs font-semibold disabled:opacity-40" style={{ color: "var(--ch-navy)" }}>
                       Edit
+                    </button>
+                    <button
+                      onClick={() => setCopyingTemplateId(t.id)}
+                      disabled={isTempId(t.id)}
+                      className="text-xs font-semibold disabled:opacity-40"
+                      style={{ color: "var(--ch-navy)" }}
+                      title="Duplicate this template's whole document list under a new name/role"
+                    >
+                      Copy
                     </button>
                     <DeleteButton onConfirm={() => submitDeleteTemplate(t, i)} disabled={isTempId(t.id)} label="template" />
                   </div>
@@ -1532,6 +1572,69 @@ function TemplateForm({
         )}
         <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
           Save
+        </button>
+        <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// Duplicates `source`'s entire document list under a new name and — usually
+// — a different job role, so a role that needs the same checklist doesn't
+// have to have every document re-checked by hand. Defaults to the source's
+// own role (an in-place duplicate, e.g. for a variant like "ADNOC VIP"),
+// but any role can be picked instead.
+function CopyTemplateForm({
+  source,
+  jobRoles,
+  onSubmit,
+  onCancel,
+}: {
+  source: DocTemplate;
+  jobRoles: JobRole[];
+  onSubmit: (fd: FormData, values: Omit<DocTemplate, "id">) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(`${source.name} copy`);
+  const [jobRoleId, setJobRoleId] = useState(source.job_role_id);
+  const [submitted, setSubmitted] = useState(false);
+
+  const save = () => {
+    if (!name.trim() || !jobRoleId || submitted) return;
+    const fd = new FormData();
+    fd.set("name", name.trim());
+    fd.set("jobRoleId", jobRoleId);
+    setSubmitted(true);
+    onSubmit(fd, { name: name.trim(), job_role_id: jobRoleId, is_active: true });
+  };
+
+  return (
+    <div className={`${cardCls} p-4 mb-3`} style={cardStyle}>
+      <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        Copying &ldquo;{source.name}&rdquo;&rsquo;s document list. Change the role (and name, if you&rsquo;re keeping
+        the same role) below — the documents themselves come along automatically.
+      </div>
+      <div className="flex items-end gap-2 flex-wrap">
+        <label className={`${lbl} min-w-[160px]`} style={lblStyle}>
+          Job role
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={jobRoleId} onChange={(e) => setJobRoleId(e.target.value)}>
+            {jobRoles.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={`${lbl} flex-1 min-w-[200px]`} style={lblStyle}>
+          New template name
+          <input
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+        </label>
+        <button onClick={save} disabled={submitted || !name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+          Copy
         </button>
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
