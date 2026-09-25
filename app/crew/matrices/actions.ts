@@ -552,6 +552,28 @@ export async function deleteAllCrewMatrices(): Promise<{ error?: string; deleted
     .in("entity_id", matrixIds);
   if (wfErr) return { error: wfErr.message, deletedMatrices: 0, releasedCrew: 0 };
 
+  // roster_change_requests cascades from crew_matrices (migration 0021), but
+  // crew_assignments.roster_change_request_id points back at it with no
+  // cascade of its own (migration 0021's later alter table) — the same
+  // "real row, just unlink it" situation as the mobilization columns above.
+  // Left alone, the crew_matrices delete below would cascade into deleting
+  // roster_change_requests, which would then hit that FK and fail.
+  const { data: rosterChangeRequests, error: rcrFetchErr } = await admin
+    .from("roster_change_requests")
+    .select("id")
+    .eq("org_id", access.orgId)
+    .in("crew_matrix_id", matrixIds);
+  if (rcrFetchErr) return { error: rcrFetchErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  const rcrIds = (rosterChangeRequests ?? []).map((r) => r.id as string);
+  if (rcrIds.length > 0) {
+    const { error: unlinkRcrErr } = await admin
+      .from("crew_assignments")
+      .update({ roster_change_request_id: null })
+      .eq("org_id", access.orgId)
+      .in("roster_change_request_id", rcrIds);
+    if (unlinkRcrErr) return { error: unlinkRcrErr.message, deletedMatrices: 0, releasedCrew: 0 };
+  }
+
   // Everything else (lines, line documents/skills/competencies/client
   // requirements, status history, shares, reservations, staged roster-change
   // requests) cascades automatically via existing "on delete cascade" FKs.
