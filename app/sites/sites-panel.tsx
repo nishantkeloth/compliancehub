@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  createOffshoreSite,
   updateOffshoreSite,
   deleteOffshoreSite,
   setManningRequirement,
@@ -108,35 +107,17 @@ export default function OffshoreSitesPanel({
   projects: Project[];
 }) {
   const router = useRouter();
-  const { items, addOptimistic, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(sites);
+  const { items, updateOptimistic, removeOptimistic, restoreOptimistic } = useOptimisticList(sites);
   const [, startTransition] = useTransition();
-  const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
-  const guide = useGuideMaybe();
 
   const contractorLabel = (id: string | null) => {
     const contractor = contractors.find((c) => c.id === id);
     if (!contractor) return "—";
     const client = clients.find((cl) => cl.id === contractor.client_id);
     return client ? `${contractor.name} (${client.name})` : contractor.name;
-  };
-
-  const submitCreate = (fd: FormData, optimisticItem: OffshoreSite) => {
-    setBgError(null);
-    addOptimistic(optimisticItem);
-    setAdding(false);
-    startTransition(async () => {
-      const res = await createOffshoreSite(fd);
-      if (res?.error) {
-        removeOptimistic(optimisticItem.id);
-        setBgError(`Couldn't save "${optimisticItem.name}": ${res.error}`);
-        return;
-      }
-      if (res?.id) guide?.notifyCompletion("site.saved", { recordId: res.id });
-      router.refresh();
-    });
   };
 
   const submitUpdate = (site: OffshoreSite, fd: FormData, patch: Partial<OffshoreSite>) => {
@@ -169,26 +150,22 @@ export default function OffshoreSitesPanel({
   return (
     <div>
       <BgErrorBanner error={bgError} />
-      {adding ? (
-        <OffshoreSiteForm
-          contractors={contractors}
-          rotationTemplates={rotationTemplates}
-          projects={projects}
-          onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })}
-          onCancel={() => setAdding(false)}
-        />
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          data-guide-id="sites.new-button"
-          className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4"
-        >
-          + Add offshore site
-        </button>
-      )}
+      {/* Sites are no longer created from this page — every crew matrix
+          creation mode (Blank draft, AI Create from Documents) creates its
+          new offshore site as part of that flow instead, so there was no
+          real "add a site on its own" use case left. This panel is now
+          manage-only: edit an existing site's details, or set its manning
+          requirements below. */}
+      <div className="text-sm mb-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
+        New sites are created automatically from <a href="/crew/matrices/new" className="ch-link-navy font-semibold">+ New crew matrix</a> — this page is for editing an existing site&rsquo;s details or setting its manning requirements.
+      </div>
 
       <div className="space-y-2 mt-4">
-        {items.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No offshore sites yet.</div>}
+        {items.length === 0 && (
+          <div className="text-sm" style={{ color: "var(--ch-sub)" }}>
+            No offshore sites yet — create one by starting a new crew matrix.
+          </div>
+        )}
         {items.map((s, i) =>
           editingId === s.id ? (
             <OffshoreSiteForm
@@ -217,7 +194,7 @@ export default function OffshoreSitesPanel({
                 <button
                   onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
                   disabled={isTempId(s.id)}
-                  data-guide-id={`sites.manning-toggle:${s.id}`}
+                  data-guide-id="sites.manning-toggle"
                   className="text-xs font-semibold disabled:opacity-40"
                   style={{ color: "var(--ch-navy)" }}
                 >

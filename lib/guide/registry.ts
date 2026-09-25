@@ -190,41 +190,38 @@ export const CREW_MATRIX_FULL_WORKFLOW: GuidedWorkflow = {
 // hard-coded tour bolted to Crew Matrix. Covers the STANDING manning
 // requirement on a site (Sites page), separate from a specific matrix's
 // own lines above.
+//
+// Sites are no longer created from the Sites page at all (see
+// app/sites/sites-panel.tsx) — every crew matrix creation mode creates
+// its new offshore site as part of that flow instead, so this workflow
+// no longer has a "create the site" step of its own. It starts directly
+// from picking an EXISTING site (one already created via a crew matrix)
+// and setting its manning requirements. Because there's no longer a
+// just-created site id to carry through recordRefs, the "Manning
+// requirements" toggle target is a plain, unscoped data-guide-id
+// (sites.manning-toggle) rather than a per-site {siteId} template — the
+// instruction tells the user to pick their own site from the list.
 export const SITE_MANNING_SETUP_WORKFLOW: GuidedWorkflow = {
   id: "site-manning-setup",
-  version: 2,
+  version: 3,
   title: "Set up a site's manning requirements",
   goal: "Manning requirements set",
   startPoints: [
-    { id: "site", label: "Start from Vessel/Site", description: "Create the offshore site, then set its manning requirements.", firstStepId: "site.create" },
+    { id: "site", label: "Start from Vessel/Site", description: "Set standing manning requirements on an existing offshore site.", firstStepId: "site.manning.set" },
   ],
   steps: [
-    {
-      id: "site.create",
-      label: "Create the offshore site",
-      route: "/sites",
-      targetIds: ["sites.new-button", "sites.form.save"],
-      instruction: "Click “+ Add offshore site”, give it a name, then Save.",
-      prerequisites: [],
-      completionEvent: "site.saved",
-      producesRecord: "siteId",
-      canSkip: false,
-      onMissingTarget: "unsupported",
-      unsupportedMessage: "You don't have permission to manage crew setup data.",
-      next: "site.manning.set",
-    },
     {
       id: "site.manning.set",
       label: "Set its manning requirements",
       route: "/sites",
-      targetIds: ["sites.manning-toggle:{siteId}", "sites.manning.set-button"],
-      instruction: "Click “Manning requirements” on the site you just created, pick a role and minimum headcount, then Set requirement.",
-      why: "A site's standing manning requirements are what “Generate from manning requirements” reads from when creating a matrix for that same, already-set-up site — though see the discovery report for why that particular mode doesn't currently reach an existing site from the New Matrix screen.",
-      prerequisites: ["site.create"],
+      targetIds: ["sites.manning-toggle", "sites.manning.set-button"],
+      instruction: "Pick the site you want to configure, click “Manning requirements” on it, choose a role and minimum headcount, then Set requirement.",
+      why: "A site's standing manning requirements are what “Generate from manning requirements” reads from when creating a matrix for that same, already-set-up site — though see the discovery report for why that particular mode doesn't currently reach an existing site from the New Matrix screen. Sites themselves are created automatically as part of crew matrix creation (Blank draft or AI Create from Documents), not from this page.",
+      prerequisites: [],
       completionEvent: "site.manning.set",
       canSkip: false,
       onMissingTarget: "unsupported",
-      unsupportedMessage: "You don't have permission to manage crew setup data.",
+      unsupportedMessage: "You don't have permission to manage crew setup data, or no offshore site exists yet — create one first via a new crew matrix.",
     },
   ],
 };
