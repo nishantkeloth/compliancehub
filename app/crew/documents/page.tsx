@@ -14,32 +14,56 @@ export default async function CrewDocumentsPage() {
   if (!can(access, "crew.documents.view")) redirect("/");
   const canManage = can(access, "crew.documents.manage");
 
-  const [crewRes, assignmentsRes, documentTypesRes, crewDocumentsRes, offshoreSitesRes] = await Promise.all([
-    supabase
-      .from("crew_profiles")
-      .select("id, full_name, employment_status, job_roles(name)")
-      .eq("org_id", access.orgId)
-      .order("full_name"),
-    supabase
-      .from("crew_assignments")
-      .select("crew_id, offshore_site_id, offshore_sites(name)")
-      .eq("org_id", access.orgId)
-      .is("end_date", null),
-    supabase
-      .from("document_types")
-      .select("id, name, category, tracks_number, warning_threshold_days, is_active")
-      .eq("org_id", access.orgId)
-      .eq("is_active", true)
-      .order("name"),
-    supabase
-      .from("crew_documents")
-      .select(
-        "id, crew_id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields, created_at"
-      )
-      .eq("org_id", access.orgId)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false }),
-    supabase.from("offshore_sites").select("id, name").eq("org_id", access.orgId).eq("status", "active").order("name"),
+  // PostgREST caps an unbounded query at 1000 rows. An org's crew_documents
+  // table grows without bound (every crew member × every document type,
+  // plus history), so a single unpaginated fetch here silently drops older
+  // rows once the org passes 1000 total documents — which showed up as
+  // crew members with a genuinely valid, active document displaying as
+  // "Not set" simply because their row was older than the cutoff. Page
+  // through in batches of 1000 so every row is always included.
+  const CREW_DOCS_PAGE_SIZE = 1000;
+  async function fetchAllCrewDocuments() {
+    const rows: any[] = [];
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from("crew_documents")
+        .select(
+          "id, crew_id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields, created_at"
+        )
+        .eq("org_id", access.orgId)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .range(from, from + CREW_DOCS_PAGE_SIZE - 1);
+      if (error || !data) break;
+      rows.push(...data);
+      if (data.length < CREW_DOCS_PAGE_SIZE) break;
+      from += CREW_DOCS_PAGE_SIZE;
+    }
+    return rows;
+  }
+
+  const [[crewRes, assignmentsRes, documentTypesRes, offshoreSitesRes], crewDocuments] = await Promise.all([
+    Promise.all([
+      supabase
+        .from("crew_profiles")
+        .select("id, full_name, employment_status, job_roles(name)")
+        .eq("org_id", access.orgId)
+        .order("full_name"),
+      supabase
+        .from("crew_assignments")
+        .select("crew_id, offshore_site_id, offshore_sites(name)")
+        .eq("org_id", access.orgId)
+        .is("end_date", null),
+      supabase
+        .from("document_types")
+        .select("id, name, category, tracks_number, warning_threshold_days, is_active")
+        .eq("org_id", access.orgId)
+        .eq("is_active", true)
+        .order("name"),
+      supabase.from("offshore_sites").select("id, name").eq("org_id", access.orgId).eq("status", "active").order("name"),
+    ]),
+    fetchAllCrewDocuments(),
   ]);
 
   // One cell per (crew_id, document_type_id) — keep only the most recent
@@ -47,7 +71,7 @@ export default async function CrewDocumentsPage() {
   // recent row" rule from the spec (a vaccination's later dose naturally
   // wins here since rows are already ordered newest-first).
   const cellMap: Record<string, Record<string, any>> = {};
-  for (const doc of crewDocumentsRes.data ?? []) {
+  for (const doc of crewDocuments) {
     const d = doc as any;
     cellMap[d.crew_id] ??= {};
     cellMap[d.crew_id][d.document_type_id] ??= d;
