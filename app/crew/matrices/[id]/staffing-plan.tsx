@@ -159,6 +159,8 @@ export default function StaffingPlanView({
   crew,
   candidateCrew,
   matrixRegion,
+  siteEffectiveFrom,
+  siteEffectiveTo,
   customFieldDefinitions,
   canManage = false,
   canAssignCrew = false,
@@ -183,6 +185,17 @@ export default function StaffingPlanView({
   // by document completeness (see computeCompleteness) so the
   // best-prepared, closest candidates surface first.
   matrixRegion?: string | null;
+  // The matrix's own Effective from/to (crew_matrices.effective_from/to —
+  // this site's mobilization window for this version, set on the New/Edit
+  // Matrix form and shown as "Effective dates" on the Overview tab).
+  // Nishant: assignment Start Date / Roll Off Date should default to the
+  // site's own dates, not today/blank — so every Assign path below (the
+  // manual date inputs, Confirm Assign, and Auto assign) seeds from these
+  // when set. Always just a starting value: the manual form's date inputs
+  // stay fully editable, and a blank siteEffectiveTo still leaves Roll Off
+  // Date optional exactly as before.
+  siteEffectiveFrom?: string | null;
+  siteEffectiveTo?: string | null;
   customFieldDefinitions: FieldDef[];
   // All default to false so this component still works if a caller (e.g.
   // an older test/story) doesn't pass them — the Actions column just stays
@@ -442,6 +455,15 @@ export default function StaffingPlanView({
     const assigned: string[] = [];
     const skipped: string[] = [];
     const today = new Date().toISOString().slice(0, 10);
+    // Start/roll-off default to the site's own Effective dates (this
+    // matrix's effective_from/to), not today/blank — see siteEffectiveFrom's
+    // comment above. Auto assign has no per-row date inputs to edit before
+    // saving (unlike the manual Assign form below), so this is the one
+    // place that default actually needs to be right rather than just a
+    // starting point; adjust the dates afterward from the Assigned row if
+    // the site's own dates don't apply to this particular hire.
+    const startDate = siteEffectiveFrom || today;
+    const plannedEnd = siteEffectiveTo || null;
 
     for (const { line, openSlots, picks } of plan) {
       for (const { person } of picks) {
@@ -456,16 +478,16 @@ export default function StaffingPlanView({
               crewMatrixLineId: line.id,
               changeType: "assign",
               incomingCrewId: person.crew_id,
-              effectiveDate: today,
+              effectiveDate: startDate,
               reasonCode: "headcount_change",
               reasonNotes: "Auto assign — 100% document-ready candidate matched to open headcount.",
             })
-          : await assignCandidateToMatrix(person.crew_id, crewMatrixId, today, undefined);
+          : await assignCandidateToMatrix(person.crew_id, crewMatrixId, startDate, plannedEnd || undefined);
         if (res?.error) {
           skipped.push(`${person.full_name} (${line.job_role_name}): ${res.error}`);
           continue;
         }
-        moveToAssigned(person.crew_id, { assignment_start_date: today, assignment_planned_end_date: null });
+        moveToAssigned(person.crew_id, { assignment_start_date: startDate, assignment_planned_end_date: plannedEnd });
         assigned.push(`${person.full_name} — ${line.job_role_name}`);
       }
       if (picks.length < openSlots) {
@@ -702,6 +724,8 @@ export default function StaffingPlanView({
               mandatoryDocTypeIds={mandatoryDocTypeIds}
               crewMatrixId={crewMatrixId}
               matrixTitle={matrixTitle}
+              siteEffectiveFrom={siteEffectiveFrom}
+              siteEffectiveTo={siteEffectiveTo}
               canManage={canManage}
               canAssignCrew={canAssignCrew}
               readOnlyStaffing={readOnlyStaffing}
@@ -735,6 +759,8 @@ function StaffingLineCard({
   mandatoryDocTypeIds,
   crewMatrixId,
   matrixTitle,
+  siteEffectiveFrom,
+  siteEffectiveTo,
   canManage,
   canAssignCrew,
   readOnlyStaffing,
@@ -766,6 +792,8 @@ function StaffingLineCard({
   mandatoryDocTypeIds: Set<string>;
   crewMatrixId: string;
   matrixTitle?: string;
+  siteEffectiveFrom?: string | null;
+  siteEffectiveTo?: string | null;
   canManage: boolean;
   canAssignCrew: boolean;
   readOnlyStaffing: boolean;
@@ -915,6 +943,8 @@ function StaffingLineCard({
                   showLocationColumn={showLocationColumn}
                   crewMatrixId={crewMatrixId}
                   lineId={line.id}
+                  siteEffectiveFrom={siteEffectiveFrom}
+                  siteEffectiveTo={siteEffectiveTo}
                   showAssignCol={showAssignCol}
                   showUnassignCol={showUnassignCol}
                   canEditRoster={canEditRoster}
@@ -950,6 +980,8 @@ function CandidateRow({
   showLocationColumn,
   crewMatrixId,
   lineId,
+  siteEffectiveFrom,
+  siteEffectiveTo,
   showAssignCol,
   showUnassignCol,
   canEditRoster,
@@ -969,6 +1001,8 @@ function CandidateRow({
   showLocationColumn: boolean;
   crewMatrixId: string;
   lineId: string;
+  siteEffectiveFrom?: string | null;
+  siteEffectiveTo?: string | null;
   showAssignCol: boolean;
   showUnassignCol: boolean;
   canEditRoster: boolean;
@@ -1038,6 +1072,8 @@ function CandidateRow({
           crewMatrixId={crewMatrixId}
           lineId={lineId}
           personName={person.full_name}
+          siteEffectiveFrom={siteEffectiveFrom}
+          siteEffectiveTo={siteEffectiveTo}
           showAssign={showAssignCol}
           showUnassign={showUnassignCol}
           canEditRoster={canEditRoster}
@@ -1088,6 +1124,8 @@ function RowActions({
   crewMatrixId,
   lineId,
   personName,
+  siteEffectiveFrom,
+  siteEffectiveTo,
   showAssign,
   showUnassign,
   canEditRoster,
@@ -1102,6 +1140,12 @@ function RowActions({
   crewMatrixId: string;
   lineId: string;
   personName: string;
+  // The matrix's own Effective from/to — see siteEffectiveFrom's comment on
+  // StaffingPlanView. Only meaningful on the showAssign call site (nothing
+  // here for showUnassign's own date, which is "when they left", not "when
+  // the site is running").
+  siteEffectiveFrom?: string | null;
+  siteEffectiveTo?: string | null;
   showAssign: boolean;
   showUnassign: boolean;
   canEditRoster: boolean;
@@ -1126,13 +1170,16 @@ function RowActions({
   const [reserveOpen, setReserveOpen] = useState(false);
   const [reserveNotes, setReserveNotes] = useState("");
   const [reserveReadyDate, setReserveReadyDate] = useState("");
-  // Assign/unassign date inputs default to today but stay editable — AHM
-  // calculates on-board day counts and payroll from these dates, so they
-  // need to be caller-chosen, not silently stamped to "now". Planned end
-  // date is optional (left blank by default) — it's shown on the Assigned
-  // tab once set, but nothing requires it.
-  const [assignDate, setAssignDate] = useState(today);
-  const [plannedEndDate, setPlannedEndDate] = useState("");
+  // Assign date defaults to the site's own Effective From (this matrix's
+  // effective_from — see siteEffectiveFrom's comment on StaffingPlanView),
+  // falling back to today when the matrix has none set; Roll Off Date
+  // defaults to the site's Effective To, falling back to blank/optional as
+  // before. Both stay fully editable — AHM calculates on-board day counts
+  // and payroll from these dates, so whoever's assigning still has the
+  // final say, this just starts them from the site's own dates instead of
+  // "now"/blank.
+  const [assignDate, setAssignDate] = useState(siteEffectiveFrom || today);
+  const [plannedEndDate, setPlannedEndDate] = useState(siteEffectiveTo || "");
   const [unassignDate, setUnassignDate] = useState(today);
 
   // Phase 17 (revised) — on a new version's draft, the instant assign/
@@ -1151,7 +1198,10 @@ function RowActions({
   const [incomingCrewId, setIncomingCrewId] = useState("");
   const [reasonCode, setReasonCode] = useState("");
   const [reasonNotes, setReasonNotes] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState(today);
+  // Same site-dates default as assignDate above, but only on the assign
+  // side — a replace/unassign request's effective date is "when the
+  // change happens", unrelated to when the site itself started.
+  const [effectiveDate, setEffectiveDate] = useState(showAssign ? siteEffectiveFrom || today : today);
 
   const doAssign = async () => {
     setError(null);
@@ -1171,21 +1221,24 @@ function RowActions({
   };
 
   // Confirm Assign, from an already-reserved row — same insert as the
-  // ordinary Assign above, just today-dated with no planned end date
-  // (matches the approved mockup, which shows this as a single button
-  // with no date inputs to fill in first). assignCandidateToMatrix
-  // releases the reservation server-side once the insert succeeds, so
-  // there's nothing extra to call here for that half.
+  // ordinary Assign above, just site-dated with no date inputs to fill in
+  // first (matches the approved mockup, which shows this as a single
+  // button). Falls back to today/no end date when the matrix has no
+  // Effective dates set, same as assignDate/plannedEndDate above.
+  // assignCandidateToMatrix releases the reservation server-side once the
+  // insert succeeds, so there's nothing extra to call here for that half.
   const doConfirmAssign = async () => {
     setError(null);
     setBusy("assign");
-    const res = await assignCandidateToMatrix(crewId, crewMatrixId, today, undefined);
+    const confirmDate = siteEffectiveFrom || today;
+    const confirmEnd = siteEffectiveTo || null;
+    const res = await assignCandidateToMatrix(crewId, crewMatrixId, confirmDate, confirmEnd || undefined);
     setBusy(null);
     if (res?.error) {
       setError(res.error);
       return;
     }
-    onAssigned(crewId, { assignment_start_date: today, assignment_planned_end_date: null });
+    onAssigned(crewId, { assignment_start_date: confirmDate, assignment_planned_end_date: confirmEnd });
     onChanged?.();
   };
 

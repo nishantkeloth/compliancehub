@@ -550,6 +550,8 @@ export default function MatrixDetail({
             crew={staffingCrew}
             candidateCrew={candidateStaffingCrew}
             matrixRegion={matrixRegion}
+            siteEffectiveFrom={matrix.effective_from}
+            siteEffectiveTo={matrix.effective_to}
             customFieldDefinitions={customFieldDefinitions}
             canManage={canManage}
             canAssignCrew={canAssignCrew}
