@@ -239,6 +239,10 @@ export default function StaffingPlanView({
   };
   const [exporting, setExporting] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
+  // Auto assign — see runAutoAssign below (defined after canEditRoster/
+  // readOnlyStaffing are computed, since it needs both).
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [autoAssignResult, setAutoAssignResult] = useState<{ assigned: string[]; skipped: string[]; note?: string } | null>(null);
 
   // Assign/Unassign already succeeded on the server by the time these are
   // called (see RowActions) — the slow part was never that single insert/
@@ -378,6 +382,102 @@ export default function StaffingPlanView({
   // always literally "does this row carry a rosterChangeNote right now".
   const showTrafficLight = isNewVersion && view === "assigned";
 
+  // Auto assign — "pull in the 100% score records based on the need": for
+  // every rank still short of its required headcount, look at that rank's
+  // own Available candidates pool (same pool/region rule as the Available
+  // candidates tab above — see activeCrew's comment) and take only the
+  // fully document-ready ones (completeness === 100, from computeCompleteness
+  // — literally "every document this rank requires is on file and not
+  // expired"), up to however many open slots that rank still has. A rank
+  // with fewer than that many 100%-ready candidates gets however many it
+  // has (0 included) rather than falling back to a lower score — Nishant's
+  // own wording was "based on the 100% availability", not "the best
+  // available", so this never silently assigns someone who's short a
+  // document. Deliberately scoped out of Other Location Candidates (an
+  // out-of-region candidate is a bigger, non-automatic decision — bring
+  // them in from Available candidates / Other Location Candidates by hand
+  // instead). Computed fresh off the current local* state each click
+  // rather than memoized, so it always reflects whatever the last
+  // assign/unassign already did.
+  const buildAutoAssignPlan = () =>
+    orderedLines
+      .map((line) => {
+        const currentlyAssigned = localCrew.filter((c) => c.job_role_id === line.job_role_id).length;
+        const openSlots = Math.max(0, line.required_headcount - currentlyAssigned);
+        const pool = localCandidateCrew
+          .filter((c) => c.job_role_id === line.job_role_id)
+          .filter((c) => !matrixRegion || sameRegion(c.current_location, matrixRegion))
+          .map((c) => ({ person: c, completeness: computeCompleteness(line.documents, documentTypes, c.documents) }))
+          .filter((c) => c.completeness === 100)
+          .sort((a, b) => a.person.full_name.localeCompare(b.person.full_name));
+        return { line, openSlots, picks: pool.slice(0, openSlots) };
+      })
+      .filter((p) => p.openSlots > 0);
+
+  const runAutoAssign = async () => {
+    const plan = buildAutoAssignPlan();
+    const totalOpen = plan.reduce((n, p) => n + p.openSlots, 0);
+    const totalPicks = plan.reduce((n, p) => n + p.picks.length, 0);
+    if (totalOpen === 0) {
+      setAutoAssignResult({ assigned: [], skipped: [], note: "Every rank already has its required headcount assigned." });
+      return;
+    }
+    if (totalPicks === 0) {
+      setAutoAssignResult({
+        assigned: [],
+        skipped: plan.map((p) => `${p.line.job_role_name}: no fully document-ready candidate available (0 of ${p.openSlots} open slot(s) filled)`),
+      });
+      return;
+    }
+    if (
+      !window.confirm(
+        `Auto assign will fill ${totalPicks} of ${totalOpen} open position${totalOpen === 1 ? "" : "s"} using fully document-ready (100%) available crew. Continue?`
+      )
+    ) {
+      return;
+    }
+
+    setAutoAssigning(true);
+    setAutoAssignResult(null);
+    const assigned: string[] = [];
+    const skipped: string[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const { line, openSlots, picks } of plan) {
+      for (const { person } of picks) {
+        // Same two write paths RowActions already uses for Assign (see its
+        // showRequestFlow) — a staged, reason-coded roster change on a new
+        // version's draft, or a direct write everywhere else a matrix's
+        // Staffing Plan is editable at all (readOnlyStaffing already
+        // gates the button off this component entirely).
+        const res = canEditRoster
+          ? await requestRosterChange({
+              crewMatrixId,
+              crewMatrixLineId: line.id,
+              changeType: "assign",
+              incomingCrewId: person.crew_id,
+              effectiveDate: today,
+              reasonCode: "headcount_change",
+              reasonNotes: "Auto assign — 100% document-ready candidate matched to open headcount.",
+            })
+          : await assignCandidateToMatrix(person.crew_id, crewMatrixId, today, undefined);
+        if (res?.error) {
+          skipped.push(`${person.full_name} (${line.job_role_name}): ${res.error}`);
+          continue;
+        }
+        moveToAssigned(person.crew_id, { assignment_start_date: today, assignment_planned_end_date: null });
+        assigned.push(`${person.full_name} — ${line.job_role_name}`);
+      }
+      if (picks.length < openSlots) {
+        skipped.push(`${line.job_role_name}: only ${picks.length} of ${openSlots} open slot(s) had a fully document-ready candidate available`);
+      }
+    }
+
+    setAutoAssigning(false);
+    setAutoAssignResult({ assigned, skipped });
+    onChanged?.();
+  };
+
   const exportExcel = async () => {
     setExporting(true);
     try {
@@ -492,7 +592,42 @@ export default function StaffingPlanView({
             ))}
           </div>
         )}
+        {view === "assigned" && canAssignCrew && !readOnlyStaffing && candidateCrew !== undefined && (
+          <button
+            onClick={runAutoAssign}
+            disabled={autoAssigning}
+            className="text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-50"
+            style={{ background: "var(--ch-navy)", color: "#fff" }}
+            title="Fill open headcount on every rank using fully document-ready (100%) available candidates."
+          >
+            {autoAssigning ? "Auto assigning…" : "✦ Auto assign"}
+          </button>
+        )}
       </div>
+      {autoAssignResult && (
+        <div className={`${cardCls} mb-3 px-3 py-2 text-xs`} style={cardStyle}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              {autoAssignResult.note && <div style={{ color: "var(--ch-sub)" }}>{autoAssignResult.note}</div>}
+              {autoAssignResult.assigned.length > 0 && (
+                <div className="mb-1">
+                  <span className="font-semibold" style={{ color: "var(--ch-pass)" }}>Assigned {autoAssignResult.assigned.length}:</span>{" "}
+                  <span style={{ color: "var(--ch-ink)" }}>{autoAssignResult.assigned.join(", ")}</span>
+                </div>
+              )}
+              {autoAssignResult.skipped.length > 0 && (
+                <div>
+                  <span className="font-semibold" style={{ color: "var(--ch-fail)" }}>Not filled:</span>{" "}
+                  <span style={{ color: "var(--ch-sub)" }}>{autoAssignResult.skipped.join("; ")}</span>
+                </div>
+              )}
+            </div>
+            <button onClick={() => setAutoAssignResult(null)} className="text-xs font-semibold shrink-0" style={{ color: "var(--ch-sub)" }}>
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
         {view === "assigned" ? (
           <>One row per crew member currently assigned to this site, grouped by rank.</>
