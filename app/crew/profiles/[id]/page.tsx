@@ -87,6 +87,7 @@ export default async function CrewProfileDetailPage({
           )
           .eq("crew_id", id)
           .eq("is_active", true)
+          .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
     canViewDocuments
       ? supabase.from("crew_profiles").select("id, full_name").eq("org_id", access.orgId).order("full_name")

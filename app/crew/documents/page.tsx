@@ -37,6 +37,7 @@ export default async function CrewDocumentsPage() {
         "id, crew_id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields, created_at"
       )
       .eq("org_id", access.orgId)
+      .eq("is_active", true)
       .order("created_at", { ascending: false }),
     supabase.from("offshore_sites").select("id, name").eq("org_id", access.orgId).eq("status", "active").order("name"),
   ]);
