@@ -36,6 +36,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<CrewRegisterPreview | null>(null);
   const [excluded, setExcluded] = useState<Set<string>>(new Set()); // keys: "p:<rowNumber>" / "d:<rowNumber>"
@@ -50,6 +51,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     setDocumentTypeResolutions({});
     setResult(null);
     setError(null);
+    setStage(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -57,10 +59,50 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     setBusy(true);
     setError(null);
     setResult(null);
+    setStage("Reading file…");
+
+    // Parsing/matching happens in one request on the server, so there's no
+    // real per-row progress signal to show. What we CAN do without waiting
+    // on the server: read the file locally first (the same "xlsx" library,
+    // loaded on demand) to get a real record count immediately, then step
+    // through status text that reflects what's actually likely happening —
+    // rather than leave a bare "Parsing…" up with no sense of whether it's
+    // still alive. This never blocks or changes the actual upload below;
+    // if the local read fails for any reason it's silently ignored.
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    try {
+      const XLSX = await import("xlsx");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const wb = XLSX.read(bytes, { type: "array" });
+      let bestSheet = wb.SheetNames[0] ?? "";
+      let bestRows = 0;
+      for (const name of wb.SheetNames) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: null }) as unknown[][];
+        if (rows.length > bestRows) {
+          bestRows = rows.length;
+          bestSheet = name;
+        }
+      }
+      const recordCount = Math.max(bestRows - 1, 0);
+      const plural = recordCount === 1 ? "record" : "records";
+      setStage(`Found ${recordCount} ${plural} in "${bestSheet}" — validating and matching columns…`);
+      timers.push(
+        setTimeout(
+          () => setStage(`Still working on ${recordCount} ${plural} — automatic column matching can take up to a minute on larger files…`),
+          8000
+        )
+      );
+    } catch {
+      setStage("Validating and matching columns…");
+      timers.push(setTimeout(() => setStage("Still working — this can take up to a minute on larger files…"), 8000));
+    }
+
     const fd = new FormData();
     fd.append("file", file);
     const res = await parseCrewRegisterFile(fd);
+    for (const t of timers) clearTimeout(t);
     setBusy(false);
+    setStage(null);
     if ("error" in res) {
       setError(res.error);
       return;
@@ -201,7 +243,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
             }}
             className="text-sm"
           />
-          {busy && <p className="text-xs mt-3" style={{ color: "var(--ch-sub)" }}>Parsing…</p>}
+          {busy && <p className="text-xs mt-3" style={{ color: "var(--ch-sub)" }}>{stage ?? "Parsing…"}</p>}
         </div>
       )}
 
