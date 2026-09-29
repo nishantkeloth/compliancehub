@@ -29,6 +29,7 @@ import {
   deleteDocumentRequirementTemplateItem,
 } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
+import DocumentTypesImportPanel from "./document-types-import-panel";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
 type Skill = { id: string; name: string };
@@ -607,6 +608,7 @@ function DocumentTypesPanel({ documentTypes }: { documentTypes: DocumentType[] }
   const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const [bgError, setBgError] = useState<string | null>(null);
 
   const submitCreate = (fd: FormData, optimisticItem: DocumentType) => {
@@ -654,10 +656,22 @@ function DocumentTypesPanel({ documentTypes }: { documentTypes: DocumentType[] }
   return (
     <div>
       <BgErrorBanner error={bgError} />
+      {importing && <DocumentTypesImportPanel onClose={() => setImporting(false)} />}
       {adding ? (
         <DocumentTypeForm onSubmit={(fd, values) => submitCreate(fd, { id: tempId(), ...values })} onCancel={() => setAdding(false)} />
       ) : (
-        <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold mb-4">+ Add document type</button>
+        !importing && (
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <button onClick={() => setAdding(true)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">+ Add document type</button>
+            <button
+              onClick={() => setImporting(true)}
+              className="rounded-lg px-4 py-2 text-sm font-semibold border"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+            >
+              Import from Excel
+            </button>
+          </div>
+        )
       )}
 
       <div className="space-y-2 mt-4">
