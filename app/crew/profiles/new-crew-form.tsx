@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewProfile } from "./actions";
+import { COUNTRIES } from "@/lib/countries";
 
 type JobRole = { id: string; name: string };
 
@@ -86,12 +87,23 @@ export default function NewCrewForm({ jobRoles }: { jobRoles: JobRole[] }) {
         </label>
         <label className={lbl} style={lblStyle}>
           Nationality
-          <input
+          <select
             className="border rounded-lg px-3 py-2 text-sm w-full mt-1"
             style={{ borderColor: "var(--ch-line)" }}
             value={nationality}
             onChange={(e) => setNationality(e.target.value)}
-          />
+          >
+            <option value="">Select nationality…</option>
+            {/* A previously-typed free-text value that doesn't match the
+                fixed list below stays selectable rather than silently
+                dropping it the moment this form loads. */}
+            {nationality && !COUNTRIES.includes(nationality as (typeof COUNTRIES)[number]) && (
+              <option value={nationality}>{nationality} (unmatched — pick below)</option>
+            )}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
         </label>
         <label className={lbl} style={lblStyle}>
           Employment status

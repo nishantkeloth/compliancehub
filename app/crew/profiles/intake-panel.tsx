@@ -366,7 +366,18 @@ export default function IntakePanel() {
 
             <label className={lbl} style={lblStyle}>
               Nationality
-              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={nationality} onChange={(e) => setNationality(e.target.value)} />
+              <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={nationality} onChange={(e) => setNationality(e.target.value)}>
+                <option value="">Select nationality…</option>
+                {/* AI-extracted text (e.g. from a passport) may not match
+                    the fixed list below — keep it selectable rather than
+                    silently dropping what was read. */}
+                {nationality && !COUNTRIES.includes(nationality as (typeof COUNTRIES)[number]) && (
+                  <option value={nationality}>{nationality} (unmatched — pick below)</option>
+                )}
+                {COUNTRIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </label>
             <label className={lbl} style={lblStyle}>
               Date of birth

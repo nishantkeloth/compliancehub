@@ -462,7 +462,24 @@ function GeneralForm({
       <div className="grid gap-3 sm:grid-cols-3 mb-3">
         <label className={lbl} style={lblStyle}>
           Nationality
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={nationality} onChange={(e) => { setNationality(e.target.value); setSaved(false); }} disabled={disabled} />
+          <select
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={nationality}
+            onChange={(e) => { setNationality(e.target.value); setSaved(false); }}
+            disabled={disabled}
+          >
+            <option value="">Select nationality…</option>
+            {/* A previously-typed free-text value that doesn't match the
+                fixed list below stays selectable rather than silently
+                dropping it the moment this form loads. */}
+            {nationality && !COUNTRIES.includes(nationality as (typeof COUNTRIES)[number]) && (
+              <option value={nationality}>{nationality} (unmatched — pick below)</option>
+            )}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
         </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Date of birth
