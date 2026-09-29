@@ -14,7 +14,11 @@ import Link from "next/link";
 //      (folder → crew match → AI classify per file → review → commit).
 //   3. Reset crew matrix/site/project/contract data — live, see
 //      ./reset-data (typed-confirmation full wipe, for clearing
-//      test/demo data before go-live).
+//      test/demo data before go-live). Deliberately never touches crew
+//      profiles/documents — see #4 for that.
+//   4. Reset the crew register itself (every crew profile and crew
+//      document) — live, see ./reset-crew-register (typed-confirmation
+//      full wipe).
 //
 // Gated on crew.bulk_intake.manage (0027_bulk_intake_permission.sql),
 // granted to company_admin only — same pattern as ai.configure.
@@ -88,6 +92,26 @@ export default async function BulkIntakePage() {
           <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
             Permanently clear crew matrices, offshore sites, projects, and contracts — and everything that hangs off
             them — before going live. Contractors, Clients, and crew profiles are left untouched.
+          </p>
+          <span
+            className="inline-block text-xs font-semibold px-2.5 py-1 rounded-full"
+            style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}
+          >
+            Destructive
+          </span>
+        </Link>
+
+        <Link
+          href="/team/bulk-intake/reset-crew-register"
+          className="block bg-white border rounded-xl p-5 hover:shadow-sm transition-shadow"
+          style={{ borderColor: "var(--ch-fail)" }}
+        >
+          <div className="text-sm font-semibold mb-1" style={{ color: "var(--ch-fail)" }}>
+            Reset Crew Register (People &amp; Documents) →
+          </div>
+          <p className="text-xs mb-4" style={{ color: "var(--ch-sub)" }}>
+            Permanently clear every crew profile and crew document — and the matrices/assignments/mobilizations that
+            hang off them. Contractors, Clients, Projects, Contracts, and Offshore Sites are left untouched.
           </p>
           <span
             className="inline-block text-xs font-semibold px-2.5 py-1 rounded-full"
