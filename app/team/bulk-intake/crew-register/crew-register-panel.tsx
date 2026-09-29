@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   parseCrewRegisterFile,
@@ -36,7 +36,8 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState<string | null>(null);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const logEndRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<CrewRegisterPreview | null>(null);
   const [excluded, setExcluded] = useState<Set<string>>(new Set()); // keys: "p:<rowNumber>" / "d:<rowNumber>"
@@ -51,29 +52,38 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     setDocumentTypeResolutions({});
     setResult(null);
     setError(null);
-    setStage(null);
+    setLogLines([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function log(line: string) {
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLogLines((prev) => [...prev, `${time}  ${line}`]);
   }
 
   async function handleFile(file: File) {
     setBusy(true);
     setError(null);
     setResult(null);
-    setStage("Reading file…");
+    setLogLines([]);
+    log(`Selected "${file.name}" (${(file.size / 1024).toFixed(0)} KB).`);
+    log("Reading file…");
 
     // Parsing/matching happens in one request on the server, so there's no
     // real per-row progress signal to show. What we CAN do without waiting
     // on the server: read the file locally first (the same "xlsx" library,
-    // loaded on demand) to get a real record count immediately, then step
-    // through status text that reflects what's actually likely happening —
-    // rather than leave a bare "Parsing…" up with no sense of whether it's
-    // still alive. This never blocks or changes the actual upload below;
-    // if the local read fails for any reason it's silently ignored.
+    // loaded on demand) to get a real record count and log each step as it
+    // happens, so the panel reads like an activity log instead of a single
+    // status line that could be stuck or just slow — indistinguishable
+    // before this change. This never blocks or changes the actual upload
+    // below; if the local read fails for any reason it's silently skipped.
     const timers: ReturnType<typeof setTimeout>[] = [];
+    let recordCount: number | null = null;
     try {
       const XLSX = await import("xlsx");
       const bytes = new Uint8Array(await file.arrayBuffer());
       const wb = XLSX.read(bytes, { type: "array" });
+      log(`Opened workbook — sheets: ${wb.SheetNames.join(", ") || "(none)"}.`);
       let bestSheet = wb.SheetNames[0] ?? "";
       let bestRows = 0;
       for (const name of wb.SheetNames) {
@@ -83,18 +93,18 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
           bestSheet = name;
         }
       }
-      const recordCount = Math.max(bestRows - 1, 0);
+      recordCount = Math.max(bestRows - 1, 0);
       const plural = recordCount === 1 ? "record" : "records";
-      setStage(`Found ${recordCount} ${plural} in "${bestSheet}" — validating and matching columns…`);
+      log(`Found ${recordCount} ${plural} in sheet "${bestSheet}".`);
+      log("Sending to server — validating fields and matching job roles/document types against Crew Setup…");
       timers.push(
-        setTimeout(
-          () => setStage(`Still working on ${recordCount} ${plural} — automatic column matching can take up to a minute on larger files…`),
-          8000
-        )
+        setTimeout(() => log(`Still working on ${recordCount} ${plural} — automatic column matching can take up to a minute on larger files…`), 8000)
       );
+      timers.push(setTimeout(() => log("Still going — a first-time automatic column match on a large file can take a couple of minutes…"), 25000));
     } catch {
-      setStage("Validating and matching columns…");
-      timers.push(setTimeout(() => setStage("Still working — this can take up to a minute on larger files…"), 8000));
+      log("Sending to server for validation and column matching…");
+      timers.push(setTimeout(() => log("Still working — this can take up to a minute on larger files…"), 8000));
+      timers.push(setTimeout(() => log("Still going — a first-time automatic column match on a large file can take a couple of minutes…"), 25000));
     }
 
     const fd = new FormData();
@@ -102,11 +112,12 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     const res = await parseCrewRegisterFile(fd);
     for (const t of timers) clearTimeout(t);
     setBusy(false);
-    setStage(null);
     if ("error" in res) {
+      log(`Failed: ${res.error}`);
       setError(res.error);
       return;
     }
+    log(`Done — ${res.preview.profiles.length} profile row(s) and ${res.preview.documents.length} document row(s) ready to review.`);
     setPreview(res.preview);
     // Default-exclude rows that already carry blocking errors.
     const ex = new Set<string>();
@@ -114,6 +125,10 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     for (const d of res.preview.documents) if (d.errors.length) ex.add(`d:${d.rowNumber}`);
     setExcluded(ex);
   }
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: "nearest" });
+  }, [logLines]);
 
   const profileErrorCount = preview?.profiles.filter((p) => p.errors.length).length ?? 0;
   const profileWarningCount = preview?.profiles.filter((p) => !p.errors.length && p.warnings.length).length ?? 0;
@@ -243,7 +258,20 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
             }}
             className="text-sm"
           />
-          {busy && <p className="text-xs mt-3" style={{ color: "var(--ch-sub)" }}>{stage ?? "Parsing…"}</p>}
+          {logLines.length > 0 && (
+            <div
+              className="mt-3 rounded-lg border p-3 text-xs font-mono space-y-1 max-h-48 overflow-y-auto"
+              style={{ borderColor: "var(--ch-line)", background: "#fafafa", color: "var(--ch-sub)" }}
+            >
+              {logLines.map((line, i) => (
+                <div key={i} className={i === logLines.length - 1 && busy ? "font-semibold" : undefined} style={i === logLines.length - 1 && busy ? { color: "var(--ch-navy)" } : undefined}>
+                  {line}
+                </div>
+              ))}
+              {busy && <div className="animate-pulse">…</div>}
+              <div ref={logEndRef} />
+            </div>
+          )}
         </div>
       )}
 
