@@ -548,12 +548,33 @@ async function parseWithAiMapping(ctx: {
   // second row's own label — before anything else touches the sheet.
   const combined = detectTwoRowHeader(rows);
 
+  // Wide exports (this ADNOC chart included) routinely carry a couple
+  // hundred trailing columns that are entirely blank across the header
+  // and every sample row — leftover formatting/phantom columns from the
+  // original spreadsheet rather than real data. Sending those to the AI
+  // model bloats the prompt for no benefit and slows the response down;
+  // drop any column that's blank in the header AND every sampled row
+  // before building the excerpt. Column RESOLUTION afterward still looks
+  // up labels against the full, uncompacted header array, so nothing
+  // about how columns get matched to fields changes — this only shrinks
+  // what the model has to read.
+  const sampleRows = combined ? rows.slice(combined.dataStartRow, combined.dataStartRow + 15) : rows.slice(0, Math.min(20, rows.length));
+  const excerptWidth = Math.max(combined?.header.length ?? 0, ...sampleRows.map((r) => (r ?? []).length), 0);
+  const usedCols: number[] = [];
+  for (let i = 0; i < excerptWidth; i++) {
+    if (combined && combined.header[i]) {
+      usedCols.push(i);
+      continue;
+    }
+    if (sampleRows.some((r) => cellStr((r ?? [])[i]) != null)) usedCols.push(i);
+  }
+
   const excerpt = combined
     ? [
-        `0: ${combined.header.map(excerptCell).join(" | ")}`,
-        ...rows.slice(combined.dataStartRow, combined.dataStartRow + 15).map((row, i) => `${i + 1}: ${(row ?? []).map(excerptCell).join(" | ")}`),
+        `0: ${usedCols.map((i) => excerptCell(combined.header[i])).join(" | ")}`,
+        ...sampleRows.map((row, i) => `${i + 1}: ${usedCols.map((c) => excerptCell((row ?? [])[c])).join(" | ")}`),
       ].join("\n")
-    : rows.slice(0, Math.min(20, rows.length)).map((row, i) => `${i}: ${(row ?? []).map(excerptCell).join(" | ")}`).join("\n");
+    : sampleRows.map((row, i) => `${i}: ${usedCols.map((c) => excerptCell((row ?? [])[c])).join(" | ")}`).join("\n");
 
   const aiCtx = await loadAiContext(supabase, orgId);
   const result = await runStructured(supabase, aiCtx, {
