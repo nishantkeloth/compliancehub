@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
+import { loadAiContext, runStructured } from "@/lib/ai/router";
+import { crewBulkMappingSchema, SYSTEM_BULK_MAPPING, bulkMappingPrompt } from "@/lib/ai/crew-bulk-mapping-schema";
 
 // Bulk Data Migration — Crew Register Import. Deterministic column-mapped
 // parse of the workbook Nishant fills from crew-legacy-import-template.xlsx
@@ -14,6 +16,14 @@ import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
 // known. Gated on crew.bulk_intake.manage (0027_bulk_intake_permission.sql,
 // company_admin only) in addition to the usual crew.manage /
 // crew.documents.manage that crew_profiles/crew_documents RLS requires.
+//
+// A second entry point, parseWithAiMapping() below, handles a workbook
+// that ISN'T in that template shape — e.g. a client-provided master crew
+// chart with its own column layout. Instead of hard-erroring, one AI call
+// maps that sheet's own headers onto the same field set the template
+// parser expects; every row then goes through the identical validation
+// and review-before-import UI either way (CrewRegisterPreview is the same
+// shape regardless of which path produced it).
 
 const EMPLOYMENT_STATUSES = new Set(["candidate", "active", "inactive"]);
 const EMPLOYMENT_TYPES = new Set(["permanent", "temporary", "subcontractor", "freelancer"]);
@@ -141,12 +151,17 @@ export type CrewRegisterPreview = {
   unmatchedJobRoles: string[];
   unmatchedDocumentTypes: string[];
   masterData: { jobRoles: { id: string; name: string }[]; documentTypes: { id: string; name: string }[] };
+  // Set when the file didn't match the "Crew Profile"/"Documents" template
+  // and its columns were matched automatically instead — the UI shows
+  // this so the extra review-carefully caution is visible up front.
+  usedAiMapping: boolean;
+  mappingSummary: string[] | null;
 };
 
 /* ================= parse ================= */
 
 export async function parseCrewRegisterFile(formData: FormData): Promise<{ preview: CrewRegisterPreview } | { error: string }> {
-  const { supabase, orgId } = await requireBulkIntakeAccess();
+  const { supabase, orgId, userId } = await requireBulkIntakeAccess();
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Choose the filled-in crew register workbook (.xlsx)." };
@@ -161,20 +176,6 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
     return { error: `Couldn't open "${file.name}" — make sure it's a valid .xlsx file and try again.` };
   }
 
-  const profileSheetName = findSheet(wb.SheetNames, "Crew Profile");
-  const documentsSheetName = findSheet(wb.SheetNames, "Documents");
-  if (!profileSheetName || !documentsSheetName) {
-    return {
-      error: `Couldn't find the expected tabs. Found: ${wb.SheetNames.join(", ") || "(none)"}. This file needs tabs named exactly "Crew Profile" and "Documents" — download a fresh copy of the template if these were renamed.`,
-    };
-  }
-
-  const profileRows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[profileSheetName], { header: 1, defval: null, raw: true }) as unknown[][];
-  const documentRows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[documentsSheetName], { header: 1, defval: null, raw: true }) as unknown[][];
-  if (profileRows.length + documentRows.length > MAX_ROWS) {
-    return { error: `This file has more than ${MAX_ROWS} rows combined — split it into smaller batches.` };
-  }
-
   const [jr, dt, al, existingCrew] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
     supabase.from("document_types").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
@@ -187,6 +188,18 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
   const existing = existingCrew.data ?? [];
   const existingByCode = new Map(existing.filter((c) => c.employee_code).map((c) => [String(c.employee_code).trim().toLowerCase(), c]));
   const existingByName = new Map(existing.map((c) => [String(c.full_name).trim().toLowerCase(), c]));
+
+  const profileSheetName = findSheet(wb.SheetNames, "Crew Profile");
+  const documentsSheetName = findSheet(wb.SheetNames, "Documents");
+  if (!profileSheetName || !documentsSheetName) {
+    return parseWithAiMapping({ supabase, orgId, userId, file, wb, XLSX, jobRoles, documentTypes, aliases, existingByCode, existingByName });
+  }
+
+  const profileRows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[profileSheetName], { header: 1, defval: null, raw: true }) as unknown[][];
+  const documentRows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[documentsSheetName], { header: 1, defval: null, raw: true }) as unknown[][];
+  if (profileRows.length + documentRows.length > MAX_ROWS) {
+    return { error: `This file has more than ${MAX_ROWS} rows combined — split it into smaller batches.` };
+  }
 
   // ---- Crew Profile tab ----
   const pHeader = (profileRows[0] ?? []).map(normHeader);
@@ -393,6 +406,286 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
       unmatchedJobRoles,
       unmatchedDocumentTypes,
       masterData: { jobRoles, documentTypes },
+      usedAiMapping: false,
+      mappingSummary: null,
+    },
+  };
+}
+
+/* ================= AI-assisted mapping (non-template files) ================= */
+
+// Truncate any one cell's text before it goes into the AI prompt — long
+// free-text notes shouldn't blow up the excerpt size for a call that only
+// needs to see enough of each cell to recognize what kind of column it is.
+function excerptCell(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    const m = String(v.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(v.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  return s.length > 60 ? s.slice(0, 57) + "..." : s;
+}
+
+async function parseWithAiMapping(ctx: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  file: File;
+  wb: { SheetNames: string[]; Sheets: Record<string, unknown> };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the "xlsx" module is dynamically imported in the caller to keep it out of the base bundle; typing it precisely here isn't worth threading its types through
+  XLSX: any;
+  jobRoles: { id: string; name: string }[];
+  documentTypes: { id: string; name: string }[];
+  aliases: Alias[];
+  existingByCode: Map<string, { id: string; full_name: unknown; employee_code: unknown }>;
+  existingByName: Map<string, { id: string; full_name: unknown; employee_code: unknown }>;
+}): Promise<{ preview: CrewRegisterPreview } | { error: string }> {
+  const { supabase, orgId, userId, file, wb, XLSX, jobRoles, documentTypes, aliases, existingByCode, existingByName } = ctx;
+
+  if (!wb.SheetNames.length) return { error: `"${file.name}" doesn't have any sheets.` };
+
+  // Pick the sheet most likely to be the actual crew list: the one with
+  // the most rows. A workbook exported as "one big chart" is almost
+  // always a single sheet anyway; this just skips past a stray cover/
+  // notes tab if there is one.
+  let sheetName = wb.SheetNames[0];
+  let rows: unknown[][] = [];
+  for (const name of wb.SheetNames) {
+    const candidate = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: null, raw: true }) as unknown[][];
+    if (candidate.length > rows.length) {
+      rows = candidate;
+      sheetName = name;
+    }
+  }
+  if (rows.length < 2) return { error: `"${file.name}" doesn't look like it has any crew data — check the right sheet/tab is filled in.` };
+  if (rows.length > MAX_ROWS) return { error: `This file has more than ${MAX_ROWS} rows — split it into smaller batches.` };
+
+  const excerptRows = rows.slice(0, Math.min(20, rows.length));
+  const excerpt = excerptRows.map((row, i) => `${i}: ${(row ?? []).map(excerptCell).join(" | ")}`).join("\n");
+
+  const aiCtx = await loadAiContext(supabase, orgId);
+  const result = await runStructured(supabase, aiCtx, {
+    task: "crew_intake",
+    schema: crewBulkMappingSchema,
+    system: SYSTEM_BULK_MAPPING,
+    messages: [{ role: "user", content: bulkMappingPrompt({ sheetName, excerpt, documentTypeNames: documentTypes.map((d) => d.name) }) }],
+    needsDocuments: false,
+    userId,
+  });
+  if ("error" in result) {
+    return {
+      error: `Couldn't find "Crew Profile"/"Documents" tabs in "${file.name}", and automatic column matching failed (${result.error}). Either rename this file's tabs to match the template, or fill in a fresh copy of it instead.`,
+    };
+  }
+  const mapping = result.object;
+  if (mapping.headerRowIndex >= rows.length) {
+    return { error: `Automatic column matching couldn't find a header row in "${file.name}" — try the exact "Crew Profile"/"Documents" template instead.` };
+  }
+
+  const header = (rows[mapping.headerRowIndex] ?? []).map(normHeader);
+  const resolveCol = (label: string | null): number => (label ? header.indexOf(normHeader(label)) : -1);
+  const col = {
+    employeeCode: resolveCol(mapping.profileColumns.employeeCode),
+    fullName: resolveCol(mapping.profileColumns.fullName),
+    jobRole: resolveCol(mapping.profileColumns.jobRole),
+    employmentStatus: resolveCol(mapping.profileColumns.employmentStatus),
+    employmentType: resolveCol(mapping.profileColumns.employmentType),
+    nationality: resolveCol(mapping.profileColumns.nationality),
+    dateOfBirth: resolveCol(mapping.profileColumns.dateOfBirth),
+    gender: resolveCol(mapping.profileColumns.gender),
+    phone: resolveCol(mapping.profileColumns.phone),
+    email: resolveCol(mapping.profileColumns.email),
+    homeCountry: resolveCol(mapping.profileColumns.homeCountry),
+    currentLocation: resolveCol(mapping.profileColumns.currentLocation),
+    nearestAirport: resolveCol(mapping.profileColumns.nearestAirport),
+    joiningDate: resolveCol(mapping.profileColumns.joiningDate),
+    noticePeriodDays: resolveCol(mapping.profileColumns.noticePeriodDays),
+    availabilityDate: resolveCol(mapping.profileColumns.availabilityDate),
+    emergencyContactName: resolveCol(mapping.profileColumns.emergencyContactName),
+    emergencyContactPhone: resolveCol(mapping.profileColumns.emergencyContactPhone),
+    dayRate: resolveCol(mapping.profileColumns.dayRate),
+    currency: resolveCol(mapping.profileColumns.currency),
+    dietaryMedicalNotes: resolveCol(mapping.profileColumns.dietaryMedicalNotes),
+    notes: resolveCol(mapping.profileColumns.notes),
+  };
+  if (col.fullName < 0) {
+    return {
+      error: `Automatic column matching couldn't find a name column in "${file.name}" (sheet "${sheetName}"). Either rename this file's tabs to match the template, or fill in a fresh copy of it instead.`,
+    };
+  }
+  const requireEmployeeCode = col.employeeCode >= 0;
+
+  const docTypeMappingCache = new Map<string, Mapping>();
+  const documentColumns = mapping.documentColumns
+    .map((d) => ({
+      name: d.documentTypeName,
+      numberIdx: resolveCol(d.numberColumn),
+      issueIdx: resolveCol(d.issueDateColumn),
+      expiryIdx: resolveCol(d.expiryDateColumn),
+    }))
+    .filter((d) => d.numberIdx >= 0 || d.issueIdx >= 0 || d.expiryIdx >= 0)
+    .map((d) => {
+      const key = d.name.trim().toLowerCase();
+      const docMapping = docTypeMappingCache.get(key) ?? mapName(d.name, "document_type", documentTypes, aliases);
+      docTypeMappingCache.set(key, docMapping);
+      return { ...d, mapping: docMapping };
+    });
+
+  const seenCodes = new Map<string, number>();
+  const jobRoleMappingCache = new Map<string, Mapping>();
+  const profiles: ParsedProfileRow[] = [];
+  const documents: ParsedDocumentRow[] = [];
+
+  for (let r = mapping.headerRowIndex + 1; r < rows.length; r++) {
+    const row = rows[r] ?? [];
+    const employeeCodeRaw = requireEmployeeCode ? row[col.employeeCode] : null;
+    const fullNameRaw = row[col.fullName];
+    if (isExampleRow(employeeCodeRaw)) continue;
+    const fullName = cellStr(fullNameRaw);
+    if (!fullName && row.every((c) => c == null || String(c).trim() === "")) continue;
+
+    const rowNumber = r + 1;
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    const employeeCode = requireEmployeeCode ? cellStr(employeeCodeRaw) : null;
+    if (requireEmployeeCode && !employeeCode) errors.push("Employee Code is required.");
+    if (!fullName) errors.push("Full Name is required.");
+    const finalEmployeeCode = employeeCode ?? `IMP-${rowNumber}`;
+
+    if (requireEmployeeCode && employeeCode) {
+      const codeKey = employeeCode.toLowerCase();
+      const firstRow = seenCodes.get(codeKey);
+      if (firstRow) errors.push(`Duplicate Employee Code — already used on row ${firstRow}.`);
+      else seenCodes.set(codeKey, rowNumber);
+    }
+
+    const jobRoleNameRaw = cellStr(row[col.jobRole]);
+    let jobRoleMapping: Mapping | null = null;
+    if (jobRoleNameRaw) {
+      const key = jobRoleNameRaw.trim().toLowerCase();
+      jobRoleMapping = jobRoleMappingCache.get(key) ?? mapName(jobRoleNameRaw, "job_role", jobRoles, aliases);
+      jobRoleMappingCache.set(key, jobRoleMapping);
+      if (!jobRoleMapping.targetId) warnings.push(`Job Role "${jobRoleNameRaw}" doesn't match anything in Crew Setup — resolve it below.`);
+    }
+
+    const statusRaw = cellStr(row[col.employmentStatus]);
+    let employmentStatus = "active";
+    if (statusRaw) {
+      const s = statusRaw.toLowerCase();
+      if (EMPLOYMENT_STATUSES.has(s)) employmentStatus = s;
+      else warnings.push(`Employment Status "${statusRaw}" isn't one of candidate, active, inactive — defaulted to active.`);
+    }
+    const typeRaw = cellStr(row[col.employmentType]);
+    let employmentType: string | null = null;
+    if (typeRaw) {
+      const t = typeRaw.toLowerCase();
+      if (EMPLOYMENT_TYPES.has(t)) employmentType = t;
+      else warnings.push(`Employment Type "${typeRaw}" isn't one of permanent, temporary, subcontractor, freelancer — left blank.`);
+    }
+
+    const dob = cellDate(row[col.dateOfBirth]);
+    if (dob.invalid) errors.push("Date of Birth isn't a recognizable date.");
+    const joining = cellDate(row[col.joiningDate]);
+    if (joining.invalid) errors.push("Joining Date isn't a recognizable date.");
+    const availability = cellDate(row[col.availabilityDate]);
+    if (availability.invalid) errors.push("Availability Date isn't a recognizable date.");
+    const notice = cellNumber(row[col.noticePeriodDays]);
+    if (notice.invalid) errors.push("Notice Period Days isn't a number.");
+    const dayRate = cellNumber(row[col.dayRate]);
+    if (dayRate.invalid) errors.push("Day Rate isn't a number.");
+
+    let duplicateOf: ParsedProfileRow["duplicateOf"] = null;
+    if (requireEmployeeCode && employeeCode && existingByCode.has(employeeCode.toLowerCase())) {
+      const m = existingByCode.get(employeeCode.toLowerCase())!;
+      duplicateOf = { id: m.id, fullName: m.full_name as string, employeeCode: (m.employee_code as string | null) ?? null };
+      warnings.push(`Employee Code already exists in ComplianceHub (${m.full_name}) — this row would create a second profile.`);
+    } else if (fullName && existingByName.has(fullName.trim().toLowerCase())) {
+      const m = existingByName.get(fullName.trim().toLowerCase())!;
+      duplicateOf = { id: m.id, fullName: m.full_name as string, employeeCode: (m.employee_code as string | null) ?? null };
+      warnings.push(`A crew member named "${fullName}" already exists in ComplianceHub — check this isn't the same person.`);
+    }
+
+    profiles.push({
+      rowNumber,
+      employeeCode: finalEmployeeCode,
+      fullName: fullName ?? "",
+      jobRoleName: jobRoleNameRaw,
+      jobRoleMapping,
+      employmentStatus,
+      employmentType,
+      nationality: cellStr(row[col.nationality]),
+      dateOfBirth: dob.value,
+      gender: cellStr(row[col.gender]),
+      phone: cellStr(row[col.phone]),
+      email: cellStr(row[col.email]),
+      homeCountry: cellStr(row[col.homeCountry]),
+      currentLocation: cellStr(row[col.currentLocation]),
+      nearestAirport: cellStr(row[col.nearestAirport]),
+      joiningDate: joining.value,
+      noticePeriodDays: notice.value,
+      availabilityDate: availability.value,
+      emergencyContactName: cellStr(row[col.emergencyContactName]),
+      emergencyContactPhone: cellStr(row[col.emergencyContactPhone]),
+      dayRate: dayRate.value,
+      currency: cellStr(row[col.currency]),
+      dietaryMedicalNotes: cellStr(row[col.dietaryMedicalNotes]),
+      notes: cellStr(row[col.notes]),
+      errors,
+      warnings,
+      duplicateOf,
+    });
+
+    // Wide format: this row's own cells carry both the profile and every
+    // document column, so only emit document rows for a profile that
+    // itself parsed cleanly — same "skip anything tied to a broken row"
+    // rule the template path applies via validProfileCodes.
+    if (errors.length === 0) {
+      for (const d of documentColumns) {
+        const documentNumber = cellStr(row[d.numberIdx]);
+        const issue = cellDate(row[d.issueIdx]);
+        const expiry = cellDate(row[d.expiryIdx]);
+        if (!documentNumber && !issue.value && !expiry.value && !issue.invalid && !expiry.invalid) continue; // nothing on file for this person/doc type
+        const docErrors: string[] = [];
+        if (issue.invalid) docErrors.push("Issue Date isn't a recognizable date.");
+        if (expiry.invalid) docErrors.push("Expiry Date isn't a recognizable date.");
+        documents.push({
+          rowNumber,
+          employeeCode: finalEmployeeCode,
+          documentTypeName: d.name,
+          mapping: d.mapping,
+          documentNumber,
+          issueDate: issue.value,
+          expiryDate: expiry.value,
+          notes: null,
+          errors: docErrors,
+        });
+      }
+    }
+  }
+
+  const unmatchedJobRoles = [...jobRoleMappingCache.entries()].filter(([, m]) => !m.targetId).map(([, m]) => m.name);
+  const unmatchedDocumentTypes = [...docTypeMappingCache.entries()].filter(([, m]) => !m.targetId).map(([, m]) => m.name);
+
+  const mappingSummary: string[] = [
+    `No "Crew Profile"/"Documents" template tabs were found, so columns in sheet "${sheetName}" were matched automatically (header row ${mapping.headerRowIndex + 1}) — check every field below carefully before importing.`,
+    ...(requireEmployeeCode ? [] : [`No Employee Code column was found — temporary codes (IMP-#) were assigned below; edit them in Crew Setup afterward if you track employee codes.`]),
+    ...mapping.assumptions,
+  ];
+
+  return {
+    preview: {
+      sourceFilename: file.name,
+      profiles,
+      documents,
+      unmatchedJobRoles,
+      unmatchedDocumentTypes,
+      masterData: { jobRoles, documentTypes },
+      usedAiMapping: true,
+      mappingSummary,
     },
   };
 }

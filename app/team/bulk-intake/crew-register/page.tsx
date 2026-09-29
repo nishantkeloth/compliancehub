@@ -29,7 +29,7 @@ export default async function CrewRegisterImportPage() {
         >
           crew register template
         </a>{" "}
-        (Crew Profile + Documents tabs). Nothing is saved until you review the matches below and confirm the import.
+        (Crew Profile + Documents tabs), or a client-provided crew list in its own layout — columns are matched automatically when the template tabs aren&rsquo;t found. Nothing is saved until you review the matches below and confirm the import.
       </p>
       <CrewRegisterImportPanel canDocuments={can(access, "crew.documents.manage")} />
     </>

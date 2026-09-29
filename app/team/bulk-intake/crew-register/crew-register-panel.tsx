@@ -250,6 +250,17 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
             </button>
           </div>
 
+          {preview.usedAiMapping && preview.mappingSummary && preview.mappingSummary.length > 0 && (
+            <div className="rounded-xl p-4 border" style={{ background: "#fef3e2", borderColor: "#f3d9a8" }}>
+              <div className="text-sm font-semibold mb-1" style={{ color: "#b45309" }}>Columns were matched automatically</div>
+              <ul className="text-xs space-y-1 list-disc pl-4" style={{ color: "#92400e" }}>
+                {preview.mappingSummary.map((line, i) => (
+                  <li key={i}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {(preview.unmatchedJobRoles.length > 0 || preview.unmatchedDocumentTypes.length > 0) && (
             <div className={`${cardCls} p-4`} style={cardStyle}>
               <div className="text-sm font-semibold mb-1" style={{ color: "var(--ch-navy)" }}>Resolve unmatched names</div>
