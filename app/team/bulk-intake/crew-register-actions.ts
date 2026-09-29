@@ -429,6 +429,78 @@ function excerptCell(v: unknown): string {
   return s.length > 60 ? s.slice(0, 57) + "..." : s;
 }
 
+// Sub-header vocabulary for the two-row merged header pattern below —
+// row 1's cells are almost always one of these (NUMBER / ISSUE / EXPIRY
+// / VALID TILL / DATE / NO...) rather than arbitrary text, which is what
+// lets this stay a deterministic check instead of another AI call.
+const SUBHEADER_WORDS = /^(no\.?|number|num|issue|issued|expiry|expires?|exp|valid|validity|date|dob|start|end|from|to)\b/i;
+
+function looksLikeSubHeaderRow(cells: string[]): boolean {
+  if (cells.length < 3) return false;
+  const shortLabelish = cells.filter((c) => c.length <= 15 && c.trim().split(/\s+/).length <= 2).length;
+  const vocabMatch = cells.filter((c) => SUBHEADER_WORDS.test(c.trim())).length;
+  return shortLabelish / cells.length >= 0.8 && vocabMatch / cells.length >= 0.4;
+}
+
+// Detects a two-row merged header: row 0 names each document/section but
+// is only populated in the first of the columns it spans (a merged cell,
+// flattened to blanks by sheet_to_json); row 1 gives every one of those
+// columns its own short sub-label (NUMBER/ISSUE/EXPIRY/...). When both
+// hold, forward-fills row 0 across its blanks and appends row 1's own
+// label to build one synthesized header row, so everything downstream
+// (the AI call and the deterministic column resolver) only ever has to
+// deal with a normal single-row header. Deliberately conservative —
+// requires row 0 to be sparse AND row 1 to look like real sub-labels, not
+// just "the next row happens to have short cells" — because a false
+// positive here would garble the header the rest of the import relies on
+// (a false negative just falls back to the plain single-row AI path).
+function detectTwoRowHeader(rows: unknown[][]): { header: string[]; dataStartRow: number } | null {
+  if (rows.length < 4) return null;
+  const row0 = rows[0] ?? [];
+  const row1 = rows[1] ?? [];
+  const width = Math.max(row0.length, row1.length);
+  if (width < 3) return null;
+
+  const row0Strs = Array.from({ length: width }, (_, i) => cellStr(row0[i]));
+  const row1Strs = Array.from({ length: width }, (_, i) => cellStr(row1[i]));
+  const row0Filled = row0Strs.filter((c): c is string => !!c);
+  const row1Filled = row1Strs.filter((c): c is string => !!c);
+  if (row0Filled.length < 2) return null;
+
+  // The tell-tale sign of this pattern isn't "row 1 has more filled cells
+  // than row 0" — a real file mixes merged document groups (blank
+  // continuation columns under one name) with plenty of ordinary
+  // single-column fields (Name, Rank, DOB — filled in row 0, blank in row
+  // 1), so the two totals often land close together anyway. What a
+  // normal single-row-header sheet can never produce is a column where
+  // the HEADER row is blank but the row right under it is filled — that
+  // only happens when row 0's merged cell doesn't reach this column and
+  // row 1 is still labeling it. Require several of those before trusting
+  // the pattern.
+  let continuationCols = 0;
+  for (let i = 0; i < width; i++) {
+    if (!row0Strs[i] && row1Strs[i]) continuationCols++;
+  }
+  if (continuationCols < 3) return null;
+  if (!looksLikeSubHeaderRow(row1Filled)) return null;
+
+  // Forward-fill row 0's blanks (a merged cell only populates its first column).
+  const filled: (string | null)[] = [];
+  let last: string | null = null;
+  for (let i = 0; i < width; i++) {
+    if (row0Strs[i]) last = row0Strs[i];
+    filled.push(last);
+  }
+
+  const header = Array.from({ length: width }, (_, i) => {
+    const top = filled[i]?.trim() ?? "";
+    const sub = row1Strs[i]?.trim() ?? "";
+    return [top, sub].filter(Boolean).join(" ").trim();
+  });
+
+  return { header, dataStartRow: 2 };
+}
+
 async function parseWithAiMapping(ctx: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -463,14 +535,31 @@ async function parseWithAiMapping(ctx: {
   if (rows.length < 2) return { error: `"${file.name}" doesn't look like it has any crew data — check the right sheet/tab is filled in.` };
   if (rows.length > MAX_ROWS) return { error: `This file has more than ${MAX_ROWS} rows — split it into smaller batches.` };
 
-  const excerptRows = rows.slice(0, Math.min(20, rows.length));
-  const excerpt = excerptRows.map((row, i) => `${i}: ${(row ?? []).map(excerptCell).join(" | ")}`).join("\n");
+  // Wide crew-chart exports very commonly use a TWO-row header: a top row
+  // naming each document ("PASSPORT", spanning 3 merged columns) with only
+  // the first of those columns actually populated, and a second row giving
+  // each of those columns' own label ("NUMBER" / "ISSUE" / "EXPIRY").
+  // Flattened by sheet_to_json, that merge just looks like blank cells —
+  // a single-row header reader (or an AI given only one row to look at)
+  // has no way to recover "PASSPORT" as the label for its ISSUE/EXPIRY
+  // columns. Detect that pattern deterministically (no AI needed for
+  // this part) and collapse it into one synthesized header row —
+  // forward-filling the top row across its blanks, then appending the
+  // second row's own label — before anything else touches the sheet.
+  const combined = detectTwoRowHeader(rows);
+
+  const excerpt = combined
+    ? [
+        `0: ${combined.header.map(excerptCell).join(" | ")}`,
+        ...rows.slice(combined.dataStartRow, combined.dataStartRow + 15).map((row, i) => `${i + 1}: ${(row ?? []).map(excerptCell).join(" | ")}`),
+      ].join("\n")
+    : rows.slice(0, Math.min(20, rows.length)).map((row, i) => `${i}: ${(row ?? []).map(excerptCell).join(" | ")}`).join("\n");
 
   const aiCtx = await loadAiContext(supabase, orgId);
   const result = await runStructured(supabase, aiCtx, {
     task: "crew_intake",
     schema: crewBulkMappingSchema,
-    system: SYSTEM_BULK_MAPPING,
+    system: SYSTEM_BULK_MAPPING + (combined ? "\nRow 0 of the excerpt below has already been reconstructed from a two-row merged header for you — treat it as the header row (headerRowIndex 0) rather than looking for a different one." : ""),
     messages: [{ role: "user", content: bulkMappingPrompt({ sheetName, excerpt, documentTypeNames: documentTypes.map((d) => d.name) }) }],
     needsDocuments: false,
     userId,
@@ -481,11 +570,19 @@ async function parseWithAiMapping(ctx: {
     };
   }
   const mapping = result.object;
-  if (mapping.headerRowIndex >= rows.length) {
-    return { error: `Automatic column matching couldn't find a header row in "${file.name}" — try the exact "Crew Profile"/"Documents" template instead.` };
-  }
 
-  const header = (rows[mapping.headerRowIndex] ?? []).map(normHeader);
+  let header: string[];
+  let dataStartRow: number;
+  if (combined) {
+    header = combined.header.map(normHeader);
+    dataStartRow = combined.dataStartRow;
+  } else {
+    if (mapping.headerRowIndex >= rows.length) {
+      return { error: `Automatic column matching couldn't find a header row in "${file.name}" — try the exact "Crew Profile"/"Documents" template instead.` };
+    }
+    header = (rows[mapping.headerRowIndex] ?? []).map(normHeader);
+    dataStartRow = mapping.headerRowIndex + 1;
+  }
   const resolveCol = (label: string | null): number => (label ? header.indexOf(normHeader(label)) : -1);
   const col = {
     employeeCode: resolveCol(mapping.profileColumns.employeeCode),
@@ -539,7 +636,7 @@ async function parseWithAiMapping(ctx: {
   const profiles: ParsedProfileRow[] = [];
   const documents: ParsedDocumentRow[] = [];
 
-  for (let r = mapping.headerRowIndex + 1; r < rows.length; r++) {
+  for (let r = dataStartRow; r < rows.length; r++) {
     const row = rows[r] ?? [];
     const employeeCodeRaw = requireEmployeeCode ? row[col.employeeCode] : null;
     const fullNameRaw = row[col.fullName];
@@ -671,7 +768,9 @@ async function parseWithAiMapping(ctx: {
   const unmatchedDocumentTypes = [...docTypeMappingCache.entries()].filter(([, m]) => !m.targetId).map(([, m]) => m.name);
 
   const mappingSummary: string[] = [
-    `No "Crew Profile"/"Documents" template tabs were found, so columns in sheet "${sheetName}" were matched automatically (header row ${mapping.headerRowIndex + 1}) — check every field below carefully before importing.`,
+    `No "Crew Profile"/"Documents" template tabs were found, so columns in sheet "${sheetName}" were matched automatically (${
+      combined ? "this sheet uses a two-row header — the document names on row 1 were combined with their NUMBER/ISSUE/EXPIRY sub-labels on row 2 automatically" : `header row ${mapping.headerRowIndex + 1}`
+    }) — check every field below carefully before importing.`,
     ...(requireEmployeeCode ? [] : [`No Employee Code column was found — temporary codes (IMP-#) were assigned below; edit them in Crew Setup afterward if you track employee codes.`]),
     ...mapping.assumptions,
   ];
