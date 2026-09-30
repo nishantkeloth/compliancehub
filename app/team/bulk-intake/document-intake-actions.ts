@@ -295,14 +295,23 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
 
       let crewDocumentId = crewDocumentCache.get(documentTypeId);
       if (!crewDocumentId) {
-        const { data: existingDoc } = await supabase
+        // .maybeSingle() throws if more than one active crew_documents row
+        // already matches (a crew member with two "Passport" rows on file,
+        // for instance — not rare, since this same crew+type match used to
+        // have no dedup at all before this existed). Order + limit(1)
+        // instead, so an ambiguous match still resolves to "update the
+        // most recent one" rather than failing the whole file.
+        const { data: existingDocs, error: existingErr } = await supabase
           .from("crew_documents")
           .select("id")
           .eq("org_id", orgId)
           .eq("crew_id", crewId)
           .eq("document_type_id", documentTypeId)
           .eq("is_active", true)
-          .maybeSingle();
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (existingErr) throw new Error(existingErr.message);
+        const existingDoc = existingDocs?.[0] ?? null;
         if (existingDoc) {
           crewDocumentId = existingDoc.id as string;
         } else {

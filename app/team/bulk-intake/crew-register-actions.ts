@@ -1115,13 +1115,21 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
         // Same crew member + document type already on file (an active
         // crew_documents row) — update it in place instead of inserting a
         // second copy, same "no duplicates on re-import" rule as profiles.
-        const { data: existingDoc } = await supabase
+        // .maybeSingle() would throw if more than one active row already
+        // matches (a crew member with two rows of the same document type
+        // on file — quite possible before this dedup logic existed), so
+        // order + limit(1) and update the most recent one instead of
+        // failing the whole row.
+        const { data: existingDocs, error: existingDocErr } = await supabase
           .from("crew_documents")
           .select("id")
           .eq("crew_id", crewId)
           .eq("document_type_id", docTypeId)
           .eq("is_active", true)
-          .maybeSingle();
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (existingDocErr) throw new Error(existingDocErr.message);
+        const existingDoc = existingDocs?.[0] ?? null;
 
         let docStatus: "created" | "updated";
         if (existingDoc) {
