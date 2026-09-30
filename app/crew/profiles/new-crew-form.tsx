@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCrewProfile } from "./actions";
-import { COUNTRIES } from "@/lib/countries";
+import { NATIONALITIES } from "@/lib/nationalities";
 
 type JobRole = { id: string; name: string };
 
@@ -97,11 +97,11 @@ export default function NewCrewForm({ jobRoles }: { jobRoles: JobRole[] }) {
             {/* A previously-typed free-text value that doesn't match the
                 fixed list below stays selectable rather than silently
                 dropping it the moment this form loads. */}
-            {nationality && !COUNTRIES.includes(nationality as (typeof COUNTRIES)[number]) && (
+            {nationality && !NATIONALITIES.includes(nationality as (typeof NATIONALITIES)[number]) && (
               <option value={nationality}>{nationality} (unmatched — pick below)</option>
             )}
-            {COUNTRIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {NATIONALITIES.map((n) => (
+              <option key={n} value={n}>{n}</option>
             ))}
           </select>
         </label>

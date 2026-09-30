@@ -36,6 +36,7 @@ import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS }
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { REGIONS } from "@/lib/regions";
 import { COUNTRIES } from "@/lib/countries";
+import { NATIONALITIES } from "@/lib/nationalities";
 
 type Crew = {
   id: string;
@@ -473,11 +474,11 @@ function GeneralForm({
             {/* A previously-typed free-text value that doesn't match the
                 fixed list below stays selectable rather than silently
                 dropping it the moment this form loads. */}
-            {nationality && !COUNTRIES.includes(nationality as (typeof COUNTRIES)[number]) && (
+            {nationality && !NATIONALITIES.includes(nationality as (typeof NATIONALITIES)[number]) && (
               <option value={nationality}>{nationality} (unmatched — pick below)</option>
             )}
-            {COUNTRIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {NATIONALITIES.map((n) => (
+              <option key={n} value={n}>{n}</option>
             ))}
           </select>
         </label>

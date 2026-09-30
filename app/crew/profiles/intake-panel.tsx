@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { intakeAvailability, extractCrewIntake, saveCrewIntake, discardCrewIntake, type MappedIntakeProposal } from "./intake-actions";
 import { COUNTRIES } from "@/lib/countries";
+import { NATIONALITIES } from "@/lib/nationalities";
 
 // Phase 12 — "Fill from documents" intake panel. Mirrors the review/map/
 // save UI pattern of app/crew/matrices/new/ai-generate.tsx, scoped to a
@@ -371,11 +372,11 @@ export default function IntakePanel() {
                 {/* AI-extracted text (e.g. from a passport) may not match
                     the fixed list below — keep it selectable rather than
                     silently dropping what was read. */}
-                {nationality && !COUNTRIES.includes(nationality as (typeof COUNTRIES)[number]) && (
+                {nationality && !NATIONALITIES.includes(nationality as (typeof NATIONALITIES)[number]) && (
                   <option value={nationality}>{nationality} (unmatched — pick below)</option>
                 )}
-                {COUNTRIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                {NATIONALITIES.map((n) => (
+                  <option key={n} value={n}>{n}</option>
                 ))}
               </select>
             </label>
