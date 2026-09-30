@@ -31,6 +31,14 @@ const PAGE_SIZE = 200;
 // server) in the same tab is itself a way to hang/crash on a big file.
 const LOCAL_PREVIEW_MAX_BYTES = 6 * 1024 * 1024;
 
+// The commit step used to send every included row to
+// commitCrewRegisterImport in a single request — on a big import that's
+// both a timeout risk and gives no visibility into progress while it runs.
+// Committing in small batches instead means each request finishes quickly,
+// and lets the panel show which employee it's currently on at the bottom
+// of the screen instead of one opaque "Importing…" spinner.
+const IMPORT_CHUNK_SIZE = 10;
+
 function pill(text: string, bg: string, fg: string) {
   return (
     <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 whitespace-nowrap" style={{ background: bg, color: fg }}>
@@ -64,6 +72,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
   const [downloading, setDownloading] = useState(false);
   const [profilePage, setProfilePage] = useState(0);
   const [documentPage, setDocumentPage] = useState(0);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number; name: string; code: string } | null>(null);
 
   function reset() {
     setPreview(null);
@@ -75,6 +84,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     setLogLines([]);
     setProfilePage(0);
     setDocumentPage(0);
+    setImportProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -258,14 +268,51 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
       });
 
     setBusy(true);
+    setImportProgress(null);
     startTransition(async () => {
-      const res = await commitCrewRegisterImport(JSON.stringify({ profiles, documents }));
-      setBusy(false);
-      if ("error" in res) {
-        setError(res.error);
-        return;
+      const total = profiles.length;
+      const aggregate: CommitResult = {
+        createdProfiles: 0,
+        updatedProfiles: 0,
+        createdDocuments: 0,
+        updatedDocuments: 0,
+        errors: [],
+        profiles: [],
+        documents: [],
+      };
+
+      for (let i = 0; i < profiles.length; i += IMPORT_CHUNK_SIZE) {
+        const chunkProfiles = profiles.slice(i, i + IMPORT_CHUNK_SIZE);
+        const chunkCodes = new Set(chunkProfiles.map((p) => p.employeeCode.toLowerCase()));
+        const chunkDocuments = documents.filter((d) => chunkCodes.has(d.employeeCode.toLowerCase()));
+        const last = chunkProfiles[chunkProfiles.length - 1];
+        setImportProgress({
+          current: Math.min(i + chunkProfiles.length, total),
+          total,
+          name: last.fullName,
+          code: last.employeeCode,
+        });
+
+        const res = await commitCrewRegisterImport(JSON.stringify({ profiles: chunkProfiles, documents: chunkDocuments }));
+        if ("error" in res) {
+          setBusy(false);
+          setImportProgress(null);
+          setError(res.error);
+          if (aggregate.profiles.length || aggregate.documents.length) setResult(aggregate);
+          return;
+        }
+        aggregate.createdProfiles += res.result.createdProfiles;
+        aggregate.updatedProfiles += res.result.updatedProfiles;
+        aggregate.createdDocuments += res.result.createdDocuments;
+        aggregate.updatedDocuments += res.result.updatedDocuments;
+        aggregate.errors.push(...res.result.errors);
+        aggregate.profiles.push(...res.result.profiles);
+        aggregate.documents.push(...res.result.documents);
       }
-      setResult(res.result);
+
+      setBusy(false);
+      setImportProgress(null);
+      setResult(aggregate);
       router.refresh();
     });
   }
@@ -626,6 +673,20 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
               </span>
             )}
           </div>
+
+          {busy && importProgress && (
+            <div
+              className={`${cardCls} px-4 py-3 flex items-center gap-2 text-sm`}
+              style={cardStyle}
+            >
+              <span className="animate-pulse font-semibold" style={{ color: "var(--ch-navy)" }}>
+                Processing {importProgress.current} of {importProgress.total}
+              </span>
+              <span style={{ color: "var(--ch-sub)" }}>
+                — {importProgress.name} ({importProgress.code})
+              </span>
+            </div>
+          )}
         </>
       )}
     </div>
