@@ -15,6 +15,37 @@ const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
+// A folder can hold up to MAX_FILES_PER_FOLDER (40, server-side) files, and
+// both classifyDocumentFolder and commitDocumentIntakeFolder used to get
+// every one of them in a single request — one big multipart upload, then a
+// sequential AI call per file inside one server action invocation. A large
+// folder pushed that past the request body size limit (25MB, next.config.ts
+// serverActions.bodySizeLimit) and/or the platform's function timeout,
+// which is what "crashed" the import. Sending files in small batches
+// instead — bounded by count AND total size — means each request does a
+// bounded amount of work, a slow/failed batch doesn't lose progress
+// already made on earlier ones, and the panel can show real progress
+// instead of one long silent wait.
+const CHUNK_MAX_FILES = 5;
+const CHUNK_MAX_BYTES = 15 * 1024 * 1024; // stay well under the 25MB body limit, leaving room for multipart overhead
+
+function batchFiles(files: File[], maxCount: number, maxBytes: number): File[][] {
+  const batches: File[][] = [];
+  let current: File[] = [];
+  let currentBytes = 0;
+  for (const file of files) {
+    if (current.length > 0 && (current.length >= maxCount || currentBytes + file.size > maxBytes)) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(file);
+    currentBytes += file.size;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
 function pill(text: string, bg: string, fg: string) {
   return (
     <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 whitespace-nowrap" style={{ background: bg, color: fg }}>
@@ -47,6 +78,9 @@ type FolderState = {
   rows: FileRowState[];
   commitErrors?: string[];
   attached?: number;
+  // Set while classifying/committing in batches, so the panel can show
+  // "N of M files" instead of one long, silent wait.
+  progressLabel?: string;
 };
 
 function relativeFolderName(file: File): string {
@@ -150,16 +184,39 @@ export default function DocumentIntakePanel() {
     setError(null);
     for (const f of folders) {
       if (!f.crewId) continue;
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classifying" } : x)));
-      const fd = new FormData();
-      for (const file of f.files) fd.append("files", file);
-      const res = await classifyDocumentFolder(f.crewId, fd);
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classifying", rows: [] } : x)));
+
+      // Read/classify in small batches rather than the whole folder in one
+      // request — see CHUNK_MAX_FILES/CHUNK_MAX_BYTES above. Results from
+      // earlier batches are kept even if a later batch fails (network
+      // hiccup, timeout, etc.) — that batch's own files just come through
+      // as unresolved rows (flagged in the table below) instead of losing
+      // everything already read for this folder.
+      const allFiles = f.files;
+      const batches = batchFiles(allFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+      const collected: ClassifiedFile[] = [];
+      let doneCount = 0;
+      for (const chunk of batches) {
+        doneCount += chunk.length;
+        const label = `Reading ${doneCount} of ${allFiles.length} files…`;
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
+        const fd = new FormData();
+        for (const file of chunk) fd.append("files", file);
+        const res = await classifyDocumentFolder(f.crewId, fd);
+        if ("error" in res) {
+          for (const file of chunk) {
+            collected.push({ filename: file.name, mapping: null, documentTypeName: null, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: res.error });
+          }
+        } else {
+          collected.push(...res.files);
+        }
+        // Show what's been read so far, even before the folder finishes —
+        // a slow/large folder isn't just a blank spinner the whole time.
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, rows: collected.map(rowFromClassified) } : x)));
+      }
+
       setFolders((prev) =>
-        (prev ?? []).map((x) => {
-          if (x.folderName !== f.folderName) return x;
-          if ("error" in res) return { ...x, status: "error", error: res.error };
-          return { ...x, status: "classified", rows: res.files.map(rowFromClassified) };
-        })
+        (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classified", progressLabel: undefined } : x))
       );
     }
     setBusy(false);
@@ -180,24 +237,44 @@ export default function DocumentIntakePanel() {
       const included = f.rows.filter((r) => r.include && (r.documentTypeId || r.newDocumentTypeName));
       if (!f.crewId || included.length === 0) continue;
       setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committing" } : x)));
-      const fd = new FormData();
-      for (const file of f.files) if (included.some((r) => r.filename === file.name)) fd.append("files", file);
-      const manifest = included.map((r) => ({
-        filename: r.filename,
-        documentTypeId: r.documentTypeId || null,
-        newDocumentTypeName: r.documentTypeId ? null : r.newDocumentTypeName,
-        documentNumber: r.documentNumber || null,
-        issueDate: r.issueDate || null,
-        expiryDate: r.expiryDate || null,
-        confidence: r.classified?.confidence ?? null,
-      }));
-      const res = await commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd);
+
+      // Upload/commit in small batches too — same reasoning as classifyAll
+      // above. A failed batch is recorded as an error for that batch and
+      // the loop moves on, so documents already attached from earlier
+      // batches in this folder are never lost.
+      const includedFiles = f.files.filter((file) => included.some((r) => r.filename === file.name));
+      const fileBatches = batchFiles(includedFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+      let totalAttached = 0;
+      let doneCount = 0;
+      const allErrors: string[] = [];
+      for (const chunk of fileBatches) {
+        doneCount += chunk.length;
+        const label = `Uploading ${doneCount} of ${includedFiles.length} files…`;
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
+        const chunkRows = included.filter((r) => chunk.some((file) => file.name === r.filename));
+        const fd = new FormData();
+        for (const file of chunk) fd.append("files", file);
+        const manifest = chunkRows.map((r) => ({
+          filename: r.filename,
+          documentTypeId: r.documentTypeId || null,
+          newDocumentTypeName: r.documentTypeId ? null : r.newDocumentTypeName,
+          documentNumber: r.documentNumber || null,
+          issueDate: r.issueDate || null,
+          expiryDate: r.expiryDate || null,
+          confidence: r.classified?.confidence ?? null,
+        }));
+        const res = await commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd);
+        if ("error" in res) {
+          allErrors.push(`Batch of ${chunk.length} file(s): ${res.error}`);
+        } else {
+          totalAttached += res.result.attached;
+          allErrors.push(...res.result.errors);
+        }
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, attached: totalAttached, commitErrors: allErrors } : x)));
+      }
+
       setFolders((prev) =>
-        (prev ?? []).map((x) => {
-          if (x.folderName !== f.folderName) return x;
-          if ("error" in res) return { ...x, status: "error", error: res.error };
-          return { ...x, status: "committed", attached: res.result.attached, commitErrors: res.result.errors };
-        })
+        (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committed", progressLabel: undefined } : x))
       );
     }
     setBusy(false);
@@ -282,7 +359,7 @@ export default function DocumentIntakePanel() {
         </>
       )}
 
-      {folders && (phase === "reviewing" || phase === "done") && (
+      {folders && (phase === "reviewing" || phase === "done" || (phase === "matched" && busy)) && (
         <>
           {phase === "done" && (
             <div className={`${cardCls} p-5`} style={cardStyle}>
@@ -304,12 +381,15 @@ export default function DocumentIntakePanel() {
             </div>
           )}
 
-          {folders.filter((f) => f.status === "classified" || f.status === "committing" || f.status === "committed").map((f) => (
+          {folders.filter((f) => f.status === "classifying" || f.status === "classified" || f.status === "committing" || f.status === "committed").map((f) => (
             <div key={f.folderName} className={`${cardCls} overflow-x-auto`} style={cardStyle}>
               <div className="px-4 pt-4 flex items-center gap-2">
                 <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{f.crewLabel ?? f.folderName}</span>
                 <span className="text-xs" style={{ color: "var(--ch-sub)" }}>({f.folderName})</span>
                 {f.status === "committed" && pill(`${f.attached ?? 0} attached`, "var(--ch-pass-bg, #dcfce7)", "var(--ch-pass, #15803d)")}
+                {f.progressLabel && (
+                  <span className="text-xs font-semibold animate-pulse" style={{ color: "var(--ch-navy)" }}>{f.progressLabel}</span>
+                )}
               </div>
               <table className="text-xs w-full mt-2">
                 <thead>

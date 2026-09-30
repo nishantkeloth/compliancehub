@@ -4,6 +4,16 @@ import { can, getEffectiveAccess } from "@/lib/rbac";
 import Link from "next/link";
 import DocumentIntakePanel from "./document-intake-panel";
 
+// Reading and classifying a folder of scanned documents runs one AI call
+// per file, sequentially, inside the classifyDocumentFolder/
+// commitDocumentIntakeFolder server actions — a folder with many files
+// could otherwise run past the platform's default Server Action timeout
+// and fail outright. The panel itself also now sends files in small
+// batches rather than a whole folder in one request (see CHUNK_SIZE in
+// document-intake-panel.tsx), but this raises the ceiling too, for
+// whatever headroom the hosting plan allows.
+export const maxDuration = 300;
+
 export default async function DocumentIntakePage() {
   const supabase = await createClient();
   const {
