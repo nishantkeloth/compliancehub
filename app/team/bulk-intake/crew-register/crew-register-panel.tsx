@@ -133,6 +133,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
 
   const profileErrorCount = preview?.profiles.filter((p) => p.errors.length).length ?? 0;
   const profileWarningCount = preview?.profiles.filter((p) => !p.errors.length && p.warnings.length).length ?? 0;
+  const profileUpdateMatchCount = preview?.profiles.filter((p) => !p.errors.length && p.action === "update").length ?? 0;
   const docErrorCount = preview?.documents.filter((d) => d.errors.length).length ?? 0;
 
   const unresolvedRequiredCount = useMemo(() => {
@@ -145,6 +146,10 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
 
   const includedProfileCount = preview ? preview.profiles.filter((p) => !p.errors.length && !excluded.has(`p:${p.rowNumber}`)).length : 0;
   const includedDocumentCount = preview ? preview.documents.filter((d) => !d.errors.length && !excluded.has(`d:${d.rowNumber}`)).length : 0;
+  const includedUpdateCount = preview
+    ? preview.profiles.filter((p) => p.action === "update" && !p.errors.length && !excluded.has(`p:${p.rowNumber}`)).length
+    : 0;
+  const includedNewCount = includedProfileCount - includedUpdateCount;
 
   function resolveJobRole(name: string | null): { jobRoleId: string | null; newJobRoleName: string | null } {
     if (!name) return { jobRoleId: null, newJobRoleName: null };
@@ -199,6 +204,8 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
           currency: p.currency,
           dietaryMedicalNotes: p.dietaryMedicalNotes,
           notes: p.notes,
+          action: p.action,
+          matchedId: p.matchedId,
         };
       });
     const includedCodes = new Set(profiles.map((p) => p.employeeCode.toLowerCase()));
@@ -248,7 +255,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
         Email: p.email ?? "",
         "Home Country": p.homeCountry ?? "",
         "Joining Date": p.joiningDate ?? "",
-        Result: p.status === "created" ? "Created" : "Failed",
+        Result: p.status === "created" ? "Created" : p.status === "updated" ? "Updated (already existed)" : "Failed",
         "Error (if any)": p.error ?? "",
       }));
       const documentRows = result.documents.map((d) => ({
@@ -257,7 +264,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
         "Document Number": d.documentNumber ?? "",
         "Issue Date": d.issueDate ?? "",
         "Expiry Date": d.expiryDate ?? "",
-        Result: d.status === "created" ? "Created" : "Failed",
+        Result: d.status === "created" ? "Created" : d.status === "updated" ? "Updated (already existed)" : "Failed",
         "Error (if any)": d.error ?? "",
       }));
       const wb = XLSX.utils.book_new();
@@ -323,8 +330,11 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
         <div className={`${cardCls} p-5`} style={cardStyle}>
           <div className="text-sm font-semibold mb-2" style={{ color: "var(--ch-navy)" }}>Import complete</div>
           <p className="text-sm mb-1">
-            Created <b>{result.createdProfiles}</b> crew profile{result.createdProfiles === 1 ? "" : "s"} and{" "}
-            <b>{result.createdDocuments}</b> document{result.createdDocuments === 1 ? "" : "s"}.
+            Crew profiles: created <b>{result.createdProfiles}</b>, updated <b>{result.updatedProfiles}</b> (matched to an
+            existing profile — not created twice).
+          </p>
+          <p className="text-sm mb-1">
+            Documents: created <b>{result.createdDocuments}</b>, updated <b>{result.updatedDocuments}</b>.
           </p>
           {result.errors.length > 0 && (
             <div className="mt-3">
@@ -363,6 +373,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
             <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{preview.sourceFilename}</span>
             {pill(`${preview.profiles.length} profiles`, "var(--ch-navy-soft, #eef1f6)", "var(--ch-navy)")}
             {profileErrorCount > 0 && pill(`${profileErrorCount} blocked`, "var(--ch-fail-bg)", "var(--ch-fail)")}
+            {profileUpdateMatchCount > 0 && pill(`${profileUpdateMatchCount} match existing crew — will update`, "var(--ch-pass-bg)", "var(--ch-pass)")}
             {profileWarningCount > 0 && pill(`${profileWarningCount} warnings`, "#fef3e2", "#b45309")}
             {pill(`${preview.documents.length} documents`, "var(--ch-navy-soft, #eef1f6)", "var(--ch-navy)")}
             {docErrorCount > 0 && pill(`${docErrorCount} blocked`, "var(--ch-fail-bg)", "var(--ch-fail)")}
@@ -542,7 +553,9 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
               className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
               style={{ background: "var(--ch-navy)" }}
             >
-              {busy ? "Importing…" : `Import ${includedProfileCount} profile${includedProfileCount === 1 ? "" : "s"} and ${includedDocumentCount} document${includedDocumentCount === 1 ? "" : "s"}`}
+              {busy
+                ? "Importing…"
+                : `Import ${includedProfileCount} profile${includedProfileCount === 1 ? "" : "s"} (${includedNewCount} new, ${includedUpdateCount} update${includedUpdateCount === 1 ? "" : "s"}) and ${includedDocumentCount} document${includedDocumentCount === 1 ? "" : "s"}`}
             </button>
             {unresolvedRequiredCount > 0 && (
               <span className="text-xs" style={{ color: "#b45309" }}>

@@ -130,6 +130,13 @@ export type ParsedProfileRow = {
   errors: string[];
   warnings: string[];
   duplicateOf: { id: string; fullName: string; employeeCode: string | null } | null;
+  // When duplicateOf is set, this row is matched to an existing crew
+  // profile and will UPDATE it on import instead of creating a second
+  // one — matchedId is that profile's id (same as duplicateOf.id,
+  // carried separately since this is what actually flows into the
+  // commit payload / server action).
+  action: "create" | "update";
+  matchedId: string | null;
 };
 
 export type ParsedDocumentRow = {
@@ -299,12 +306,14 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
     if (employeeCode && existingByCode.has(codeKey)) {
       const m = existingByCode.get(codeKey)!;
       duplicateOf = { id: m.id as string, fullName: m.full_name as string, employeeCode: (m.employee_code as string | null) ?? null };
-      warnings.push(`Employee Code already exists in ComplianceHub (${m.full_name}) — this row would create a second profile.`);
+      warnings.push(`Employee Code matches an existing crew profile (${m.full_name}) — this row will UPDATE that profile instead of creating a new one.`);
     } else if (fullName && existingByName.has(fullName.trim().toLowerCase())) {
       const m = existingByName.get(fullName.trim().toLowerCase())!;
       duplicateOf = { id: m.id as string, fullName: m.full_name as string, employeeCode: (m.employee_code as string | null) ?? null };
-      warnings.push(`A crew member named "${fullName}" already exists in ComplianceHub — check this isn't the same person.`);
+      warnings.push(`A crew member named "${fullName}" already exists in ComplianceHub — this row will UPDATE that profile. Uncheck it if this is actually a different person.`);
     }
+    const action: ParsedProfileRow["action"] = duplicateOf ? "update" : "create";
+    const matchedId: string | null = duplicateOf?.id ?? null;
 
     profiles.push({
       rowNumber,
@@ -334,6 +343,8 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
       errors,
       warnings,
       duplicateOf,
+      action,
+      matchedId,
     });
   }
 
@@ -720,12 +731,14 @@ async function parseWithAiMapping(ctx: {
     if (requireEmployeeCode && employeeCode && existingByCode.has(employeeCode.toLowerCase())) {
       const m = existingByCode.get(employeeCode.toLowerCase())!;
       duplicateOf = { id: m.id, fullName: m.full_name as string, employeeCode: (m.employee_code as string | null) ?? null };
-      warnings.push(`Employee Code already exists in ComplianceHub (${m.full_name}) — this row would create a second profile.`);
+      warnings.push(`Employee Code matches an existing crew profile (${m.full_name}) — this row will UPDATE that profile instead of creating a new one.`);
     } else if (fullName && existingByName.has(fullName.trim().toLowerCase())) {
       const m = existingByName.get(fullName.trim().toLowerCase())!;
       duplicateOf = { id: m.id, fullName: m.full_name as string, employeeCode: (m.employee_code as string | null) ?? null };
-      warnings.push(`A crew member named "${fullName}" already exists in ComplianceHub — check this isn't the same person.`);
+      warnings.push(`A crew member named "${fullName}" already exists in ComplianceHub — this row will UPDATE that profile. Uncheck it if this is actually a different person.`);
     }
+    const action: ParsedProfileRow["action"] = duplicateOf ? "update" : "create";
+    const matchedId: string | null = duplicateOf?.id ?? null;
 
     profiles.push({
       rowNumber,
@@ -755,6 +768,8 @@ async function parseWithAiMapping(ctx: {
       errors,
       warnings,
       duplicateOf,
+      action,
+      matchedId,
     });
 
     // Wide format: this row's own cells carry both the profile and every
@@ -836,6 +851,13 @@ type CommitProfile = {
   currency: string | null;
   dietaryMedicalNotes: string | null;
   notes: string | null;
+  // When "update", matchedId names an existing crew_profiles row to
+  // update in place instead of inserting a new one — set from the
+  // preview's own duplicate-detection (matched by Employee Code, or by
+  // full name when no code match), so the same person is never
+  // imported twice.
+  action: "create" | "update";
+  matchedId: string | null;
 };
 type CommitDocument = {
   employeeCode: string;
@@ -864,7 +886,7 @@ export type CommitResultProfileRow = {
   email: string | null;
   homeCountry: string | null;
   joiningDate: string | null;
-  status: "created" | "failed";
+  status: "created" | "updated" | "failed";
   error: string | null;
 };
 export type CommitResultDocumentRow = {
@@ -873,13 +895,15 @@ export type CommitResultDocumentRow = {
   documentNumber: string | null;
   issueDate: string | null;
   expiryDate: string | null;
-  status: "created" | "failed";
+  status: "created" | "updated" | "failed";
   error: string | null;
 };
 
 export type CommitResult = {
   createdProfiles: number;
+  updatedProfiles: number;
   createdDocuments: number;
+  updatedDocuments: number;
   errors: string[];
   profiles: CommitResultProfileRow[];
   documents: CommitResultDocumentRow[];
@@ -928,56 +952,90 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
   const profileRows: CommitResultProfileRow[] = [];
   const documentRows: CommitResultDocumentRow[] = [];
   let createdProfiles = 0;
+  let updatedProfiles = 0;
   let createdDocuments = 0;
+  let updatedDocuments = 0;
 
   for (const p of payload.profiles) {
     let jobRoleId: string | null = null;
     try {
       jobRoleId = p.jobRoleId ?? (p.newJobRoleName ? await ensure("job_roles", p.newJobRoleName, roleCache, { created_by: userId }) : null);
-      const { data: crewCode, error: codeError } = await supabase.rpc("next_number_range_code", {
-        p_org_id: orgId,
-        p_entity_type: "crew",
-      });
-      if (codeError) throw new Error(`Could not assign a crew code: ${codeError.message}`);
-      const { data, error } = await supabase
-        .from("crew_profiles")
-        .insert({
-          org_id: orgId,
-          crew_code: crewCode,
-          employee_code: p.employeeCode,
-          full_name: p.fullName,
-          primary_job_role_id: jobRoleId,
-          employment_status: p.employmentStatus || "active",
-          employment_type: p.employmentType,
-          nationality: p.nationality,
-          date_of_birth: p.dateOfBirth,
-          gender: p.gender,
-          phone: p.phone,
-          email: p.email,
-          home_country: p.homeCountry,
-          current_location: p.currentLocation,
-          nearest_airport: p.nearestAirport,
-          joining_date: p.joiningDate,
-          notice_period_days: p.noticePeriodDays,
-          availability_date: p.availabilityDate,
-          emergency_contact_name: p.emergencyContactName,
-          emergency_contact_phone: p.emergencyContactPhone,
-          day_rate: p.dayRate,
-          currency: p.currency,
-          dietary_medical_notes: p.dietaryMedicalNotes,
-          notes: p.notes,
-          created_by: userId,
-          updated_by: userId,
-        })
-        .select("id, crew_code")
-        .single();
-      if (error) throw new Error(error.message);
-      crewIdByCode.set(p.employeeCode.toLowerCase(), data!.id as string);
-      createdProfiles++;
+
+      const commonFields = {
+        employee_code: p.employeeCode,
+        full_name: p.fullName,
+        primary_job_role_id: jobRoleId,
+        employment_status: p.employmentStatus || "active",
+        employment_type: p.employmentType,
+        nationality: p.nationality,
+        date_of_birth: p.dateOfBirth,
+        gender: p.gender,
+        phone: p.phone,
+        email: p.email,
+        home_country: p.homeCountry,
+        current_location: p.currentLocation,
+        nearest_airport: p.nearestAirport,
+        joining_date: p.joiningDate,
+        notice_period_days: p.noticePeriodDays,
+        availability_date: p.availabilityDate,
+        emergency_contact_name: p.emergencyContactName,
+        emergency_contact_phone: p.emergencyContactPhone,
+        day_rate: p.dayRate,
+        currency: p.currency,
+        dietary_medical_notes: p.dietaryMedicalNotes,
+        notes: p.notes,
+        updated_by: userId,
+      };
+
+      let crewId: string;
+      let crewCodeOut: string | null;
+      let rowStatus: "created" | "updated";
+
+      if (p.action === "update" && p.matchedId) {
+        // Same person already exists (matched by Employee Code, or by
+        // full name when no code match) — update that profile in place
+        // instead of inserting a duplicate. crew_code is deliberately
+        // left untouched here — it's assigned once, at creation, and
+        // never reassigned.
+        const { data, error } = await supabase
+          .from("crew_profiles")
+          .update(commonFields)
+          .eq("id", p.matchedId)
+          .select("id, crew_code")
+          .single();
+        if (error) throw new Error(error.message);
+        crewId = data!.id as string;
+        crewCodeOut = (data!.crew_code as string | null) ?? null;
+        rowStatus = "updated";
+        updatedProfiles++;
+      } else {
+        const { data: crewCode, error: codeError } = await supabase.rpc("next_number_range_code", {
+          p_org_id: orgId,
+          p_entity_type: "crew",
+        });
+        if (codeError) throw new Error(`Could not assign a crew code: ${codeError.message}`);
+        const { data, error } = await supabase
+          .from("crew_profiles")
+          .insert({
+            org_id: orgId,
+            crew_code: crewCode,
+            created_by: userId,
+            ...commonFields,
+          })
+          .select("id, crew_code")
+          .single();
+        if (error) throw new Error(error.message);
+        crewId = data!.id as string;
+        crewCodeOut = (data!.crew_code as string | null) ?? null;
+        rowStatus = "created";
+        createdProfiles++;
+      }
+
+      crewIdByCode.set(p.employeeCode.toLowerCase(), crewId);
       profileRows.push({
         employeeCode: p.employeeCode,
         fullName: p.fullName,
-        crewCode: (data!.crew_code as string | null) ?? null,
+        crewCode: crewCodeOut,
         jobRoleName: (jobRoleId ? jobRoleNameById.get(jobRoleId) : null) ?? p.newJobRoleName ?? null,
         employmentStatus: p.employmentStatus,
         nationality: p.nationality,
@@ -985,7 +1043,7 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
         email: p.email,
         homeCountry: p.homeCountry,
         joiningDate: p.joiningDate,
-        status: "created",
+        status: rowStatus,
         error: null,
       });
     } catch (e) {
@@ -1054,26 +1112,55 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
           });
           continue;
         }
-        const { error } = await supabase.from("crew_documents").insert({
-          org_id: orgId,
-          crew_id: crewId,
-          document_type_id: docTypeId,
-          document_number: d.documentNumber,
-          issue_date: d.issueDate,
-          expiry_date: d.expiryDate,
-          notes: d.notes,
-          created_by: userId,
-          updated_by: userId,
-        });
-        if (error) throw new Error(error.message);
-        createdDocuments++;
+        // Same crew member + document type already on file (an active
+        // crew_documents row) — update it in place instead of inserting a
+        // second copy, same "no duplicates on re-import" rule as profiles.
+        const { data: existingDoc } = await supabase
+          .from("crew_documents")
+          .select("id")
+          .eq("crew_id", crewId)
+          .eq("document_type_id", docTypeId)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        let docStatus: "created" | "updated";
+        if (existingDoc) {
+          const { error } = await supabase
+            .from("crew_documents")
+            .update({
+              document_number: d.documentNumber,
+              issue_date: d.issueDate,
+              expiry_date: d.expiryDate,
+              notes: d.notes,
+              updated_by: userId,
+            })
+            .eq("id", existingDoc.id);
+          if (error) throw new Error(error.message);
+          updatedDocuments++;
+          docStatus = "updated";
+        } else {
+          const { error } = await supabase.from("crew_documents").insert({
+            org_id: orgId,
+            crew_id: crewId,
+            document_type_id: docTypeId,
+            document_number: d.documentNumber,
+            issue_date: d.issueDate,
+            expiry_date: d.expiryDate,
+            notes: d.notes,
+            created_by: userId,
+            updated_by: userId,
+          });
+          if (error) throw new Error(error.message);
+          createdDocuments++;
+          docStatus = "created";
+        }
         documentRows.push({
           employeeCode: d.employeeCode,
           documentTypeName: docTypeNameById.get(docTypeId) ?? docTypeNameGuess,
           documentNumber: d.documentNumber,
           issueDate: d.issueDate,
           expiryDate: d.expiryDate,
-          status: "created",
+          status: docStatus,
           error: null,
         });
       } catch (e) {
@@ -1094,5 +1181,7 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
 
   revalidatePath("/crew/profiles");
   revalidatePath("/crew/documents");
-  return { result: { createdProfiles, createdDocuments, errors, profiles: profileRows, documents: documentRows } };
+  return {
+    result: { createdProfiles, updatedProfiles, createdDocuments, updatedDocuments, errors, profiles: profileRows, documents: documentRows },
+  };
 }
