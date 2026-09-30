@@ -352,8 +352,43 @@ export async function updateDocumentType(id: string, formData: FormData) {
   return {};
 }
 
+// Deleting a document type can be blocked by several foreign keys —
+// crew_documents (real files/records on crew members) should never be
+// silently destroyed, but everything else that can point at a document
+// type is just configuration or a historical snapshot, safe to clear
+// along with it:
+//  - crew_documents: real data — BLOCK the delete with a clear message
+//    instead of the raw FK-violation error Postgres returns, and point
+//    at deactivating the type instead.
+//  - document_custom_field_definitions (applies_to_document_type_id):
+//    just a field definition scoped to this type — delete it.
+//  - crew_matrix_line_documents: a matrix requirement line naming this
+//    type — meaningless once the type is gone, so delete it.
+//  - crew_document_upload_link_items: pending/past self-upload requests
+//    for this type — delete them.
+//  - crew_matrix_share_documents: a point-in-time snapshot already sent
+//    to a client (document_snapshot_json keeps what was shown) — clear
+//    the now-dangling reference rather than delete the snapshot row.
 export async function deleteDocumentType(id: string) {
-  const { supabase } = await requireCrewManage();
+  const { supabase, access } = await requireCrewManage();
+
+  const { count, error: countErr } = await supabase
+    .from("crew_documents")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", access.orgId)
+    .eq("document_type_id", id);
+  if (countErr) return { error: countErr.message };
+  if (count && count > 0) {
+    return {
+      error: `Can't delete — ${count} crew document${count === 1 ? "" : "s"} of this type ${count === 1 ? "is" : "are"} on file. Turn off "Active" instead to hide it from new uploads without losing that history, or remove those documents from the affected crew members first.`,
+    };
+  }
+
+  await supabase.from("document_custom_field_definitions").delete().eq("org_id", access.orgId).eq("applies_to_document_type_id", id);
+  await supabase.from("crew_matrix_line_documents").delete().eq("org_id", access.orgId).eq("document_type_id", id);
+  await supabase.from("crew_document_upload_link_items").delete().eq("document_type_id", id);
+  await supabase.from("crew_matrix_share_documents").update({ document_type_id: null }).eq("org_id", access.orgId).eq("document_type_id", id);
+
   const { error } = await supabase.from("document_types").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateSetup();
