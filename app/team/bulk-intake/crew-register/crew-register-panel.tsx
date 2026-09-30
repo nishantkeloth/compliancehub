@@ -264,6 +264,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
           issueDate: d.issueDate,
           expiryDate: d.expiryDate,
           notes: d.notes,
+          customFields: d.customFields,
         };
       });
 
@@ -627,6 +628,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                   <th className="text-left px-2 py-2">Document Type</th>
                   <th className="text-left px-2 py-2">Number</th>
                   <th className="text-left px-2 py-2">Expiry</th>
+                  <th className="text-left px-2 py-2">Custom fields</th>
                   <th className="text-left px-2 py-2">Status</th>
                 </tr>
               </thead>
@@ -644,6 +646,15 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                       <td className="px-2 py-1.5">{d.documentTypeName}</td>
                       <td className="px-2 py-1.5">{d.documentNumber ?? "—"}</td>
                       <td className="px-2 py-1.5">{d.expiryDate ?? "—"}</td>
+                      <td className="px-2 py-1.5">
+                        {d.customFields && Object.keys(d.customFields).length
+                          ? Object.entries(d.customFields).map(([k, v]) => (
+                              <div key={k}>
+                                {k.replace(/_/g, " ")}: {v}
+                              </div>
+                            ))
+                          : "—"}
+                      </td>
                       <td className="px-2 py-1.5">
                         {d.errors.map((e, i) => <div key={i} style={{ color: "var(--ch-fail)" }}>{e}</div>)}
                         {d.warnings.map((w, i) => <div key={i} style={{ color: "#b45309" }}>{w}</div>)}

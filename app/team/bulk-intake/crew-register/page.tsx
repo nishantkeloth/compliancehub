@@ -28,14 +28,14 @@ export default async function CrewRegisterImportPage() {
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
         Upload the filled-in{" "}
         <a
-          href="/templates/crew-legacy-import-template.xlsx"
+          href="/api/crew/register-template"
           download
           className="font-semibold underline"
           style={{ color: "var(--ch-navy)" }}
         >
           crew register template
         </a>{" "}
-        (Crew Profile + Documents tabs), or a client-provided crew list in its own layout — columns are matched automatically when the template tabs aren&rsquo;t found. Nothing is saved until you review the matches below and confirm the import.
+        (Crew Profile + Documents tabs — generated fresh each time from this company&rsquo;s current Document Types and their custom fields), or a client-provided crew list in its own layout — columns are matched automatically when the template tabs aren&rsquo;t found. Nothing is saved until you review the matches below and confirm the import.
       </p>
       <CrewRegisterImportPanel canDocuments={can(access, "crew.documents.manage")} />
     </>

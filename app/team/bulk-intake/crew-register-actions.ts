@@ -7,9 +7,12 @@ import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
 import { loadAiContext, runStructured } from "@/lib/ai/router";
 import { crewBulkMappingSchema, SYSTEM_BULK_MAPPING, bulkMappingPrompt } from "@/lib/ai/crew-bulk-mapping-schema";
 import { validateDocumentDates } from "@/lib/documents/checks";
+import type { TemplateCustomFieldDef } from "@/lib/crew-register-template";
 
 // Bulk Data Migration — Crew Register Import. Deterministic column-mapped
-// parse of the workbook Nishant fills from crew-legacy-import-template.xlsx
+// parse of the workbook Nishant fills from the "Crew Register template"
+// download (app/api/crew/register-template/route.ts — generated fresh
+// from this org's live document types/custom fields, not a static file)
 // (two tabs: "Crew Profile", "Documents"), reusing the same
 // extract→review→commit shape as the single-person AI intake
 // (app/crew/profiles/intake-actions.ts) and the same name-matching engine
@@ -123,6 +126,55 @@ function buildDocNumberMap(rows: { crew_id: string; document_type_id: string; do
   return map;
 }
 
+// Groups this org's active custom field definitions by LABEL (the column
+// header a workbook shows), then, for the Documents tab's header row,
+// finds which of those labels actually has a column present. A label can
+// be shared by more than one definition (e.g. reused across two document
+// types), so resolving a specific definition for a given row's document
+// type happens later, per-row, in resolveCustomFieldValue() below.
+type CustomFieldColumn = { label: string; colIdx: number; defs: TemplateCustomFieldDef[] };
+function findCustomFieldColumns(header: string[], defs: TemplateCustomFieldDef[]): CustomFieldColumn[] {
+  const byLabel = new Map<string, TemplateCustomFieldDef[]>();
+  for (const def of defs) {
+    if (!byLabel.has(def.label)) byLabel.set(def.label, []);
+    byLabel.get(def.label)!.push(def);
+  }
+  const cols: CustomFieldColumn[] = [];
+  for (const [label, labelDefs] of byLabel) {
+    const colIdx = header.indexOf(normHeader(label));
+    if (colIdx >= 0) cols.push({ label, colIdx, defs: labelDefs });
+  }
+  return cols;
+}
+
+// A custom-field column applies to whichever of its definitions is scoped
+// to this row's resolved document type — or, failing that, the one (if
+// any) that applies to every document type (applies_to_document_type_id
+// is null). Returns null when this document type isn't covered by any
+// definition sharing that column's label, so e.g. an "Oil Field" value
+// entered on a non-CICPA-Pass row is silently dropped rather than saved
+// against the wrong document type.
+function resolveCustomFieldDef(col: CustomFieldColumn, documentTypeId: string | null): TemplateCustomFieldDef | null {
+  const scoped = documentTypeId ? col.defs.find((d) => d.applies_to_document_type_id === documentTypeId) : undefined;
+  if (scoped) return scoped;
+  return col.defs.find((d) => !d.applies_to_document_type_id) ?? null;
+}
+
+function readCustomFields(row: unknown[], cols: CustomFieldColumn[], documentTypeId: string | null): Record<string, string> | null {
+  if (!cols.length) return null;
+  let out: Record<string, string> | null = null;
+  for (const col of cols) {
+    const def = resolveCustomFieldDef(col, documentTypeId);
+    if (!def) continue;
+    const val = cellStr(row[col.colIdx]);
+    if (val) {
+      out = out ?? {};
+      out[def.field_key] = val;
+    }
+  }
+  return out;
+}
+
 /* ================= types ================= */
 
 export type ParsedProfileRow = {
@@ -171,6 +223,12 @@ export type ParsedDocumentRow = {
   issueDate: string | null;
   expiryDate: string | null;
   notes: string | null;
+  // Values for whichever of this org's document custom fields (Crew Setup
+  // → Custom Fields, e.g. CICPA Pass's "Oil Field") apply to this row's
+  // document type and had a matching column in the workbook — keyed by
+  // field_key, same shape crew_documents.custom_fields already stores.
+  // null when none apply / none were filled in.
+  customFields: Record<string, string> | null;
   errors: string[];
   warnings: string[];
 };
@@ -207,12 +265,13 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
     return { error: `Couldn't open "${file.name}" — make sure it's a valid .xlsx file and try again.` };
   }
 
-  const [jr, dt, al, existingCrew, existingDocs] = await Promise.all([
+  const [jr, dt, al, existingCrew, existingDocs, cf] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
     supabase.from("document_types").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
     supabase.from("ai_name_aliases").select("entity_type, alias, target_id").eq("org_id", orgId),
     supabase.from("crew_profiles").select("id, full_name, employee_code").eq("org_id", orgId),
     supabase.from("crew_documents").select("crew_id, document_type_id, document_number, crew_profiles(full_name, employee_code)").eq("org_id", orgId).eq("is_active", true),
+    supabase.from("document_custom_field_definitions").select("id, label, field_key, applies_to_document_type_id").eq("org_id", orgId).eq("is_active", true),
   ]);
   const jobRoles = jr.data ?? [];
   const documentTypes = dt.data ?? [];
@@ -221,6 +280,7 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
   const existingByCode = new Map(existing.filter((c) => c.employee_code).map((c) => [String(c.employee_code).trim().toLowerCase(), c]));
   const existingByName = new Map(existing.map((c) => [String(c.full_name).trim().toLowerCase(), c]));
   const docNumberMap = buildDocNumberMap((existingDocs.data ?? []) as Parameters<typeof buildDocNumberMap>[0]);
+  const customFieldDefs = (cf.data ?? []) as TemplateCustomFieldDef[];
 
   const profileSheetName = findSheet(wb.SheetNames, "Crew Profile");
   const documentsSheetName = findSheet(wb.SheetNames, "Documents");
@@ -388,6 +448,7 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
   if (dcol.employeeCode < 0 || dcol.documentType < 0) {
     return { error: `The "Documents" tab is missing the Employee Code or Document Type column — download a fresh copy of the template.` };
   }
+  const customFieldCols = findCustomFieldColumns(dHeader, customFieldDefs);
 
   const validProfileCodes = new Set(profiles.filter((p) => p.errors.length === 0).map((p) => p.employeeCode.toLowerCase()));
   const docTypeMappingCache = new Map<string, Mapping>();
@@ -442,6 +503,7 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
       issueDate: issue.value,
       expiryDate: expiry.value,
       notes: cellStr(row[dcol.notes]),
+      customFields: readCustomFields(row, customFieldCols, mapping?.targetId ?? null),
       errors,
       warnings,
     });
@@ -848,6 +910,12 @@ async function parseWithAiMapping(ctx: {
           issueDate: issue.value,
           expiryDate: expiry.value,
           notes: null,
+          // Custom fields aren't supported on this automatic-column-
+          // matching path — a client's own chart layout has no reliable
+          // way to signal which of its columns is a document's custom
+          // field vs. just another data column. Use the exact template
+          // (Documents tab) to carry values like CICPA Pass's "Oil Field".
+          customFields: null,
           errors: docErrors,
           warnings: docWarnings,
         });
@@ -922,6 +990,7 @@ type CommitDocument = {
   issueDate: string | null;
   expiryDate: string | null;
   notes: string | null;
+  customFields: Record<string, string> | null;
 };
 type CommitPayload = { profiles: CommitProfile[]; documents: CommitDocument[] };
 
@@ -1195,6 +1264,7 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
               issue_date: d.issueDate,
               expiry_date: d.expiryDate,
               notes: d.notes,
+              custom_fields: d.customFields ?? {},
               updated_by: userId,
             })
             .eq("id", existingDoc.id);
@@ -1210,6 +1280,7 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
             issue_date: d.issueDate,
             expiry_date: d.expiryDate,
             notes: d.notes,
+            custom_fields: d.customFields ?? {},
             created_by: userId,
             updated_by: userId,
           });
