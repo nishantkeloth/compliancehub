@@ -4,6 +4,12 @@ import { can, getEffectiveAccess } from "@/lib/rbac";
 import Link from "next/link";
 import CrewRegisterImportPanel from "./crew-register-panel";
 
+// A large workbook's parse/match (parseCrewRegisterFile) and the commit loop
+// (commitCrewRegisterImport) can take a while on the server — raise the
+// ceiling for whatever headroom the hosting plan allows, mirroring the same
+// fix already applied to the Bulk Document Intake page.
+export const maxDuration = 300;
+
 export default async function CrewRegisterImportPage() {
   const supabase = await createClient();
   const {

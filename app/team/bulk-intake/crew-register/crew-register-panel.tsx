@@ -14,6 +14,23 @@ const inputStyle = { borderColor: "var(--ch-line)" };
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
 
+// The review tables below used to render every parsed row as its own <tr>
+// with no limit — fine for a few hundred rows, but a workbook with a large
+// Documents tab (thousands of rows) turned that into thousands of DOM
+// nodes rendered at once, which is what made the tab itself unresponsive/
+// crash rather than the app showing a graceful error. Paginating what's
+// actually rendered keeps the DOM bounded regardless of file size; the
+// underlying data (and the Include checkboxes' state) still covers every
+// row, only what's drawn on screen is limited.
+const PAGE_SIZE = 200;
+
+// Below this size, also parse the file locally (client-side) purely to
+// show a friendlier progress log before the authoritative server parse.
+// Above it, skip that local parse entirely — it's cosmetic, and doing a
+// full SheetJS parse of a large workbook twice (once here, once on the
+// server) in the same tab is itself a way to hang/crash on a big file.
+const LOCAL_PREVIEW_MAX_BYTES = 6 * 1024 * 1024;
+
 function pill(text: string, bg: string, fg: string) {
   return (
     <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 whitespace-nowrap" style={{ background: bg, color: fg }}>
@@ -45,6 +62,8 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
   const [documentTypeResolutions, setDocumentTypeResolutions] = useState<Record<string, Resolution>>({});
   const [result, setResult] = useState<CommitResult | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [profilePage, setProfilePage] = useState(0);
+  const [documentPage, setDocumentPage] = useState(0);
 
   function reset() {
     setPreview(null);
@@ -54,6 +73,8 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     setResult(null);
     setError(null);
     setLogLines([]);
+    setProfilePage(0);
+    setDocumentPage(0);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -80,32 +101,40 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     // below; if the local read fails for any reason it's silently skipped.
     const timers: ReturnType<typeof setTimeout>[] = [];
     let recordCount: number | null = null;
-    try {
-      const XLSX = await import("xlsx");
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(bytes, { type: "array" });
-      log(`Opened workbook — sheets: ${wb.SheetNames.join(", ") || "(none)"}.`);
-      let bestSheet = wb.SheetNames[0] ?? "";
-      let bestRows = 0;
-      for (const name of wb.SheetNames) {
-        const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: null }) as unknown[][];
-        if (rows.length > bestRows) {
-          bestRows = rows.length;
-          bestSheet = name;
+    if (file.size > LOCAL_PREVIEW_MAX_BYTES) {
+      // Large file — skip the local double-parse entirely (see
+      // LOCAL_PREVIEW_MAX_BYTES above) and go straight to the server.
+      log("Large file — sending straight to server for validation and column matching…");
+      timers.push(setTimeout(() => log("Still working — a large file can take a minute or two on the first pass…"), 8000));
+      timers.push(setTimeout(() => log("Still going — automatic column matching on a large file can take a couple of minutes…"), 25000));
+    } else {
+      try {
+        const XLSX = await import("xlsx");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const wb = XLSX.read(bytes, { type: "array" });
+        log(`Opened workbook — sheets: ${wb.SheetNames.join(", ") || "(none)"}.`);
+        let bestSheet = wb.SheetNames[0] ?? "";
+        let bestRows = 0;
+        for (const name of wb.SheetNames) {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: null }) as unknown[][];
+          if (rows.length > bestRows) {
+            bestRows = rows.length;
+            bestSheet = name;
+          }
         }
+        recordCount = Math.max(bestRows - 1, 0);
+        const plural = recordCount === 1 ? "record" : "records";
+        log(`Found ${recordCount} ${plural} in sheet "${bestSheet}".`);
+        log("Sending to server — validating fields and matching job roles/document types against Crew Setup…");
+        timers.push(
+          setTimeout(() => log(`Still working on ${recordCount} ${plural} — automatic column matching can take up to a minute on larger files…`), 8000)
+        );
+        timers.push(setTimeout(() => log("Still going — a first-time automatic column match on a large file can take a couple of minutes…"), 25000));
+      } catch {
+        log("Sending to server for validation and column matching…");
+        timers.push(setTimeout(() => log("Still working — this can take up to a minute on larger files…"), 8000));
+        timers.push(setTimeout(() => log("Still going — a first-time automatic column match on a large file can take a couple of minutes…"), 25000));
       }
-      recordCount = Math.max(bestRows - 1, 0);
-      const plural = recordCount === 1 ? "record" : "records";
-      log(`Found ${recordCount} ${plural} in sheet "${bestSheet}".`);
-      log("Sending to server — validating fields and matching job roles/document types against Crew Setup…");
-      timers.push(
-        setTimeout(() => log(`Still working on ${recordCount} ${plural} — automatic column matching can take up to a minute on larger files…`), 8000)
-      );
-      timers.push(setTimeout(() => log("Still going — a first-time automatic column match on a large file can take a couple of minutes…"), 25000));
-    } catch {
-      log("Sending to server for validation and column matching…");
-      timers.push(setTimeout(() => log("Still working — this can take up to a minute on larger files…"), 8000));
-      timers.push(setTimeout(() => log("Still going — a first-time automatic column match on a large file can take a couple of minutes…"), 25000));
     }
 
     const fd = new FormData();
@@ -120,6 +149,8 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     }
     log(`Done — ${res.preview.profiles.length} profile row(s) and ${res.preview.documents.length} document row(s) ready to review.`);
     setPreview(res.preview);
+    setProfilePage(0);
+    setDocumentPage(0);
     // Default-exclude rows that already carry blocking errors.
     const ex = new Set<string>();
     for (const p of res.preview.profiles) if (p.errors.length) ex.add(`p:${p.rowNumber}`);
@@ -283,6 +314,36 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
       else next.add(key);
       return next;
     });
+  }
+
+  function Pager({ page, setPage, total }: { page: number; setPage: (n: number) => void; total: number }) {
+    const pageCount = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+    if (total <= PAGE_SIZE) return null;
+    const start = page * PAGE_SIZE + 1;
+    const end = Math.min((page + 1) * PAGE_SIZE, total);
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--ch-sub)" }}>
+        <button
+          onClick={() => setPage(Math.max(page - 1, 0))}
+          disabled={page === 0}
+          className="rounded border px-2 py-1 font-semibold disabled:opacity-40"
+          style={{ borderColor: "var(--ch-line)" }}
+        >
+          ← Prev
+        </button>
+        <span>
+          Showing {start}–{end} of {total} (page {page + 1} of {pageCount})
+        </span>
+        <button
+          onClick={() => setPage(Math.min(page + 1, pageCount - 1))}
+          disabled={page >= pageCount - 1}
+          className="rounded border px-2 py-1 font-semibold disabled:opacity-40"
+          style={{ borderColor: "var(--ch-line)" }}
+        >
+          Next →
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -478,7 +539,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                 </tr>
               </thead>
               <tbody>
-                {preview.profiles.map((p) => {
+                {preview.profiles.slice(profilePage * PAGE_SIZE, (profilePage + 1) * PAGE_SIZE).map((p) => {
                   const key = `p:${p.rowNumber}`;
                   const blocked = p.errors.length > 0;
                   return (
@@ -500,6 +561,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                 })}
               </tbody>
             </table>
+            <Pager page={profilePage} setPage={setProfilePage} total={preview.profiles.length} />
           </div>
 
           <div className={`${cardCls} overflow-x-auto`} style={cardStyle}>
@@ -522,7 +584,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                 </tr>
               </thead>
               <tbody>
-                {preview.documents.map((d) => {
+                {preview.documents.slice(documentPage * PAGE_SIZE, (documentPage + 1) * PAGE_SIZE).map((d) => {
                   const key = `d:${d.rowNumber}`;
                   const blocked = d.errors.length > 0;
                   return (
@@ -544,6 +606,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                 })}
               </tbody>
             </table>
+            <Pager page={documentPage} setPage={setDocumentPage} total={preview.documents.length} />
           </div>
 
           <div className="flex items-center gap-3">
