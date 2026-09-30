@@ -848,10 +848,41 @@ type CommitDocument = {
 };
 type CommitPayload = { profiles: CommitProfile[]; documents: CommitDocument[] };
 
+// One row per source workbook row, carrying enough fields for the
+// post-import "download to verify" export — a plain success/failure
+// status plus the error text for a failed row, so the downloaded sheet
+// can be cross-checked line-for-line against the original upload
+// without anyone having to reopen every crew profile individually.
+export type CommitResultProfileRow = {
+  employeeCode: string;
+  fullName: string;
+  crewCode: string | null;
+  jobRoleName: string | null;
+  employmentStatus: string;
+  nationality: string | null;
+  phone: string | null;
+  email: string | null;
+  homeCountry: string | null;
+  joiningDate: string | null;
+  status: "created" | "failed";
+  error: string | null;
+};
+export type CommitResultDocumentRow = {
+  employeeCode: string;
+  documentTypeName: string | null;
+  documentNumber: string | null;
+  issueDate: string | null;
+  expiryDate: string | null;
+  status: "created" | "failed";
+  error: string | null;
+};
+
 export type CommitResult = {
   createdProfiles: number;
   createdDocuments: number;
   errors: string[];
+  profiles: CommitResultProfileRow[];
+  documents: CommitResultDocumentRow[];
 };
 
 export async function commitCrewRegisterImport(payloadJson: string): Promise<{ result: CommitResult } | { error: string }> {
@@ -881,14 +912,28 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
     return data!.id as string;
   };
 
+  // Pre-fetch id→name lookups so each committed row's export line can show
+  // a human-readable job role / document type name even when that row
+  // referenced an already-existing id rather than a "create new" name —
+  // the commit payload only carries ids in that case.
+  const [jobRolesRes, docTypesRes] = await Promise.all([
+    supabase.from("job_roles").select("id, name").eq("org_id", orgId),
+    supabase.from("document_types").select("id, name").eq("org_id", orgId),
+  ]);
+  const jobRoleNameById = new Map((jobRolesRes.data ?? []).map((r) => [r.id as string, r.name as string]));
+  const docTypeNameById = new Map((docTypesRes.data ?? []).map((r) => [r.id as string, r.name as string]));
+
   const errors: string[] = [];
   const crewIdByCode = new Map<string, string>();
+  const profileRows: CommitResultProfileRow[] = [];
+  const documentRows: CommitResultDocumentRow[] = [];
   let createdProfiles = 0;
   let createdDocuments = 0;
 
   for (const p of payload.profiles) {
+    let jobRoleId: string | null = null;
     try {
-      const jobRoleId = p.jobRoleId ?? (p.newJobRoleName ? await ensure("job_roles", p.newJobRoleName, roleCache, { created_by: userId }) : null);
+      jobRoleId = p.jobRoleId ?? (p.newJobRoleName ? await ensure("job_roles", p.newJobRoleName, roleCache, { created_by: userId }) : null);
       const { data: crewCode, error: codeError } = await supabase.rpc("next_number_range_code", {
         p_org_id: orgId,
         p_entity_type: "crew",
@@ -924,26 +969,89 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
           created_by: userId,
           updated_by: userId,
         })
-        .select("id")
+        .select("id, crew_code")
         .single();
       if (error) throw new Error(error.message);
       crewIdByCode.set(p.employeeCode.toLowerCase(), data!.id as string);
       createdProfiles++;
+      profileRows.push({
+        employeeCode: p.employeeCode,
+        fullName: p.fullName,
+        crewCode: (data!.crew_code as string | null) ?? null,
+        jobRoleName: (jobRoleId ? jobRoleNameById.get(jobRoleId) : null) ?? p.newJobRoleName ?? null,
+        employmentStatus: p.employmentStatus,
+        nationality: p.nationality,
+        phone: p.phone,
+        email: p.email,
+        homeCountry: p.homeCountry,
+        joiningDate: p.joiningDate,
+        status: "created",
+        error: null,
+      });
     } catch (e) {
-      errors.push(`${p.employeeCode} (${p.fullName}): ${e instanceof Error ? e.message : String(e)}`);
+      const message = e instanceof Error ? e.message : String(e);
+      errors.push(`${p.employeeCode} (${p.fullName}): ${message}`);
+      profileRows.push({
+        employeeCode: p.employeeCode,
+        fullName: p.fullName,
+        crewCode: null,
+        jobRoleName: (jobRoleId ? jobRoleNameById.get(jobRoleId) : null) ?? p.newJobRoleName ?? null,
+        employmentStatus: p.employmentStatus,
+        nationality: p.nationality,
+        phone: p.phone,
+        email: p.email,
+        homeCountry: p.homeCountry,
+        joiningDate: p.joiningDate,
+        status: "failed",
+        error: message,
+      });
     }
   }
 
   if (payload.documents.length && !canDocuments) {
     errors.push(`${payload.documents.length} document row(s) were skipped — you don't have permission to manage crew documents.`);
+    for (const d of payload.documents) {
+      documentRows.push({
+        employeeCode: d.employeeCode,
+        documentTypeName: d.newDocumentTypeName ?? (d.documentTypeId ? docTypeNameById.get(d.documentTypeId) ?? null : null),
+        documentNumber: d.documentNumber,
+        issueDate: d.issueDate,
+        expiryDate: d.expiryDate,
+        status: "failed",
+        error: "Skipped — you don't have permission to manage crew documents.",
+      });
+    }
   } else {
     for (const d of payload.documents) {
       const crewId = crewIdByCode.get(d.employeeCode.toLowerCase());
-      if (!crewId) continue; // that profile row failed above; already reported
+      const docTypeNameGuess = d.newDocumentTypeName ?? (d.documentTypeId ? docTypeNameById.get(d.documentTypeId) ?? null : null);
+      if (!crewId) {
+        // that profile row failed above; already reported there
+        documentRows.push({
+          employeeCode: d.employeeCode,
+          documentTypeName: docTypeNameGuess,
+          documentNumber: d.documentNumber,
+          issueDate: d.issueDate,
+          expiryDate: d.expiryDate,
+          status: "failed",
+          error: "Skipped — the crew profile row for this employee code failed to import.",
+        });
+        continue;
+      }
       try {
         const docTypeId = d.documentTypeId ?? (d.newDocumentTypeName ? await ensure("document_types", d.newDocumentTypeName, docTypeCache, { category: "certificate", tracks_number: true, created_by: userId }) : null);
         if (!docTypeId) {
-          errors.push(`${d.employeeCode} / ${d.newDocumentTypeName ?? "document"}: no document type resolved — skipped.`);
+          const msg = `${d.employeeCode} / ${d.newDocumentTypeName ?? "document"}: no document type resolved — skipped.`;
+          errors.push(msg);
+          documentRows.push({
+            employeeCode: d.employeeCode,
+            documentTypeName: docTypeNameGuess,
+            documentNumber: d.documentNumber,
+            issueDate: d.issueDate,
+            expiryDate: d.expiryDate,
+            status: "failed",
+            error: "No document type resolved.",
+          });
           continue;
         }
         const { error } = await supabase.from("crew_documents").insert({
@@ -959,13 +1067,32 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
         });
         if (error) throw new Error(error.message);
         createdDocuments++;
+        documentRows.push({
+          employeeCode: d.employeeCode,
+          documentTypeName: docTypeNameById.get(docTypeId) ?? docTypeNameGuess,
+          documentNumber: d.documentNumber,
+          issueDate: d.issueDate,
+          expiryDate: d.expiryDate,
+          status: "created",
+          error: null,
+        });
       } catch (e) {
-        errors.push(`${d.employeeCode} document: ${e instanceof Error ? e.message : String(e)}`);
+        const message = e instanceof Error ? e.message : String(e);
+        errors.push(`${d.employeeCode} document: ${message}`);
+        documentRows.push({
+          employeeCode: d.employeeCode,
+          documentTypeName: docTypeNameGuess,
+          documentNumber: d.documentNumber,
+          issueDate: d.issueDate,
+          expiryDate: d.expiryDate,
+          status: "failed",
+          error: message,
+        });
       }
     }
   }
 
   revalidatePath("/crew/profiles");
   revalidatePath("/crew/documents");
-  return { result: { createdProfiles, createdDocuments, errors } };
+  return { result: { createdProfiles, createdDocuments, errors, profiles: profileRows, documents: documentRows } };
 }

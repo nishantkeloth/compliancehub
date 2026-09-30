@@ -44,6 +44,7 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
   const [jobRoleResolutions, setJobRoleResolutions] = useState<Record<string, Resolution>>({});
   const [documentTypeResolutions, setDocumentTypeResolutions] = useState<Record<string, Resolution>>({});
   const [result, setResult] = useState<CommitResult | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   function reset() {
     setPreview(null);
@@ -231,6 +232,43 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
     });
   }
 
+  async function downloadResult() {
+    if (!result) return;
+    setDownloading(true);
+    try {
+      const XLSX = await import("xlsx");
+      const profileRows = result.profiles.map((p) => ({
+        "Employee Code": p.employeeCode,
+        "Crew Code": p.crewCode ?? "",
+        "Full Name": p.fullName,
+        "Job Role": p.jobRoleName ?? "",
+        "Employment Status": p.employmentStatus,
+        Nationality: p.nationality ?? "",
+        Phone: p.phone ?? "",
+        Email: p.email ?? "",
+        "Home Country": p.homeCountry ?? "",
+        "Joining Date": p.joiningDate ?? "",
+        Result: p.status === "created" ? "Created" : "Failed",
+        "Error (if any)": p.error ?? "",
+      }));
+      const documentRows = result.documents.map((d) => ({
+        "Employee Code": d.employeeCode,
+        "Document Type": d.documentTypeName ?? "",
+        "Document Number": d.documentNumber ?? "",
+        "Issue Date": d.issueDate ?? "",
+        "Expiry Date": d.expiryDate ?? "",
+        Result: d.status === "created" ? "Created" : "Failed",
+        "Error (if any)": d.error ?? "",
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(profileRows), "Crew Profiles");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(documentRows), "Documents");
+      XLSX.writeFile(wb, `crew-register-import-result-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   function toggleExclude(key: string) {
     setExcluded((prev) => {
       const next = new Set(prev);
@@ -300,9 +338,22 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
               </ul>
             </div>
           )}
-          <button onClick={reset} className="mt-4 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: "var(--ch-navy)" }}>
-            Import another file
-          </button>
+          <div className="flex items-center gap-2 mt-4">
+            <button
+              onClick={downloadResult}
+              disabled={downloading}
+              className="rounded-lg px-4 py-2 text-sm font-semibold border disabled:opacity-50"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}
+            >
+              {downloading ? "Preparing…" : "Download imported data (.xlsx)"}
+            </button>
+            <button onClick={reset} className="rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: "var(--ch-navy)" }}>
+              Import another file
+            </button>
+          </div>
+          <p className="text-xs mt-2" style={{ color: "var(--ch-sub)" }}>
+            Every row from this import — including the new Crew Code, and any that failed with a reason — so you can check it against the original file.
+          </p>
         </div>
       )}
 
