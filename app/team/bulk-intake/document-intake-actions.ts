@@ -8,6 +8,7 @@ import { loadAiContext, runStructured } from "@/lib/ai/router";
 import { crewIntakeDocumentSchema } from "@/lib/ai/crew-intake-schema";
 import { extractDocument } from "@/lib/ai/extract";
 import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
+import { sha256Hex, checkDuplicateFile, checkDuplicateDocumentNumber, validateDocumentDates } from "@/lib/documents/checks";
 
 // Bulk Data Migration — Bulk Document Intake, phase 2 of the flow shown in
 // the Crew Data Migration Flow diagram. Given a folder tree (one
@@ -236,7 +237,7 @@ type CommitFileEntry = {
   confidence: number | null;
 };
 
-export type FolderCommitResult = { attached: number; errors: string[] };
+export type FolderCommitResult = { attached: number; errors: string[]; warnings: string[] };
 
 export async function commitDocumentIntakeFolder(crewId: string, manifestJson: string, formData: FormData): Promise<{ result: FolderCommitResult } | { error: string }> {
   const { supabase, access, userId, orgId } = await requireBulkDocumentAccess();
@@ -258,6 +259,7 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
   const docTypeCache = new Map<string, string>();
   const crewDocumentCache = new Map<string, string>(); // documentTypeId -> crew_documents.id
   const errors: string[] = [];
+  const warnings: string[] = [];
   let attached = 0;
 
   for (const entry of manifest) {
@@ -267,6 +269,10 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
       continue;
     }
     try {
+      const dateCheck = validateDocumentDates(entry.issueDate, entry.expiryDate);
+      if (dateCheck.errors.length) throw new Error(dateCheck.errors.join(" "));
+      for (const w of dateCheck.warnings) warnings.push(`${entry.filename}: ${w}`);
+
       const documentTypeId =
         entry.documentTypeId ??
         (entry.newDocumentTypeName
@@ -344,6 +350,23 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
       const nextVersion = (latest?.[0]?.version_number ?? 0) + 1;
 
       const bytes = new Uint8Array(await file.arrayBuffer());
+      const fileHash = sha256Hex(bytes);
+
+      const dupFile = await checkDuplicateFile(supabase, orgId, crewId, fileHash);
+      if (dupFile) {
+        warnings.push(
+          `${entry.filename}: this exact file was already uploaded${dupFile.documentTypeName ? ` (as ${dupFile.documentTypeName})` : ""} on ${new Date(dupFile.uploadedAt).toLocaleDateString()}.`
+        );
+      }
+      if (entry.documentNumber) {
+        const dupNumber = await checkDuplicateDocumentNumber(supabase, orgId, documentTypeId, entry.documentNumber, crewId);
+        if (dupNumber) {
+          warnings.push(
+            `${entry.filename}: document number "${entry.documentNumber}" is already on file for ${dupNumber.fullName}${dupNumber.employeeCode ? ` (${dupNumber.employeeCode})` : ""}.`
+          );
+        }
+      }
+
       const filePath = `${orgId}/${crewId}/${crewDocumentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
       const { error: upErr } = await supabase.storage.from("crew-documents").upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
       if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
@@ -357,6 +380,7 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
         file_name: file.name,
         content_type: file.type || null,
         file_size_bytes: file.size,
+        file_hash: fileHash,
         document_number: entry.documentNumber,
         issue_date: entry.issueDate,
         expiry_date: entry.expiryDate,
@@ -380,5 +404,5 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
 
   revalidatePath(`/crew/profiles/${crewId}`);
   revalidatePath("/crew/documents");
-  return { result: { attached, errors } };
+  return { result: { attached, errors, warnings } };
 }

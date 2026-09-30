@@ -646,7 +646,8 @@ export default function CrewRegisterImportPanel({ canDocuments }: { canDocuments
                       <td className="px-2 py-1.5">{d.expiryDate ?? "—"}</td>
                       <td className="px-2 py-1.5">
                         {d.errors.map((e, i) => <div key={i} style={{ color: "var(--ch-fail)" }}>{e}</div>)}
-                        {!d.errors.length && <span style={{ color: "var(--ch-pass)" }}>Ready</span>}
+                        {d.warnings.map((w, i) => <div key={i} style={{ color: "#b45309" }}>{w}</div>)}
+                        {!d.errors.length && !d.warnings.length && <span style={{ color: "var(--ch-pass)" }}>Ready</span>}
                       </td>
                     </tr>
                   );

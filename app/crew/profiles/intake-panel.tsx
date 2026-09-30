@@ -33,7 +33,22 @@ function confidencePill(c: number) {
   return pill(`${pct}%`, c >= 0.8 ? "var(--ch-pass-bg)" : c >= 0.5 ? "#fef3e2" : "var(--ch-fail-bg)", c >= 0.8 ? "var(--ch-pass)" : c >= 0.5 ? "#b45309" : "var(--ch-fail)");
 }
 
-type EditDocument = { name: string; id: string | null; create: boolean; method: string; documentNumber: string; issueDate: string; expiryDate: string; confidence: number; source_excerpt: string | null };
+type EditDocument = {
+  name: string;
+  id: string | null;
+  create: boolean;
+  method: string;
+  documentNumber: string;
+  issueDate: string;
+  expiryDate: string;
+  confidence: number;
+  source_excerpt: string | null;
+  // From the server at proposal time (duplicate document number, already
+  // expired) — computed against the AI's original reading, so re-checked
+  // client-side for date logic below rather than trusted blindly once the
+  // reviewer starts editing dates.
+  warnings: string[];
+};
 
 function toEditDocuments(p: MappedIntakeProposal): EditDocument[] {
   return p.documents.map((d) => ({
@@ -46,7 +61,20 @@ function toEditDocuments(p: MappedIntakeProposal): EditDocument[] {
     expiryDate: d.expiry_date ?? "",
     confidence: d.confidence,
     source_excerpt: d.source_excerpt,
+    warnings: d.warnings,
   }));
+}
+
+// Client-side mirror of validateDocumentDates' issue-after-expiry check —
+// recomputed live as the reviewer edits, since the server-side warnings
+// above reflect the AI's original reading and go stale the moment either
+// date is corrected.
+function dateOrderIssue(issueDate: string, expiryDate: string): string | null {
+  if (!issueDate || !expiryDate) return null;
+  const issue = new Date(issueDate);
+  const expiry = new Date(expiryDate);
+  if (Number.isNaN(issue.getTime()) || Number.isNaN(expiry.getTime())) return null;
+  return issue.getTime() > expiry.getTime() ? "Issue date is after the expiry date." : null;
 }
 
 export default function IntakePanel() {
@@ -125,10 +153,11 @@ export default function IntakePanel() {
   };
 
   const unmappedDocs = documents.filter((d) => !d.id && !d.create).map((d) => `document "${d.name}"`);
+  const badDateDocs = documents.filter((d) => dateOrderIssue(d.issueDate, d.expiryDate));
   const openItems = proposal ? proposal.assumptions.map((a, i) => ({ k: `a${i}`, text: a })) : [];
   const unresolved = openItems.filter((o) => !resolved[o.k]).length;
   const needsDuplicateAck = !!proposal && proposal.duplicates.length > 0 && !duplicatesAck;
-  const canSave = !!proposal && !!fullName.trim() && (!jobRoleName || !!jobRoleId || createJobRole) && unmappedDocs.length === 0 && unresolved === 0 && !needsDuplicateAck && !busy;
+  const canSave = !!proposal && !!fullName.trim() && (!jobRoleName || !!jobRoleId || createJobRole) && unmappedDocs.length === 0 && badDateDocs.length === 0 && unresolved === 0 && !needsDuplicateAck && !busy;
 
   const save = () => {
     if (!proposal || !canSave) return;
@@ -449,6 +478,12 @@ export default function IntakePanel() {
                   <button onClick={() => setDocuments((ds) => ds.filter((_, di) => di !== i))} className="ml-auto text-xs" style={{ color: "var(--ch-fail)" }}>✕</button>
                 </div>
                 {d.source_excerpt && <div className="px-2.5 pb-2 text-[11px] italic" style={{ color: "var(--ch-sub)" }}>Source: “{d.source_excerpt}”</div>}
+                {dateOrderIssue(d.issueDate, d.expiryDate) && (
+                  <div className="px-2.5 pb-2 text-[11px]" style={{ color: "var(--ch-fail)" }}>⚠ {dateOrderIssue(d.issueDate, d.expiryDate)}</div>
+                )}
+                {d.warnings.map((w, wi) => (
+                  <div key={wi} className="px-2.5 pb-2 text-[11px]" style={{ color: "#b45309" }}>⚠ {w}</div>
+                ))}
               </div>
             ))}
           </div>
@@ -456,6 +491,11 @@ export default function IntakePanel() {
           {unmappedDocs.length > 0 && (
             <div className="text-xs mb-2 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
               Needs mapping before saving: {unmappedDocs.join("; ")}
+            </div>
+          )}
+          {badDateDocs.length > 0 && (
+            <div className="text-xs mb-2 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+              Fix the issue/expiry dates on: {badDateDocs.map((d) => `"${d.name}"`).join("; ")}
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">

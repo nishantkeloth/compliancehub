@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { sendEmail, companyFromAddress } from "@/lib/email";
 import { readDocumentFields, extractCrewDocumentVersionFields as _extractCrewDocumentVersionFields, type DocumentReadResult } from "./document-ai-actions";
+import { sha256Hex, checkDuplicateFile, checkDuplicateDocumentNumber, validateDocumentDates } from "@/lib/documents/checks";
 
 // Phase 13 follow-up — self-upload link for crew members who don't have
 // a ComplianceHub account. Same random-token pattern already used for
@@ -340,6 +341,24 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
     documentId = createdDoc.id;
   }
 
+  const documentNumber = (formData.get("documentNumber") as string | null)?.trim() || null;
+  const issueDate = (formData.get("issueDate") as string | null)?.trim() || null;
+  const expiryDate = (formData.get("expiryDate") as string | null)?.trim() || null;
+  // Set only when the crew member used Auto-read before submitting — carries
+  // the model's own note (confidence/type-mismatch warnings) into the
+  // version's notes column so a reviewer sees it without re-running the read.
+  const aiNote = (formData.get("aiNote") as string | null)?.trim() || null;
+
+  // Issue-after-expiry is a real data error — the crew member can fix it
+  // themselves before submitting, so this is the one check returned to
+  // them directly. Everything else below goes into the version's notes
+  // for the staff reviewer instead: this is an unauthenticated public
+  // link, so another crew member's name (from a document-number match)
+  // is never echoed back to whoever is submitting.
+  const dateCheck = validateDocumentDates(issueDate, expiryDate);
+  if (dateCheck.errors.length) return { error: dateCheck.errors.join(" ") };
+  const reviewNotes: string[] = [...dateCheck.warnings];
+
   const { data: latest } = await admin
     .from("crew_document_versions")
     .select("version_number")
@@ -349,6 +368,23 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
   const nextVersion = (latest?.[0]?.version_number ?? 0) + 1;
 
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const fileHash = sha256Hex(bytes);
+
+  const dupFile = await checkDuplicateFile(admin, link.org_id, link.crew_id, fileHash);
+  if (dupFile) {
+    reviewNotes.push(
+      `Duplicate check: this exact file was already uploaded${dupFile.documentTypeName ? ` (as ${dupFile.documentTypeName})` : ""} on ${new Date(dupFile.uploadedAt).toLocaleDateString()}.`
+    );
+  }
+  if (documentNumber) {
+    const dupNumber = await checkDuplicateDocumentNumber(admin, link.org_id, documentTypeId, documentNumber, link.crew_id);
+    if (dupNumber) {
+      reviewNotes.push(
+        `Duplicate check: document number "${documentNumber}" is already on file for another crew member (${dupNumber.fullName}${dupNumber.employeeCode ? `, ${dupNumber.employeeCode}` : ""}) — verify before approving.`
+      );
+    }
+  }
+
   const filePath = `${link.org_id}/${link.crew_id}/${documentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
 
   const { error: upErr } = await admin.storage
@@ -356,13 +392,7 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
     .upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
   if (upErr) return { error: `Upload failed: ${upErr.message}` };
 
-  const documentNumber = (formData.get("documentNumber") as string | null)?.trim() || null;
-  const issueDate = (formData.get("issueDate") as string | null)?.trim() || null;
-  const expiryDate = (formData.get("expiryDate") as string | null)?.trim() || null;
-  // Set only when the crew member used Auto-read before submitting — carries
-  // the model's own note (confidence/type-mismatch warnings) into the
-  // version's notes column so a reviewer sees it without re-running the read.
-  const aiNote = (formData.get("aiNote") as string | null)?.trim() || null;
+  const notes = [aiNote, ...reviewNotes].filter(Boolean).join(" ") || null;
 
   const { error: versionErr } = await admin.from("crew_document_versions").insert({
     org_id: link.org_id,
@@ -373,12 +403,13 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
     file_name: file.name,
     content_type: file.type || null,
     file_size_bytes: file.size,
+    file_hash: fileHash,
     document_number: documentNumber,
     issue_date: issueDate,
     expiry_date: expiryDate,
     source: "self_upload",
     upload_link_id: link.id,
-    notes: aiNote,
+    notes,
   });
   if (versionErr) return { error: versionErr.message };
 

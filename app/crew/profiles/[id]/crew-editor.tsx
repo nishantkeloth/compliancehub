@@ -1283,6 +1283,7 @@ function UploadPanel({
   const [saved, setSaved] = useState(false);
   const [savedFileName, setSavedFileName] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const autoRead = async (targetFile?: File) => {
@@ -1331,6 +1332,7 @@ function UploadPanel({
       setError(res.error);
       return;
     }
+    setWarnings(res.warnings ?? []);
     setSavedFileName(file.name);
     setSavedAt(new Date().toISOString());
     setSaved(true);
@@ -1347,6 +1349,13 @@ function UploadPanel({
         >
           <span aria-hidden="true">✓</span> Saved{savedAt ? ` — ${new Date(savedAt).toLocaleString()}` : ""}
         </div>
+        {warnings.length > 0 && (
+          <div className="rounded-lg px-3 py-2 space-y-1" style={{ background: "#fef3e2" }}>
+            {warnings.map((w, i) => (
+              <div key={i} className="text-sm" style={{ color: "#b45309" }}>⚠ {w}</div>
+            ))}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <ReadOnlyField label="File" value={savedFileName ?? "—"} />
           <ReadOnlyField label="Document number" value={documentNumber} />

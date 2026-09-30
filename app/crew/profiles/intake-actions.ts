@@ -8,6 +8,7 @@ import { loadAiContext, runStructured, resolveChain } from "@/lib/ai/router";
 import { crewIntakeSchema, SYSTEM_INTAKE, intakePrompt, INTAKE_PROMPT_VERSION } from "@/lib/ai/crew-intake-schema";
 import { extractDocument } from "@/lib/ai/extract";
 import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
+import { checkDuplicateDocumentNumber, validateDocumentDates } from "@/lib/documents/checks";
 
 // Phase 12 — Onboarding intake from a CV or ID scan. Mirrors the shape of
 // app/crew/matrices/ai-actions.ts (generate → review/map → save), scoped
@@ -67,7 +68,21 @@ export async function intakeAvailability(): Promise<{ enabled: boolean; reason: 
 
 /* ================= Extract ================= */
 
-export type MappedIntakeDocument = { name: string; mapping: Mapping; document_number: string | null; issue_date: string | null; expiry_date: string | null; confidence: number; source_excerpt: string | null };
+export type MappedIntakeDocument = {
+  name: string;
+  mapping: Mapping;
+  document_number: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  confidence: number;
+  source_excerpt: string | null;
+  // Date-logic errors, and a duplicate-document-number match against an
+  // existing crew member of the same document type (no crew id to exclude
+  // yet — this profile hasn't been saved) — surfaced here so the reviewer
+  // sees it before saving, not after.
+  errors: string[];
+  warnings: string[];
+};
 export type DuplicateCandidate = { id: string; full_name: string; employee_code: string | null; score: number };
 export type MappedIntakeProposal = {
   generationId: string;
@@ -176,15 +191,31 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   }
 
   const jobRoleMapping = result.object.job_role_name ? mapName(result.object.job_role_name, "job_role", jobRoles, aliases) : null;
-  const documents: MappedIntakeDocument[] = result.object.documents.map((d) => ({
-    name: d.document_type_name,
-    mapping: mapName(d.document_type_name, "document_type", documentTypes, aliases),
-    document_number: d.document_number,
-    issue_date: d.issue_date,
-    expiry_date: d.expiry_date,
-    confidence: d.confidence,
-    source_excerpt: d.source_excerpt,
-  }));
+  const documents: MappedIntakeDocument[] = await Promise.all(
+    result.object.documents.map(async (d) => {
+      const mapping = mapName(d.document_type_name, "document_type", documentTypes, aliases);
+      const dateCheck = validateDocumentDates(d.issue_date, d.expiry_date);
+      const errors = [...dateCheck.errors];
+      const warnings = [...dateCheck.warnings];
+      if (d.document_number && mapping.targetId) {
+        const dup = await checkDuplicateDocumentNumber(supabase, orgId, mapping.targetId, d.document_number, null);
+        if (dup) {
+          warnings.push(`Document number "${d.document_number}" is already on file for ${dup.fullName}${dup.employeeCode ? ` (${dup.employeeCode})` : ""} — check this isn't a data-entry mistake or the same document attached to two people.`);
+        }
+      }
+      return {
+        name: d.document_type_name,
+        mapping,
+        document_number: d.document_number,
+        issue_date: d.issue_date,
+        expiry_date: d.expiry_date,
+        confidence: d.confidence,
+        source_excerpt: d.source_excerpt,
+        errors,
+        warnings,
+      };
+    })
+  );
 
   return {
     proposal: {
@@ -237,6 +268,13 @@ export async function saveCrewIntake(generationId: string, payloadJson: string) 
   if (!payload.fullName?.trim()) return { error: "Full name is required." };
   if (payload.documents.length > 0 && !can(access, "crew.documents.manage")) {
     return { error: "You don't have permission to save documents — remove them from this intake or ask an admin for the crew documents permission." };
+  }
+  // Validated up front, before the profile (or anything else) is created —
+  // failing partway through the documents loop below would otherwise leave
+  // an orphaned crew profile with some documents saved and others not.
+  for (const d of payload.documents) {
+    const dateCheck = validateDocumentDates(d.issueDate, d.expiryDate);
+    if (dateCheck.errors.length) return { error: dateCheck.errors.join(" ") };
   }
 
   const { data: gen } = await supabase.from("crew_intake_generations").select("id, status").eq("id", generationId).single();

@@ -6,6 +6,7 @@ import { getEffectiveAccess, can } from "@/lib/rbac";
 import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
 import { loadAiContext, runStructured } from "@/lib/ai/router";
 import { crewBulkMappingSchema, SYSTEM_BULK_MAPPING, bulkMappingPrompt } from "@/lib/ai/crew-bulk-mapping-schema";
+import { validateDocumentDates } from "@/lib/documents/checks";
 
 // Bulk Data Migration — Crew Register Import. Deterministic column-mapped
 // parse of the workbook Nishant fills from crew-legacy-import-template.xlsx
@@ -100,6 +101,28 @@ function findSheet(sheetNames: string[], wanted: string): string | null {
   return sheetNames.find((n) => normHeader(n) === target) ?? null;
 }
 
+// Org-wide document-number duplicate check for the Documents tab —
+// prefetched once (not a per-row query; a workbook can carry thousands of
+// document rows) and keyed by document_type_id + lowercased document
+// number, so a row only needs a map lookup once its document type has
+// been resolved. Catches the same real-world mistake the single-document
+// upload paths guard against: the same passport/certificate number
+// attached to two different crew members, whether from a copy-paste error
+// or the same physical document being entered twice under different names.
+type ExistingDocMatch = { crewId: string; fullName: string; employeeCode: string | null };
+function buildDocNumberMap(rows: { crew_id: string; document_type_id: string; document_number: string | null; crew_profiles: unknown }[]): Map<string, ExistingDocMatch> {
+  const map = new Map<string, ExistingDocMatch>();
+  for (const r of rows) {
+    if (!r.document_number || !r.document_number.trim()) continue;
+    const crewRow = Array.isArray(r.crew_profiles) ? r.crew_profiles[0] : r.crew_profiles;
+    const fullName = (crewRow as { full_name?: string } | null)?.full_name ?? "Unknown";
+    const employeeCode = (crewRow as { employee_code?: string | null } | null)?.employee_code ?? null;
+    const key = `${r.document_type_id}::${r.document_number.trim().toLowerCase()}`;
+    map.set(key, { crewId: r.crew_id, fullName, employeeCode });
+  }
+  return map;
+}
+
 /* ================= types ================= */
 
 export type ParsedProfileRow = {
@@ -149,6 +172,7 @@ export type ParsedDocumentRow = {
   expiryDate: string | null;
   notes: string | null;
   errors: string[];
+  warnings: string[];
 };
 
 export type CrewRegisterPreview = {
@@ -183,11 +207,12 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
     return { error: `Couldn't open "${file.name}" — make sure it's a valid .xlsx file and try again.` };
   }
 
-  const [jr, dt, al, existingCrew] = await Promise.all([
+  const [jr, dt, al, existingCrew, existingDocs] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
     supabase.from("document_types").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
     supabase.from("ai_name_aliases").select("entity_type, alias, target_id").eq("org_id", orgId),
     supabase.from("crew_profiles").select("id, full_name, employee_code").eq("org_id", orgId),
+    supabase.from("crew_documents").select("crew_id, document_type_id, document_number, crew_profiles(full_name, employee_code)").eq("org_id", orgId).eq("is_active", true),
   ]);
   const jobRoles = jr.data ?? [];
   const documentTypes = dt.data ?? [];
@@ -195,11 +220,12 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
   const existing = existingCrew.data ?? [];
   const existingByCode = new Map(existing.filter((c) => c.employee_code).map((c) => [String(c.employee_code).trim().toLowerCase(), c]));
   const existingByName = new Map(existing.map((c) => [String(c.full_name).trim().toLowerCase(), c]));
+  const docNumberMap = buildDocNumberMap((existingDocs.data ?? []) as Parameters<typeof buildDocNumberMap>[0]);
 
   const profileSheetName = findSheet(wb.SheetNames, "Crew Profile");
   const documentsSheetName = findSheet(wb.SheetNames, "Documents");
   if (!profileSheetName || !documentsSheetName) {
-    return parseWithAiMapping({ supabase, orgId, userId, file, wb, XLSX, jobRoles, documentTypes, aliases, existingByCode, existingByName });
+    return parseWithAiMapping({ supabase, orgId, userId, file, wb, XLSX, jobRoles, documentTypes, aliases, existingByCode, existingByName, docNumberMap });
   }
 
   const profileRows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[profileSheetName], { header: 1, defval: null, raw: true }) as unknown[][];
@@ -377,6 +403,7 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
 
     const rowNumber = r + 1;
     const errors: string[] = [];
+    const warnings: string[] = [];
     if (!employeeCode) errors.push("Employee Code is required.");
     else if (!validProfileCodes.has(employeeCode.toLowerCase())) errors.push(`Employee Code "${employeeCode}" wasn't found on the Crew Profile tab (or that row has errors).`);
     if (!documentTypeName) errors.push("Document Type is required.");
@@ -392,17 +419,31 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
     if (issue.invalid) errors.push("Issue Date isn't a recognizable date.");
     const expiry = cellDate(row[dcol.expiryDate]);
     if (expiry.invalid) errors.push("Expiry Date isn't a recognizable date.");
+    if (!issue.invalid && !expiry.invalid) {
+      const dateCheck = validateDocumentDates(issue.value, expiry.value);
+      errors.push(...dateCheck.errors);
+      warnings.push(...dateCheck.warnings);
+    }
+
+    const documentNumber = cellStr(row[dcol.documentNumber]);
+    if (documentNumber && mapping?.targetId) {
+      const dup = docNumberMap.get(`${mapping.targetId}::${documentNumber.trim().toLowerCase()}`);
+      if (dup && (!employeeCode || dup.crewId !== existingByCode.get(employeeCode.toLowerCase())?.id)) {
+        warnings.push(`Document number "${documentNumber}" is already on file for ${dup.fullName}${dup.employeeCode ? ` (${dup.employeeCode})` : ""} — check this isn't a data-entry mistake or the same document attached to two people.`);
+      }
+    }
 
     documents.push({
       rowNumber,
       employeeCode: employeeCode ?? "",
       documentTypeName: documentTypeName ?? "",
       mapping,
-      documentNumber: cellStr(row[dcol.documentNumber]),
+      documentNumber,
       issueDate: issue.value,
       expiryDate: expiry.value,
       notes: cellStr(row[dcol.notes]),
       errors,
+      warnings,
     });
   }
 
@@ -525,8 +566,9 @@ async function parseWithAiMapping(ctx: {
   aliases: Alias[];
   existingByCode: Map<string, { id: string; full_name: unknown; employee_code: unknown }>;
   existingByName: Map<string, { id: string; full_name: unknown; employee_code: unknown }>;
+  docNumberMap: Map<string, ExistingDocMatch>;
 }): Promise<{ preview: CrewRegisterPreview } | { error: string }> {
-  const { supabase, orgId, userId, file, wb, XLSX, jobRoles, documentTypes, aliases, existingByCode, existingByName } = ctx;
+  const { supabase, orgId, userId, file, wb, XLSX, jobRoles, documentTypes, aliases, existingByCode, existingByName, docNumberMap } = ctx;
 
   if (!wb.SheetNames.length) return { error: `"${file.name}" doesn't have any sheets.` };
 
@@ -783,8 +825,20 @@ async function parseWithAiMapping(ctx: {
         const expiry = cellDate(row[d.expiryIdx]);
         if (!documentNumber && !issue.value && !expiry.value && !issue.invalid && !expiry.invalid) continue; // nothing on file for this person/doc type
         const docErrors: string[] = [];
+        const docWarnings: string[] = [];
         if (issue.invalid) docErrors.push("Issue Date isn't a recognizable date.");
         if (expiry.invalid) docErrors.push("Expiry Date isn't a recognizable date.");
+        if (!issue.invalid && !expiry.invalid) {
+          const dateCheck = validateDocumentDates(issue.value, expiry.value);
+          docErrors.push(...dateCheck.errors);
+          docWarnings.push(...dateCheck.warnings);
+        }
+        if (documentNumber && d.mapping.targetId) {
+          const dup = docNumberMap.get(`${d.mapping.targetId}::${documentNumber.trim().toLowerCase()}`);
+          if (dup && dup.crewId !== matchedId) {
+            docWarnings.push(`Document number "${documentNumber}" is already on file for ${dup.fullName}${dup.employeeCode ? ` (${dup.employeeCode})` : ""} — check this isn't a data-entry mistake or the same document attached to two people.`);
+          }
+        }
         documents.push({
           rowNumber,
           employeeCode: finalEmployeeCode,
@@ -795,6 +849,7 @@ async function parseWithAiMapping(ctx: {
           expiryDate: expiry.value,
           notes: null,
           errors: docErrors,
+          warnings: docWarnings,
         });
       }
     }

@@ -77,6 +77,7 @@ type FolderState = {
   error?: string;
   rows: FileRowState[];
   commitErrors?: string[];
+  commitWarnings?: string[];
   attached?: number;
   // Set while classifying/committing in batches, so the panel can show
   // "N of M files" instead of one long, silent wait.
@@ -247,6 +248,7 @@ export default function DocumentIntakePanel() {
       let totalAttached = 0;
       let doneCount = 0;
       const allErrors: string[] = [];
+      const allWarnings: string[] = [];
       for (const chunk of fileBatches) {
         doneCount += chunk.length;
         const label = `Uploading ${doneCount} of ${includedFiles.length} files…`;
@@ -269,8 +271,11 @@ export default function DocumentIntakePanel() {
         } else {
           totalAttached += res.result.attached;
           allErrors.push(...res.result.errors);
+          allWarnings.push(...res.result.warnings);
         }
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, attached: totalAttached, commitErrors: allErrors } : x)));
+        setFolders((prev) =>
+          (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, attached: totalAttached, commitErrors: allErrors, commitWarnings: allWarnings } : x))
+        );
       }
 
       setFolders((prev) =>
@@ -285,6 +290,7 @@ export default function DocumentIntakePanel() {
   const unmatchedFolderCount = folders ? folders.filter((f) => !f.crewId).length : 0;
   const totalAttached = folders ? folders.reduce((n, f) => n + (f.attached ?? 0), 0) : 0;
   const totalCommitErrors = folders ? folders.flatMap((f) => f.commitErrors ?? []) : [];
+  const totalCommitWarnings = folders ? folders.flatMap((f) => f.commitWarnings ?? []) : [];
 
   return (
     <div className="space-y-5">
@@ -372,6 +378,16 @@ export default function DocumentIntakePanel() {
                   <div className="text-xs font-semibold mb-1" style={{ color: "var(--ch-fail)" }}>{totalCommitErrors.length} problem{totalCommitErrors.length === 1 ? "" : "s"}:</div>
                   <ul className="text-xs list-disc pl-4 space-y-0.5" style={{ color: "var(--ch-sub)" }}>
                     {totalCommitErrors.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </div>
+              )}
+              {totalCommitWarnings.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs font-semibold mb-1" style={{ color: "#b45309" }}>
+                    {totalCommitWarnings.length} warning{totalCommitWarnings.length === 1 ? "" : "s"} — attached, but worth a look:
+                  </div>
+                  <ul className="text-xs list-disc pl-4 space-y-0.5" style={{ color: "#92400e" }}>
+                    {totalCommitWarnings.map((w, i) => <li key={i}>{w}</li>)}
                   </ul>
                 </div>
               )}

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { sha256Hex, checkDuplicateFile, checkDuplicateDocumentNumber, validateDocumentDates } from "@/lib/documents/checks";
 
 async function requireCrewManage() {
   const supabase = await createClient();
@@ -469,6 +470,27 @@ export async function uploadCrewDocumentVersion(documentId: string, crewId: stri
     return { error: `File is too large (max ${Math.round(MAX_DOCUMENT_FILE_BYTES / 1024 / 1024)} MB).` };
   }
 
+  const documentNumber = optStr(formData, "documentNumber");
+  const issueDate = optStr(formData, "issueDate");
+  const expiryDate = optStr(formData, "expiryDate");
+  const source = optStr(formData, "source") || "manual";
+
+  // Issue-after-expiry is a real data error — block before anything is
+  // written. Everything else below (duplicate file, duplicate document
+  // number elsewhere, already-expired) is a warning: the upload still
+  // goes through (insert-only version history, never blocked on a
+  // judgment call), it just comes back flagged for the uploader to see.
+  const dateCheck = validateDocumentDates(issueDate, expiryDate);
+  if (dateCheck.errors.length) return { error: dateCheck.errors.join(" ") };
+  const warnings: string[] = [...dateCheck.warnings];
+
+  const { data: docRow, error: docErr } = await supabase
+    .from("crew_documents")
+    .select("document_type_id")
+    .eq("id", documentId)
+    .single();
+  if (docErr || !docRow) return { error: "Document record not found." };
+
   const { data: latest, error: latestErr } = await supabase
     .from("crew_document_versions")
     .select("version_number")
@@ -479,17 +501,29 @@ export async function uploadCrewDocumentVersion(documentId: string, crewId: stri
   const nextVersion = (latest?.[0]?.version_number ?? 0) + 1;
 
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const fileHash = sha256Hex(bytes);
+
+  const dupFile = await checkDuplicateFile(supabase, access.orgId!, crewId, fileHash);
+  if (dupFile) {
+    warnings.push(
+      `This exact file was already uploaded${dupFile.documentTypeName ? ` (as ${dupFile.documentTypeName})` : ""} on ${new Date(dupFile.uploadedAt).toLocaleDateString()} — check this isn't an accidental re-upload.`
+    );
+  }
+  if (documentNumber) {
+    const dupNumber = await checkDuplicateDocumentNumber(supabase, access.orgId!, docRow.document_type_id as string, documentNumber, crewId);
+    if (dupNumber) {
+      warnings.push(
+        `Document number "${documentNumber}" is already on file for ${dupNumber.fullName}${dupNumber.employeeCode ? ` (${dupNumber.employeeCode})` : ""} — check this isn't a data-entry mistake or the same document attached to two people.`
+      );
+    }
+  }
+
   const filePath = `${access.orgId}/${crewId}/${documentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
 
   const { error: upErr } = await supabase.storage
     .from("crew-documents")
     .upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
   if (upErr) return { error: `Upload failed: ${upErr.message}` };
-
-  const documentNumber = optStr(formData, "documentNumber");
-  const issueDate = optStr(formData, "issueDate");
-  const expiryDate = optStr(formData, "expiryDate");
-  const source = optStr(formData, "source") || "manual";
 
   const { error: versionErr } = await supabase.from("crew_document_versions").insert({
     org_id: access.orgId,
@@ -500,6 +534,7 @@ export async function uploadCrewDocumentVersion(documentId: string, crewId: stri
     file_name: file.name,
     content_type: file.type || null,
     file_size_bytes: file.size,
+    file_hash: fileHash,
     document_number: documentNumber || null,
     issue_date: issueDate || null,
     expiry_date: expiryDate || null,
@@ -517,7 +552,7 @@ export async function uploadCrewDocumentVersion(documentId: string, crewId: stri
 
   revalidateDetail(crewId);
   revalidateMatrix();
-  return { versionNumber: nextVersion };
+  return { versionNumber: nextVersion, warnings };
 }
 
 async function requireDocumentsView() {
