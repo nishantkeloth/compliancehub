@@ -67,10 +67,17 @@ export async function createCrewProfile(formData: FormData) {
   const fullName = str(formData, "fullName");
   if (!fullName) return { error: "Full name is required." };
 
+  const { data: crewCode, error: codeError } = await supabase.rpc("next_number_range_code", {
+    p_org_id: access.orgId,
+    p_entity_type: "crew",
+  });
+  if (codeError) return { error: `Could not assign a crew code: ${codeError.message}` };
+
   const { data, error } = await supabase
     .from("crew_profiles")
     .insert({
       org_id: access.orgId,
+      crew_code: crewCode,
       full_name: fullName,
       employee_code: optStr(formData, "employeeCode"),
       primary_job_role_id: optStr(formData, "primaryJobRoleId"),

@@ -40,6 +40,7 @@ import { NATIONALITIES } from "@/lib/nationalities";
 
 type Crew = {
   id: string;
+  crew_code: string | null;
   employee_code: string | null;
   full_name: string;
   photo_url: string | null;
@@ -170,8 +171,12 @@ function SummaryPanel({ crew, jobRoles, assignments }: { crew: Crew; jobRoles: R
       </div>
       <div className="min-w-0 xl:w-full">
         <div className="font-bold text-base truncate" style={{ color: "var(--ch-ink)" }}>{crew.full_name}</div>
-        {crew.employee_code && (
-          <div className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>{crew.employee_code}</div>
+        {(crew.crew_code || crew.employee_code) && (
+          <div className="text-xs mb-2 font-mono" style={{ color: "var(--ch-sub)" }}>
+            {crew.crew_code}
+            {crew.crew_code && crew.employee_code ? " · " : ""}
+            {crew.employee_code}
+          </div>
         )}
         <span
           className="inline-block text-xs font-bold uppercase rounded-full px-2.5 py-1"
@@ -429,6 +434,19 @@ function GeneralForm({
     <div className={cardCls} style={cardStyle}>
       <div className={labelCls} style={labelStyle}>Identity</div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
+        {crew.crew_code && (
+          <label className={lbl} style={lblStyle}>
+            Crew code
+            <input
+              className={`${inputCls} w-full mt-1 font-mono`}
+              style={{ ...inputStyle, background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}
+              value={crew.crew_code}
+              disabled
+              readOnly
+              title="Auto-assigned — configure prefix/numbering under Team → Number Ranges."
+            />
+          </label>
+        )}
         <label className={lbl} style={lblStyle}>
           Full name
           <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={fullName} onChange={(e) => { setFullName(e.target.value); setSaved(false); }} disabled={disabled} />

@@ -5,7 +5,7 @@ import { updateNumberRange } from "./actions";
 
 type Range = {
   id: string;
-  entity_type: "client" | "contractor" | "contract" | "project" | "crew_matrix" | "mobilization" | "offshore_site";
+  entity_type: "client" | "contractor" | "contract" | "project" | "crew_matrix" | "mobilization" | "offshore_site" | "crew";
   prefix: string;
   padding_length: number;
   current_number: number;
@@ -48,6 +48,11 @@ const ENTITY_LABELS: Record<Range["entity_type"], { title: string; help: string;
     help: "Assigned automatically when a new Offshore Site is created — from Crew Setup, the New Crew Matrix screen, or the matrix's Site tab.",
     defaultPrefix: "SIT",
   },
+  crew: {
+    title: "Crew Codes",
+    help: "Assigned automatically when a new crew member is created — via Add crew member, AI intake, or bulk Excel import. Separate from Employee Code, which stays a manual, optional field.",
+    defaultPrefix: "CRW",
+  },
 };
 
 function nextCodePreview(prefix: string, paddingLength: number, currentNumber: number) {
@@ -65,11 +70,12 @@ export default function NumberRangesManager({ ranges }: { ranges: Range[] }) {
     crew_matrix: ranges.find((r) => r.entity_type === "crew_matrix"),
     mobilization: ranges.find((r) => r.entity_type === "mobilization"),
     offshore_site: ranges.find((r) => r.entity_type === "offshore_site"),
+    crew: ranges.find((r) => r.entity_type === "crew"),
   };
 
   return (
     <div className="space-y-4">
-      {(["client", "contractor", "contract", "project", "crew_matrix", "mobilization", "offshore_site"] as const).map((entityType) => (
+      {(["client", "contractor", "contract", "project", "crew_matrix", "mobilization", "offshore_site", "crew"] as const).map((entityType) => (
         <RangeCard key={entityType} entityType={entityType} range={byType[entityType]} />
       ))}
     </div>

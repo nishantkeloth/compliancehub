@@ -5,7 +5,7 @@ import { getEffectiveAccess, can } from "@/lib/rbac";
 import CrewEditor from "./crew-editor";
 
 const BASE_FIELDS =
-  "id, org_id, employee_code, full_name, photo_url, employment_status, nationality, date_of_birth, gender, phone, email, home_country, current_location, nearest_airport, primary_job_role_id, employment_type, joining_date, notice_period_days, availability_date, default_rotation_template_id, emergency_contact_name, emergency_contact_phone, notes, linked_profile_id, job_roles(name), rotation_templates(name)";
+  "id, org_id, crew_code, employee_code, full_name, photo_url, employment_status, nationality, date_of_birth, gender, phone, email, home_country, current_location, nearest_airport, primary_job_role_id, employment_type, joining_date, notice_period_days, availability_date, default_rotation_template_id, emergency_contact_name, emergency_contact_phone, notes, linked_profile_id, job_roles(name), rotation_templates(name)";
 
 export default async function CrewProfileDetailPage({
   params,

@@ -35,7 +35,7 @@ export default async function CrewProfilesPage({
 
   let query = supabase
     .from("crew_profiles")
-    .select("id, employee_code, full_name, employment_status, nationality, availability_date, photo_url, job_roles(name)")
+    .select("id, crew_code, employee_code, full_name, employment_status, nationality, availability_date, photo_url, job_roles(name)")
     .eq("org_id", access.orgId)
     .order("full_name");
 
@@ -121,6 +121,7 @@ export default async function CrewProfilesPage({
                   <div>
                     <div className="font-semibold text-sm" style={{ color: "var(--ch-ink)" }}>
                       {c.full_name}
+                      {c.crew_code && <span className="text-xs ml-2 font-mono" style={{ color: "var(--ch-navy)" }}>{c.crew_code}</span>}
                       {c.employee_code && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{c.employee_code}</span>}
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: "var(--ch-sub)" }}>

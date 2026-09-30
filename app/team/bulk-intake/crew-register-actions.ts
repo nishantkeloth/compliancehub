@@ -889,10 +889,16 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
   for (const p of payload.profiles) {
     try {
       const jobRoleId = p.jobRoleId ?? (p.newJobRoleName ? await ensure("job_roles", p.newJobRoleName, roleCache, { created_by: userId }) : null);
+      const { data: crewCode, error: codeError } = await supabase.rpc("next_number_range_code", {
+        p_org_id: orgId,
+        p_entity_type: "crew",
+      });
+      if (codeError) throw new Error(`Could not assign a crew code: ${codeError.message}`);
       const { data, error } = await supabase
         .from("crew_profiles")
         .insert({
           org_id: orgId,
+          crew_code: crewCode,
           employee_code: p.employeeCode,
           full_name: p.fullName,
           primary_job_role_id: jobRoleId,

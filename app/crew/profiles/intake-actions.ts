@@ -264,10 +264,17 @@ export async function saveCrewIntake(generationId: string, payloadJson: string) 
     const jobRoleId = payload.jobRoleId ?? (payload.newJobRoleName ? await ensure("job_roles", payload.newJobRoleName, createdRoles, { created_by: userId }) : null);
     if (payload.jobRoleAlias && payload.jobRoleId) aliasRows.push({ org_id: orgId, entity_type: "job_role", alias: payload.jobRoleAlias, target_id: payload.jobRoleId, created_by: userId });
 
+    const { data: crewCode, error: codeError } = await supabase.rpc("next_number_range_code", {
+      p_org_id: orgId,
+      p_entity_type: "crew",
+    });
+    if (codeError) return { error: `Could not assign a crew code: ${codeError.message}` };
+
     const { data: profile, error: profileError } = await supabase
       .from("crew_profiles")
       .insert({
         org_id: orgId,
+        crew_code: crewCode,
         full_name: payload.fullName.trim(),
         employee_code: payload.employeeCode,
         primary_job_role_id: jobRoleId,
