@@ -48,9 +48,17 @@ export default async function CrewProfilesPage({
 
   const { data: crew } = await query;
 
-  const [jobRolesRes] = await Promise.all([
+  // Org-wide headcount, independent of the search/status filter above —
+  // a head=true count-only query so it stays cheap as the register
+  // grows. Deliberately unfiltered: this badge answers "how many crew do
+  // we have", not "how many rows are on screen" (the filtered list below
+  // already answers that one).
+  const isFiltered = !!(q?.trim() || status?.trim());
+  const [jobRolesRes, totalCountRes] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
+    supabase.from("crew_profiles").select("id", { count: "exact", head: true }).eq("org_id", access.orgId),
   ]);
+  const totalCrew = totalCountRes.count ?? 0;
 
   return (
     <>
@@ -59,12 +67,19 @@ export default async function CrewProfilesPage({
         on this and come next.
       </p>
 
-      {canManage && (
+      <div className="flex items-start gap-2 flex-wrap justify-between">
         <div className="flex items-start gap-2 flex-wrap">
-          <NewCrewForm jobRoles={jobRolesRes.data ?? []} />
-          {canIntake && <IntakePanel />}
+          {canManage && <NewCrewForm jobRoles={jobRolesRes.data ?? []} />}
+          {canManage && canIntake && <IntakePanel />}
         </div>
-      )}
+        <span
+          className="text-xs font-semibold px-3 py-1.5 rounded-full border"
+          style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)", background: "var(--ch-pass-bg, #f3f4f6)" }}
+        >
+          {totalCrew} crew member{totalCrew === 1 ? "" : "s"}
+          {isFiltered && ` · ${(crew ?? []).length} matching filter`}
+        </span>
+      </div>
 
       <form method="get" className="flex items-center gap-2 flex-wrap mt-5 mb-4">
         <input
