@@ -67,11 +67,7 @@ export default async function CrewProfilesPage({
         on this and come next.
       </p>
 
-      <div className="flex items-start gap-2 flex-wrap justify-between">
-        <div className="flex items-start gap-2 flex-wrap">
-          {canManage && <NewCrewForm jobRoles={jobRolesRes.data ?? []} />}
-          {canManage && canIntake && <IntakePanel />}
-        </div>
+      <div className="flex items-start gap-2 flex-wrap">
         <span
           className="text-xs font-semibold px-3 py-1.5 rounded-full border"
           style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)", background: "var(--ch-pass-bg, #f3f4f6)" }}
@@ -79,6 +75,8 @@ export default async function CrewProfilesPage({
           {totalCrew} crew member{totalCrew === 1 ? "" : "s"}
           {isFiltered && ` · ${(crew ?? []).length} matching filter`}
         </span>
+        {canManage && <NewCrewForm jobRoles={jobRolesRes.data ?? []} />}
+        {canManage && canIntake && <IntakePanel />}
       </div>
 
       <form method="get" className="flex items-center gap-2 flex-wrap mt-5 mb-4">
