@@ -87,7 +87,17 @@ type FolderState = {
 function relativeFolderName(file: File): string {
   const rel = (file as unknown as { webkitRelativePath?: string }).webkitRelativePath || file.name;
   const parts = rel.split("/").filter(Boolean);
-  return parts.length >= 2 ? parts[parts.length - 2] : "(ungrouped)";
+  // parts[0] is the folder the user selected itself; parts[1] is the crew
+  // member's own subfolder immediately under it — group every file by
+  // that name, no matter how many levels it's nested beneath (a crew
+  // folder split into per-document-type subfolders, e.g.
+  // "<Crew Name>/Training Certificate/file.pdf", is just as valid as one
+  // flat "<Crew Name>/file.pdf" folder — both attribute to the same
+  // person). Using the file's *immediate* parent instead (the old
+  // parts[parts.length - 2]) broke exactly that case: a file one level
+  // deeper had its document-type folder picked up as the "crew folder",
+  // not the crew member's own folder above it.
+  return parts.length >= 3 ? parts[1] : "(ungrouped)";
 }
 
 function rowFromClassified(c: ClassifiedFile): FileRowState {
