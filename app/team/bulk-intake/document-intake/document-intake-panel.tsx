@@ -342,8 +342,8 @@ export default function DocumentIntakePanel() {
             <div className="space-y-1.5">
               {folders.map((f) => (
                 <div key={f.folderName} className="flex items-center gap-2 text-sm">
-                  <span className="w-52 truncate" title={f.folderName}>{f.folderName}</span>
-                  <span className="text-xs w-16" style={{ color: "var(--ch-sub)" }}>{f.files.length} file{f.files.length === 1 ? "" : "s"}</span>
+                  <span className="w-52 truncate font-medium" style={{ color: "var(--ch-navy)" }} title={f.folderName}>{f.folderName}</span>
+                  <span className="text-xs w-16" style={{ color: "#4b5563" }}>{f.files.length} file{f.files.length === 1 ? "" : "s"}</span>
                   <select className={inputCls} style={inputStyle} value={f.crewId ?? ""} onChange={(e) => setFolderCrew(f.folderName, e.target.value)}>
                     <option value="">— no match, choose one —</option>
                     {master?.crew.map((c) => (
