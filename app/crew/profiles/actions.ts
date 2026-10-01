@@ -358,6 +358,28 @@ export async function deleteCrewAssignment(id: string, crewId: string) {
   return {};
 }
 
+/* ---------------- Crew Staffing Plan reservations (soft lock) ---------------- */
+
+// A crew profile's own counterpart to unreserveCandidate in
+// app/crew/matrices/[id]/staffing-actions.ts (same soft-release pattern,
+// migration 0026) — lets Unreserve be clicked from the profile's
+// Assignment tab, where a reservation is now also surfaced, without an
+// import across route segments. Gated on crew.manage, same as that
+// function, so it succeeds under RLS for the same people who could
+// already reserve/unreserve from the Staffing Plan itself.
+export async function releaseCrewReservation(reservationId: string, crewId: string, crewMatrixId?: string) {
+  const { supabase, userId } = await requireCrewManage();
+  const { error } = await supabase
+    .from("crew_matrix_line_reservations")
+    .update({ released_at: new Date().toISOString(), released_by: userId, updated_at: new Date().toISOString() })
+    .eq("id", reservationId)
+    .is("released_at", null);
+  if (error) return { error: error.message };
+  revalidateDetail(crewId);
+  if (crewMatrixId) revalidatePath(`/crew/matrices/${crewMatrixId}`);
+  return {};
+}
+
 /* ---------------- Crew documents & certifications ---------------- */
 
 // Custom-field values are submitted as a single JSON-encoded object (the

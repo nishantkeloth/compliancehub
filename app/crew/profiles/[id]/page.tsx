@@ -32,6 +32,10 @@ export default async function CrewProfileDetailPage({
   // crew.manage AND mobilization.emergency_override, plus a reason
   // (enforced in assignCrewToSite) — see claude/phase4-readiness-compliance.md.
   const canEmergencyAssign = canManage && can(access, "mobilization.emergency_override");
+  // Reserve/soft-lock (migration 0026) is visible wherever the Staffing
+  // Plan shows it — gated on crew.matrix.view there, so the same gate
+  // applies here rather than canManage, which is stricter.
+  const canViewReservations = can(access, "crew.matrix.view");
 
   const fields =
     BASE_FIELDS +
@@ -56,6 +60,7 @@ export default async function CrewProfileDetailPage({
     crewListRes,
     customFieldDefinitionsRes,
     documentVersionCountsRes,
+    reservationsRes,
   ] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -68,7 +73,9 @@ export default async function CrewProfileDetailPage({
     supabase.from("offshore_sites").select("id, name").eq("org_id", access.orgId).eq("status", "active").order("name"),
     supabase
       .from("crew_assignments")
-      .select("id, offshore_site_id, start_date, end_date, notes, offshore_sites(name, code)")
+      .select(
+        "id, offshore_site_id, start_date, end_date, assignment_status, notes, mobilization_request_id, offshore_sites(name, code), mobilization_requests(mobilization_number)"
+      )
       .eq("crew_id", id)
       .order("start_date", { ascending: false }),
     canViewDocuments
@@ -106,6 +113,18 @@ export default async function CrewProfileDetailPage({
     canViewDocuments
       ? supabase.from("crew_document_versions").select("crew_document_id").eq("crew_id", id)
       : Promise.resolve({ data: [] }),
+    // Reserve/soft-lock history (migration 0026) — every reservation this
+    // crew member has ever held, active or released, so the profile can
+    // show both "currently reserved for X" and the full trail of holds.
+    canViewReservations
+      ? supabase
+          .from("crew_matrix_line_reservations")
+          .select(
+            "id, crew_matrix_id, crew_matrix_line_id, notes, expected_ready_date, reserved_by, reserved_at, released_at, released_by, crew_matrices(matrix_number, title), crew_matrix_lines(line_number, job_roles(name))"
+          )
+          .eq("crew_id", id)
+          .order("reserved_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
   ]);
 
   const documentVersionCounts: Record<string, number> = {};
@@ -113,6 +132,42 @@ export default async function CrewProfileDetailPage({
     const key = (row as { crew_document_id: string }).crew_document_id;
     documentVersionCounts[key] = (documentVersionCounts[key] ?? 0) + 1;
   }
+
+  // Reserved/released-by names — a small separate lookup, same pattern as
+  // the Staffing Plan page, since profiles isn't a declared FK target of
+  // crew_matrix_line_reservations.
+  const reservationRows = reservationsRes.data ?? [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase rows, same pattern as the rest of this file
+  const reserverIds = Array.from(
+    new Set(
+      reservationRows.flatMap((r: any) => [r.reserved_by as string | null, r.released_by as string | null]).filter((v): v is string => !!v)
+    )
+  );
+  const { data: reserverProfiles } = reserverIds.length
+    ? await supabase.from("profiles").select("id, full_name").in("id", reserverIds)
+    : { data: [] };
+  const reserverNameById = new Map<string, string>();
+  for (const p of reserverProfiles ?? []) reserverNameById.set((p as { id: string }).id, (p as { full_name: string }).full_name);
+
+  const reservations = reservationRows.map((r: any) => {
+    const matrixRel = (Array.isArray(r.crew_matrices) ? r.crew_matrices[0] : r.crew_matrices) as { matrix_number?: string | null; title?: string | null } | null;
+    const lineRel = (Array.isArray(r.crew_matrix_lines) ? r.crew_matrix_lines[0] : r.crew_matrix_lines) as { line_number?: number | null; job_roles?: unknown } | null;
+    const roleRel = lineRel ? ((Array.isArray(lineRel.job_roles) ? lineRel.job_roles[0] : lineRel.job_roles) as { name?: string } | null) : null;
+    return {
+      id: r.id as string,
+      crewMatrixId: r.crew_matrix_id as string,
+      notes: r.notes as string | null,
+      expectedReadyDate: r.expected_ready_date as string | null,
+      reservedAt: r.reserved_at as string,
+      releasedAt: r.released_at as string | null,
+      reservedByLabel: r.reserved_by ? reserverNameById.get(r.reserved_by as string) ?? "another user" : "another user",
+      releasedByLabel: r.released_by ? reserverNameById.get(r.released_by as string) ?? "another user" : null,
+      matrixNumber: (matrixRel?.matrix_number as string | null) ?? null,
+      matrixTitle: (matrixRel?.title as string | null) ?? null,
+      lineNumber: (lineRel?.line_number as number | null) ?? null,
+      roleName: roleRel?.name ?? null,
+    };
+  });
 
   return (
     <>
@@ -152,6 +207,7 @@ export default async function CrewProfileDetailPage({
         crewList={(crewListRes.data ?? []).map((c: any) => ({ id: c.id, name: c.full_name }))}
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
         documentVersionCounts={documentVersionCounts}
+        reservations={reservations}
       />
     </>
   );

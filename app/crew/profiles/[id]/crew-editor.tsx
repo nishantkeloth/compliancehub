@@ -16,6 +16,7 @@ import {
   removeCrewSecondaryRole,
   assignCrewToSite,
   deleteCrewAssignment,
+  releaseCrewReservation,
   createCrewDocument,
   updateCrewDocument,
   deactivateCrewDocument,
@@ -75,8 +76,25 @@ type Assignment = {
   offshore_site_id: string;
   start_date: string;
   end_date: string | null;
+  assignment_status: string;
   notes: string | null;
+  mobilization_request_id: string | null;
   offshore_sites: { name: string; code: string | null } | { name: string; code: string | null }[] | null;
+  mobilization_requests: { mobilization_number: string | null } | { mobilization_number: string | null }[] | null;
+};
+type Reservation = {
+  id: string;
+  crewMatrixId: string;
+  notes: string | null;
+  expectedReadyDate: string | null;
+  reservedAt: string;
+  releasedAt: string | null;
+  reservedByLabel: string;
+  releasedByLabel: string | null;
+  matrixNumber: string | null;
+  matrixTitle: string | null;
+  lineNumber: number | null;
+  roleName: string | null;
 };
 type DocumentType = {
   id: string;
@@ -231,6 +249,7 @@ export default function CrewEditor({
   crewList,
   customFieldDefinitions,
   documentVersionCounts,
+  reservations,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -252,6 +271,7 @@ export default function CrewEditor({
   crewList: Ref[];
   customFieldDefinitions: CustomFieldDefinition[];
   documentVersionCounts: Record<string, number>;
+  reservations: Reservation[];
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -311,6 +331,7 @@ export default function CrewEditor({
           crewId={crew.id}
           offshoreSites={offshoreSites}
           assignments={assignments}
+          reservations={reservations}
           canManage={canManage}
           canEmergencyAssign={canEmergencyAssign}
           onChanged={refresh}
@@ -847,10 +868,35 @@ function SecondaryRolesSection({
 
 /* ================= Vessel assignment ================= */
 
+const ASSIGNMENT_STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  extended: "Extended",
+  signed_off: "Signed off",
+  cancelled: "Cancelled",
+};
+const ASSIGNMENT_STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
+  active: { bg: "#dcfce7", fg: "#15803d" },
+  extended: { bg: "#dcfce7", fg: "#15803d" },
+  signed_off: { bg: "var(--ch-navy-soft)", fg: "var(--ch-navy)" },
+  cancelled: { bg: "#f1f2f4", fg: "#6b7280" },
+};
+
+// How this particular row came to exist, for the history table's "Source"
+// column — mirrors confirmBoarding/assignCrewToSite/assignCandidateToMatrix
+// in app/mobilizations/actions.ts and app/crew/profiles/actions.ts, the
+// only three writers of crew_assignments.
+function assignmentSource(a: Assignment): string {
+  const mob = unwrap(a.mobilization_requests);
+  if (mob?.mobilization_number) return `Mobilization ${mob.mobilization_number}`;
+  if (a.notes) return a.notes;
+  return "Direct (emergency override)";
+}
+
 function AssignmentSection({
   crewId,
   offshoreSites,
   assignments,
+  reservations,
   canManage,
   canEmergencyAssign,
   onChanged,
@@ -858,6 +904,7 @@ function AssignmentSection({
   crewId: string;
   offshoreSites: Ref[];
   assignments: Assignment[];
+  reservations: Reservation[];
   canManage: boolean;
   canEmergencyAssign: boolean;
   onChanged: () => void;
@@ -869,9 +916,14 @@ function AssignmentSection({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
+  const [unreservingId, setUnreservingId] = useState<string | null>(null);
 
   const current = items.find((a) => a.end_date === null) ?? null;
-  const history = items.filter((a) => a.end_date !== null);
+  // Full history, most recent first — includes the current assignment too,
+  // so "which vessels, from what date to what date" reads as one table
+  // instead of splitting the active tour out of the trail.
+  const sortedItems = [...items].sort((a, b) => (a.start_date < b.start_date ? 1 : -1));
+  const activeReservation = reservations.find((r) => r.releasedAt === null) ?? null;
 
   const assign = () => {
     if (!offshoreSiteId) return;
@@ -893,10 +945,13 @@ function AssignmentSection({
       offshore_site_id: offshoreSiteId,
       start_date: startDate,
       end_date: null,
+      assignment_status: "active",
       notes: null,
+      mobilization_request_id: null,
       offshore_sites: { name: siteName, code: null },
+      mobilization_requests: null,
     };
-    if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: startDate });
+    if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: startDate, assignment_status: "signed_off" });
     addOptimistic(optimisticNew);
     setOffshoreSiteId("");
     setReason("");
@@ -904,7 +959,7 @@ function AssignmentSection({
     startTransition(async () => {
       const res = await assignCrewToSite(crewId, fd);
       if (res?.error) {
-        if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: null });
+        if (previousCurrent) updateOptimistic(previousCurrent.id, { end_date: null, assignment_status: previousCurrent.assignment_status });
         removeOptimistic(optimisticNew.id);
         setBgError(res.error);
         return;
@@ -920,6 +975,20 @@ function AssignmentSection({
       const res = await deleteCrewAssignment(assignment.id, crewId);
       if (res?.error) {
         restoreOptimistic(assignment, index);
+        setBgError(res.error);
+        return;
+      }
+      onChanged();
+    });
+  };
+
+  const unreserve = (reservation: Reservation) => {
+    setBgError(null);
+    setUnreservingId(reservation.id);
+    startTransition(async () => {
+      const res = await releaseCrewReservation(reservation.id, crewId, reservation.crewMatrixId);
+      setUnreservingId(null);
+      if (res?.error) {
         setBgError(res.error);
         return;
       }
@@ -947,6 +1016,42 @@ function AssignmentSection({
         </div>
       ) : (
         <div className="text-sm mb-3" style={{ color: "var(--ch-sub)" }}>Not currently assigned to a vessel.</div>
+      )}
+
+      {/* Reserve/soft-lock (migration 0026) — a candidate held for a
+          specific rank on a Staffing Plan without being assigned yet.
+          Same amber treatment as the Staffing Plan's own "Reserved" badge
+          (app/crew/matrices/[id]/staffing-plan.tsx) for visual consistency. */}
+      {activeReservation && (
+        <div className="flex items-start gap-3 flex-wrap mb-3 rounded-lg border px-3 py-2" style={{ background: "#fffbf0", borderColor: "#fde68a" }}>
+          <div className="flex-1 min-w-0">
+            <span className="inline-flex items-center gap-1 rounded-full text-[10px] font-semibold px-2 py-0.5" style={{ color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a" }}>
+              ● Reserved
+            </span>
+            <div className="text-xs mt-1.5" style={{ color: "#92400e" }}>
+              {activeReservation.roleName ?? "A rank"}
+              {activeReservation.lineNumber ? ` (Line ${activeReservation.lineNumber})` : ""} on{" "}
+              <Link href={`/crew/matrices/${activeReservation.crewMatrixId}`} className="font-semibold underline">
+                {activeReservation.matrixTitle ?? "Crew matrix"}{activeReservation.matrixNumber ? ` (${activeReservation.matrixNumber})` : ""}
+              </Link>
+              {" "}· since {activeReservation.reservedAt.slice(0, 10)} · by {activeReservation.reservedByLabel}
+              {activeReservation.expectedReadyDate && ` · expected ready ${activeReservation.expectedReadyDate}`}
+            </div>
+            {activeReservation.notes && (
+              <div className="text-xs mt-0.5" style={{ color: "#92400e" }}>{activeReservation.notes}</div>
+            )}
+          </div>
+          {canManage && (
+            <button
+              onClick={() => unreserve(activeReservation)}
+              disabled={unreservingId === activeReservation.id}
+              className="text-xs font-semibold rounded-lg border px-2.5 py-1 disabled:opacity-50"
+              style={{ borderColor: "#fde68a", color: "#92400e" }}
+            >
+              {unreservingId === activeReservation.id ? "Releasing…" : "Unreserve"}
+            </button>
+          )}
+        </div>
       )}
 
       {canEmergencyAssign ? (
@@ -990,22 +1095,49 @@ function AssignmentSection({
       )}
       <ErrorLine error={error} />
 
-      {history.length > 0 && (
+      {sortedItems.length > 0 && (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
-          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-sub)" }}>History</div>
-          <div className="space-y-1">
-            {history.map((a) => {
+          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-sub)" }}>Assignment history — every vessel, from when to when</div>
+          <div className="space-y-1.5">
+            {sortedItems.map((a) => {
               const index = items.findIndex((x) => x.id === a.id);
+              const status = ASSIGNMENT_STATUS_COLORS[a.assignment_status] ?? ASSIGNMENT_STATUS_COLORS.cancelled;
               return (
-                <div key={a.id} className="flex items-center gap-2 text-xs">
-                  <span style={{ color: "var(--ch-ink)" }}>{unwrap(a.offshore_sites)?.name ?? "Unknown vessel"}</span>
-                  <span style={{ color: "var(--ch-sub)" }}>{a.start_date} – {a.end_date}</span>
-                  {canManage && (
-                    <button onClick={() => removeHistory(a, index)} style={{ color: "var(--ch-fail)" }}>Remove</button>
+                <div key={a.id} className="flex items-center gap-2 text-xs flex-wrap py-1 border-b last:border-b-0" style={{ borderColor: "var(--ch-line)" }}>
+                  <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>{unwrap(a.offshore_sites)?.name ?? "Unknown vessel"}</span>
+                  <span style={{ color: "var(--ch-sub)" }}>{a.start_date} – {a.end_date ?? "present"}</span>
+                  <span className="rounded-full px-2 py-0.5 font-semibold" style={{ background: status.bg, color: status.fg }}>
+                    {ASSIGNMENT_STATUS_LABELS[a.assignment_status] ?? a.assignment_status}
+                  </span>
+                  <span style={{ color: "var(--ch-sub)" }}>{assignmentSource(a)}</span>
+                  {canManage && a.end_date !== null && (
+                    <button onClick={() => removeHistory(a, index)} className="ml-auto" style={{ color: "var(--ch-fail)" }}>Remove</button>
                   )}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {reservations.length > 0 && (
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--ch-line)" }}>
+          <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-sub)" }}>Reservation history — every soft lock held</div>
+          <div className="space-y-1.5">
+            {reservations.map((r) => (
+              <div key={r.id} className="flex items-center gap-2 text-xs flex-wrap py-1 border-b last:border-b-0" style={{ borderColor: "var(--ch-line)" }}>
+                <span className="font-semibold" style={{ color: "var(--ch-ink)" }}>
+                  {r.roleName ?? "A rank"} on {r.matrixTitle ?? "Crew matrix"}{r.matrixNumber ? ` (${r.matrixNumber})` : ""}
+                </span>
+                <span style={{ color: "var(--ch-sub)" }}>{r.reservedAt.slice(0, 10)} – {r.releasedAt ? r.releasedAt.slice(0, 10) : "present"}</span>
+                <span
+                  className="rounded-full px-2 py-0.5 font-semibold"
+                  style={r.releasedAt ? { background: "#f1f2f4", color: "#6b7280" } : { background: "#fef3c7", color: "#92400e" }}
+                >
+                  {r.releasedAt ? "Released" : "Active"}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}
