@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createCrewDocument, updateCrewDocument } from "../profiles/actions";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS, type DocumentStatus } from "@/lib/document-status";
 import { tempId } from "@/lib/use-optimistic-list";
+import { orderDocumentColumns, groupByCategory, buildCategoryColorMap, formatCategoryLabel, UNCATEGORIZED_KEY } from "@/lib/staffing-plan-shared";
 
 type CrewRow = {
   id: string;
@@ -47,6 +48,11 @@ const inputStyle = { borderColor: "var(--ch-line)" };
 // ("Expired · -20d") on one line each, so no column is narrower than that
 // and cell text never wraps.
 const COL_MIN_WIDTH = 132;
+
+// Height (px) of the category-band header row, and the `top` offset the
+// column-header row below it sticks to once the band row is pinned above
+// it — keeping both in one constant means they can't drift out of sync.
+const BAND_ROW_HEIGHT = 26;
 
 const STATUS_PILLS: { key: "all" | "expiring" | "expired"; label: string }[] = [
   { key: "all", label: "All" },
@@ -104,7 +110,14 @@ export default function DocumentsMatrix({
     });
   };
 
-  const columns = docTypeFilter ? documentTypes.filter((t) => t.id === docTypeFilter) : documentTypes;
+  // Ordered by category (then name within it, uncategorized last) via the
+  // same canonical helper the Staffing Plan screen and its Excel export
+  // use, so this matrix's column order and category bands agree with
+  // those exports instead of drifting into their own layout.
+  const filteredTypes = docTypeFilter ? documentTypes.filter((t) => t.id === docTypeFilter) : documentTypes;
+  const columns = orderDocumentColumns(documentTypes, new Set(filteredTypes.map((t) => t.id)));
+  const { groups: categoryGroups } = groupByCategory(columns);
+  const categoryColorMap = buildCategoryColorMap(columns);
 
   // Roles derived from the crew already on this page (rather than a
   // separate job_roles query) — this stays in sync with whatever's
@@ -259,16 +272,37 @@ export default function DocumentsMatrix({
           <thead>
             <tr>
               <th
-                className="sticky left-0 top-0 z-20 bg-white text-left px-3 py-2 border-b border-r text-xs font-bold uppercase tracking-wide"
-                style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)", minWidth: 200 }}
+                className="sticky left-0 top-0 z-30 bg-white border-b border-r"
+                style={{ borderColor: "var(--ch-line)", minWidth: 200, height: BAND_ROW_HEIGHT }}
+              />
+              {categoryGroups.map((g, i) => (
+                <th
+                  key={i}
+                  colSpan={g.count}
+                  className="sticky top-0 z-20 text-center px-2 text-[10px] font-bold uppercase tracking-wide border-b"
+                  style={{
+                    borderColor: "var(--ch-line)",
+                    color: "var(--ch-navy)",
+                    background: categoryColorMap.get(g.category ?? UNCATEGORIZED_KEY),
+                    height: BAND_ROW_HEIGHT,
+                  }}
+                >
+                  {formatCategoryLabel(g.category)}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              <th
+                className="sticky left-0 z-20 bg-white text-left px-3 py-2 border-b border-r text-xs font-bold uppercase tracking-wide"
+                style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)", minWidth: 200, top: BAND_ROW_HEIGHT }}
               >
                 Crew member
               </th>
               {columns.map((col) => (
                 <th
                   key={col.id}
-                  className="sticky top-0 z-10 bg-white text-left px-3 py-2 border-b text-xs font-bold uppercase tracking-wide whitespace-nowrap"
-                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)", minWidth: COL_MIN_WIDTH }}
+                  className="sticky z-10 bg-white text-left px-3 py-2 border-b text-xs font-bold uppercase tracking-wide whitespace-nowrap"
+                  style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)", minWidth: COL_MIN_WIDTH, top: BAND_ROW_HEIGHT }}
                 >
                   {col.name}
                 </th>
