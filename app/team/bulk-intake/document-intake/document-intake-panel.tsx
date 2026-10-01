@@ -443,7 +443,7 @@ export default function DocumentIntakePanel() {
                             onChange={(e) => updateRow(f.folderName, r.filename, { include: e.target.checked })}
                           />
                         </td>
-                        <td className="px-2 py-1.5 max-w-[160px] truncate" title={r.filename}>{r.filename}</td>
+                        <td className="px-2 py-1.5 max-w-[160px] truncate" style={{ color: "var(--ch-ink, #171717)" }} title={r.filename}>{r.filename}</td>
                         <td className="px-2 py-1.5">
                           <select
                             className={inputCls}
