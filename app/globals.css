@@ -1,9 +1,19 @@
 @import "./theme-tokens.css";
 @import "tailwindcss";
 
+/* The app has one, light-only theme (ShellChrome's own tokens in
+   theme-tokens.css never change for dark mode) — color-scheme: light
+   tells the browser not to auto-dark any unstyled area itself. Without
+   it, a browser/OS in dark mode was free to treat this as a
+   dark-capable page: the old dark-mode override below flipped <body>
+   to near-black, which showed through on any page whose content
+   doesn't fill the viewport (e.g. an empty-state list) even though
+   every actual app surface — ShellChrome's own wrapping div included —
+   stays light. */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -11,13 +21,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

@@ -56,35 +56,42 @@ type SiteClientRow = {
 };
 
 async function resolveSitesWithClients(supabase: Awaited<ReturnType<typeof createClient>>, orgId: string): Promise<SiteClientRow[]> {
-  const { data: sites } = await supabase
-    .from("offshore_sites")
-    .select(
-      "id, name, site_type, status, contractor_id, project_id, contractors(client_id, clients(id, name)), projects(contracts(client_id, clients(id, name)))"
-    )
-    .eq("org_id", orgId)
-    .eq("status", "active")
-    .order("name");
+  // Deliberately flat selects + a JS join, not a nested PostgREST embed
+  // (offshore_sites.contractors(clients(...)), offshore_sites.projects
+  // (contracts(clients(...)))) — this is the same pattern app/sites/
+  // page.tsx already uses for these exact tables. A two-path embed off
+  // one base table turned out to come back empty rather than erring, so
+  // this avoids that risk entirely rather than chasing it further.
+  const [{ data: sites, error: sitesErr }, { data: contractors }, { data: projects }, { data: contracts }, { data: clients }] = await Promise.all([
+    supabase.from("offshore_sites").select("id, name, site_type, status, contractor_id, project_id").eq("org_id", orgId).eq("status", "active").order("name"),
+    supabase.from("contractors").select("id, client_id").eq("org_id", orgId),
+    supabase.from("projects").select("id, contract_id").eq("org_id", orgId),
+    supabase.from("contracts").select("id, client_id").eq("org_id", orgId),
+    supabase.from("clients").select("id, name").eq("org_id", orgId),
+  ]);
+  if (sitesErr) {
+    console.error("resolveSitesWithClients: offshore_sites query failed", sitesErr);
+    return [];
+  }
+
+  const contractorById = new Map((contractors ?? []).map((c) => [c.id as string, c.client_id as string | null]));
+  const projectById = new Map((projects ?? []).map((p) => [p.id as string, p.contract_id as string | null]));
+  const contractById = new Map((contracts ?? []).map((c) => [c.id as string, c.client_id as string | null]));
+  const clientNameById = new Map((clients ?? []).map((c) => [c.id as string, c.name as string]));
 
   return (sites ?? []).map((s) => {
-    const project = (Array.isArray(s.projects) ? s.projects[0] : s.projects) as
-      | { contracts?: { client_id?: string; clients?: { id?: string; name?: string } | { id?: string; name?: string }[] } | null }
-      | null;
-    const contract = project?.contracts ?? null;
-    const projectClientRel = contract?.clients ? (Array.isArray(contract.clients) ? contract.clients[0] : contract.clients) : null;
+    let clientId: string | null = null;
+    const contractId = s.project_id ? projectById.get(s.project_id as string) ?? null : null;
+    if (contractId) clientId = contractById.get(contractId) ?? null;
+    if (!clientId && s.contractor_id) clientId = contractorById.get(s.contractor_id as string) ?? null;
 
-    const contractor = (Array.isArray(s.contractors) ? s.contractors[0] : s.contractors) as
-      | { client_id?: string; clients?: { id?: string; name?: string } | { id?: string; name?: string }[] }
-      | null;
-    const contractorClientRel = contractor?.clients ? (Array.isArray(contractor.clients) ? contractor.clients[0] : contractor.clients) : null;
-
-    const clientRel = projectClientRel ?? contractorClientRel;
     return {
       id: s.id as string,
       name: s.name as string,
       site_type: s.site_type as string,
       status: s.status as string,
-      clientId: clientRel?.id ?? null,
-      clientName: clientRel?.name ?? null,
+      clientId,
+      clientName: clientId ? clientNameById.get(clientId) ?? null : null,
     };
   });
 }
