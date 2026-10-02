@@ -61,7 +61,14 @@ type FileRowState = {
   classified: ClassifiedFile | null;
   include: boolean;
   documentTypeId: string; // "" = unresolved, or a real id
+  // Only ever set by the reviewer explicitly choosing "+ Create new
+  // document type" below — never pre-filled from the AI's raw guess.
+  // That guess (when there was one and it didn't match anything
+  // configured) is kept separately in unmatchedGuess, purely as a
+  // hint shown in the dropdown's placeholder text.
   newDocumentTypeName: string | null;
+  notApplicable: boolean; // AI positively said: not a compliance document / nothing configured fits
+  unmatchedGuess: string | null; // AI named a type but it isn't one of this company's configured ones
   documentNumber: string;
   issueDate: string;
   expiryDate: string;
@@ -101,13 +108,19 @@ function relativeFolderName(file: File): string {
 }
 
 function rowFromClassified(c: ClassifiedFile): FileRowState {
-  const hasName = !!c.documentTypeName;
+  const matchedExisting = !!c.mapping?.targetId;
   return {
     filename: c.filename,
     classified: c,
-    include: !c.error && hasName,
+    // Only auto-included when the AI matched one of this company's
+    // actually-configured document types — never on an unresolved
+    // guess, and never on "not applicable". Those two require a human
+    // to look and decide, so they start unchecked.
+    include: !c.error && matchedExisting,
     documentTypeId: c.mapping?.targetId ?? "",
-    newDocumentTypeName: !c.mapping?.targetId && hasName ? c.documentTypeName : null,
+    newDocumentTypeName: null,
+    notApplicable: c.notApplicable,
+    unmatchedGuess: !matchedExisting && !c.notApplicable ? c.documentTypeName : null,
     documentNumber: c.documentNumber ?? "",
     issueDate: c.issueDate ?? "",
     expiryDate: c.expiryDate ?? "",
@@ -216,7 +229,7 @@ export default function DocumentIntakePanel() {
         const res = await classifyDocumentFolder(f.crewId, fd);
         if ("error" in res) {
           for (const file of chunk) {
-            collected.push({ filename: file.name, mapping: null, documentTypeName: null, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: res.error });
+            collected.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: res.error });
           }
         } else {
           collected.push(...res.files);
@@ -432,7 +445,8 @@ export default function DocumentIntakePanel() {
                 <tbody>
                   {f.rows.map((r) => {
                     const locked = phase === "done" || f.status === "committing" || f.status === "committed";
-                    const canResolve = !!r.documentTypeId || !!r.newDocumentTypeName;
+                    const creatingNew = r.newDocumentTypeName !== null;
+                    const canResolve = !!r.documentTypeId || (creatingNew && !!r.newDocumentTypeName?.trim());
                     return (
                       <tr key={r.filename} style={{ borderTop: "1px solid var(--ch-line)", opacity: locked && !r.include ? 0.5 : 1 }}>
                         <td className="px-4 py-1.5">
@@ -449,19 +463,42 @@ export default function DocumentIntakePanel() {
                             className={inputCls}
                             style={inputStyle}
                             disabled={locked}
-                            value={r.documentTypeId}
+                            value={creatingNew ? "__new__" : r.documentTypeId}
                             onChange={(e) => {
                               const v = e.target.value;
-                              updateRow(f.folderName, r.filename, { documentTypeId: v, newDocumentTypeName: v ? null : r.newDocumentTypeName });
+                              if (v === "__new__") {
+                                // Deliberate human action, not an AI default — the
+                                // AI's own guess (if it had one) is offered below
+                                // only as a pre-fill suggestion the reviewer can
+                                // edit or clear, never auto-created on its own.
+                                updateRow(f.folderName, r.filename, { documentTypeId: "", newDocumentTypeName: r.unmatchedGuess ?? "" });
+                              } else {
+                                updateRow(f.folderName, r.filename, { documentTypeId: v, newDocumentTypeName: null });
+                              }
                             }}
                           >
                             <option value="">
-                              {r.newDocumentTypeName ? `+ Create "${r.newDocumentTypeName}"` : "— unresolved —"}
+                              {r.notApplicable
+                                ? "Not a recognized document — excluded"
+                                : r.unmatchedGuess
+                                  ? `No match for "${r.unmatchedGuess}" — review`
+                                  : "— unresolved —"}
                             </option>
                             {master?.documentTypes.map((d) => (
                               <option key={d.id} value={d.id}>{d.name}</option>
                             ))}
+                            <option value="__new__">+ Create new document type…</option>
                           </select>
+                          {creatingNew && (
+                            <input
+                              className={inputCls}
+                              style={{ ...inputStyle, display: "block", marginTop: 4, width: 150 }}
+                              disabled={locked}
+                              placeholder="New type name"
+                              value={r.newDocumentTypeName ?? ""}
+                              onChange={(e) => updateRow(f.folderName, r.filename, { newDocumentTypeName: e.target.value })}
+                            />
+                          )}
                         </td>
                         <td className="px-2 py-1.5">
                           <input className={inputCls} style={{ ...inputStyle, width: 110 }} disabled={locked} value={r.documentNumber} onChange={(e) => updateRow(f.folderName, r.filename, { documentNumber: e.target.value })} />

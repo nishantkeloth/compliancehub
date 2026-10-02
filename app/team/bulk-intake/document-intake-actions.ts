@@ -1,11 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import type { ModelMessage } from "ai";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { loadAiContext, runStructured } from "@/lib/ai/router";
-import { crewIntakeDocumentSchema } from "@/lib/ai/crew-intake-schema";
 import { extractDocument } from "@/lib/ai/extract";
 import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
 import { sha256Hex, checkDuplicateFile, checkDuplicateDocumentNumber, validateDocumentDates } from "@/lib/documents/checks";
@@ -129,19 +129,43 @@ export async function matchDocumentFolders(
 
 /* ================= per-folder classification ================= */
 
-const SYSTEM_CLASSIFY = `You are identifying a single scanned document (a certificate, ID, or similar) that belongs to an offshore marine crew member already registered in the system.
+// Deliberately NOT the shared crewIntakeDocumentSchema from
+// lib/ai/crew-intake-schema.ts (used by the single-document Auto-read
+// button) — that flow already has a document type pre-selected by the
+// person uploading, so the model is only confirming/extracting against
+// a known type. Bulk intake has no pre-selection: the model has to
+// classify from a closed list with no human in the loop yet, so it gets
+// its own stricter contract — document_type_name is nullable and MUST
+// be either an exact name from the provided list, or null. It must
+// never invent a name that isn't already configured; "doesn't match
+// anything in the list" and "isn't a compliance document at all"
+// (payroll slips, invoices, personal correspondence, etc.) both map to
+// null, and the UI treats a null the same way either way — excluded by
+// default, with creating a brand-new document type left as a separate,
+// deliberate action a human takes on purpose, never something this
+// classification step does for them.
+const bulkClassifySchema = z.object({
+  document_type_name: z.string().nullable().default(null),
+  document_number: z.string().nullable().default(null),
+  issue_date: z.string().nullable().default(null),
+  expiry_date: z.string().nullable().default(null),
+  confidence: z.number().min(0).max(1).default(0.5),
+  source_excerpt: z.string().nullable().default(null),
+});
+
+const SYSTEM_CLASSIFY = `You are identifying a single scanned document (a certificate, ID, or similar) that may or may not belong to an offshore marine crew member's compliance record.
 Rules:
 - Return only the requested JSON. No prose outside it.
-- document_type_name should use the clearest name for what the document actually is (e.g. "Passport", "Seaman's Book", "BOSIET / HUET", "Medical Certificate") — prefer one of this company's configured names when it fits, otherwise the clearest industry-standard name.
-- Never invent a value the document doesn't support; leave it null rather than guess.
+- document_type_name must be EXACTLY one of the configured type names given to you (copy it verbatim, do not paraphrase or invent a variant) — or null.
+- Set document_type_name to null whenever: the document isn't an identity or certification document at all (payroll slips, remittance advices, invoices, letters, personal correspondence, etc.), OR it is a certificate/ID but doesn't clearly match any of the configured names given to you. Do NOT invent a new type name in either case — null is the correct answer, not a guess.
+- Never invent a value the document doesn't support; leave a field null rather than guess.
 - Dates must be ISO yyyy-mm-dd when the document states a full date; leave null if only partial or unclear.
-- document_number is whatever the document itself labels as its own number/ID/reference (certificate number, passport number, visa number, etc.), not an unrelated reference on the page.
-- If the file clearly isn't an identity or certification document, set document_type_name to null.`;
+- document_number is whatever the document itself labels as its own number/ID/reference (certificate number, passport number, visa number, etc.), not an unrelated reference on the page.`;
 
 function classifyPrompt(documentTypeNames: string[], documentText: string | null, hasAttachedFile: boolean) {
   return [
-    "TASK: Identify what this document is and extract its own number and validity dates.",
-    `Document/certificate types already configured in this company (use one of these exact names when it fits): ${documentTypeNames.join("; ") || "(none)"}`,
+    "TASK: Identify which of this company's configured document types (if any) this file is, and extract its own number and validity dates.",
+    `Configured document/certificate types for this company — document_type_name MUST be one of these exact strings, or null: ${documentTypeNames.join("; ") || "(none configured)"}`,
     documentText
       ? `--- Extracted text ---\n${documentText}`
       : hasAttachedFile
@@ -154,6 +178,9 @@ export type ClassifiedFile = {
   filename: string;
   mapping: Mapping | null;
   documentTypeName: string | null;
+  // true when the AI positively returned null (not applicable / no
+  // configured type fits) rather than this being a read error.
+  notApplicable: boolean;
   documentNumber: string | null;
   issueDate: string | null;
   expiryDate: string | null;
@@ -188,7 +215,7 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
   for (const file of files) {
     const extracted = await extractDocument(file);
     if (extracted.unreadable) {
-      results.push({ filename: file.name, mapping: null, documentTypeName: null, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: "Doesn't look like a valid file of its type." });
+      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: "Doesn't look like a valid file of its type." });
       continue;
     }
     const prompt = classifyPrompt(documentTypeNames, extracted.text, extracted.needsModelVision);
@@ -198,22 +225,27 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
 
     const result = await runStructured(supabase, ctx, {
       task: "crew_intake",
-      schema: crewIntakeDocumentSchema,
+      schema: bulkClassifySchema,
       system: SYSTEM_CLASSIFY,
       messages,
       needsDocuments: extracted.needsModelVision,
       userId,
     });
     if ("error" in result) {
-      results.push({ filename: file.name, mapping: null, documentTypeName: null, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: result.error });
+      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: result.error });
       continue;
     }
     const p = result.object;
+    // mapName still runs even on a name the model wasn't supposed to
+    // invent — if it ever does anyway, this correctly comes back with
+    // targetId: null (method "none"), and the UI treats that exactly
+    // like notApplicable: it's never auto-included or auto-created.
     const mapping = p.document_type_name ? mapName(p.document_type_name, "document_type", documentTypes, aliases) : null;
     results.push({
       filename: file.name,
       mapping,
       documentTypeName: p.document_type_name,
+      notApplicable: p.document_type_name === null,
       documentNumber: p.document_number,
       issueDate: p.issue_date,
       expiryDate: p.expiry_date,
