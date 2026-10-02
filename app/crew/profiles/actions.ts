@@ -552,9 +552,19 @@ export async function uploadCrewDocumentVersion(documentId: string, crewId: stri
 
   const filePath = `${access.orgId}/${crewId}/${documentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
 
+  // upsert: true — a path here is version-numbered and should only ever
+  // be written once in the normal case, but if an earlier attempt at
+  // this exact version crashed after the storage write and before the
+  // crew_document_versions insert below, the file is left sitting in
+  // storage with no database record pointing at it: invisible on this
+  // document's history (nothing to show a link to), yet blocking a
+  // retry with "The resource already exists" since nextVersion is
+  // computed from the database, which still thinks that version was
+  // never written. Overwriting lets a retry actually succeed instead of
+  // requiring the orphaned object to be deleted by hand first.
   const { error: upErr } = await supabase.storage
     .from("crew-documents")
-    .upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
+    .upload(filePath, bytes, { contentType: file.type || "application/octet-stream", upsert: true });
   if (upErr) return { error: `Upload failed: ${upErr.message}` };
 
   const { error: versionErr } = await supabase.from("crew_document_versions").insert({
