@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   matchDocumentFolders,
   createBulkIntakeJob,
@@ -695,6 +696,9 @@ export default function DocumentIntakePanel() {
               <p className="text-sm mb-1">
                 Attached <b>{totalAttached}</b> document{totalAttached === 1 ? "" : "s"} across {folders.filter((f) => f.attached).length} crew member{folders.filter((f) => f.attached).length === 1 ? "" : "s"}.
               </p>
+              <p className="text-xs mb-1" style={{ color: "var(--ch-sub)" }}>
+                Click a crew member&apos;s name below to open their Documents tab and verify what was attached.
+              </p>
               {totalCommitErrors.length > 0 && (
                 <div className="mt-3">
                   <div className="text-xs font-semibold mb-1" style={{ color: "var(--ch-fail)" }}>{totalCommitErrors.length} problem{totalCommitErrors.length === 1 ? "" : "s"}:</div>
@@ -722,7 +726,19 @@ export default function DocumentIntakePanel() {
           {folders.filter((f) => f.status === "classifying" || f.status === "classified" || f.status === "committing" || f.status === "committed").map((f) => (
             <div key={f.folderName} className={`${cardCls} overflow-x-auto`} style={cardStyle}>
               <div className="px-4 pt-4 flex items-center gap-2">
-                <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{f.crewLabel ?? f.folderName}</span>
+                {f.crewId ? (
+                  <Link
+                    href={`/crew/profiles/${f.crewId}?tab=documents`}
+                    target="_blank"
+                    className="text-sm font-semibold underline"
+                    style={{ color: "var(--ch-navy)" }}
+                    title="Open this crew member's Documents tab in a new tab to verify what's attached"
+                  >
+                    {f.crewLabel ?? f.folderName}
+                  </Link>
+                ) : (
+                  <span className="text-sm font-semibold" style={{ color: "var(--ch-navy)" }}>{f.crewLabel ?? f.folderName}</span>
+                )}
                 <span className="text-xs" style={{ color: "var(--ch-sub)" }}>({f.folderName})</span>
                 {f.status === "committed" && pill(`${f.attached ?? 0} attached`, "var(--ch-pass-bg, #dcfce7)", "var(--ch-pass, #15803d)")}
                 {f.progressLabel && (

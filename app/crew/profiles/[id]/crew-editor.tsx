@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 import { useState, useEffect, useRef, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   updateCrewProfile,
   updateCrewCost,
@@ -275,6 +275,7 @@ export default function CrewEditor({
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
+  const searchParams = useSearchParams();
 
   // Same nine sections as before, just grouped into tabs instead of one
   // long stack of cards — nothing about how any individual section works
@@ -290,7 +291,13 @@ export default function CrewEditor({
     ...(canViewCost || canViewSensitive ? [{ key: "restricted", label: "Cost & Sensitive" }] : []),
     ...(canManage ? [{ key: "account", label: "Account" }] : []),
   ];
-  const [activeTab, setActiveTab] = useState(tabs[0].key);
+  // A `?tab=documents` link (e.g. from Bulk Document Intake's "jump to
+  // this person's Documents tab" link, so a reviewer can actually verify
+  // an imported file rather than just seeing an "attached" count) lands
+  // straight on that tab instead of always defaulting to General — but
+  // only when it names a tab this viewer actually has.
+  const requestedTab = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(() => (requestedTab && tabs.some((t) => t.key === requestedTab) ? requestedTab : tabs[0].key));
 
   return (
     // Below xl: SummaryPanel stacks above the tabs as a plain block (that's
