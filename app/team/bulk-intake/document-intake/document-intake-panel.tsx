@@ -46,6 +46,43 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A folder could get stuck forever mid-upload/mid-poll with no error ever
+// shown — the panel just sat on "Uploading N of M files…" indefinitely —
+// whenever one of these server-action calls itself threw or never settled
+// (a dropped connection, a function that was killed without responding,
+// a parse error on a malformed response) rather than cleanly resolving to
+// an `{ error }` value. Nothing downstream was wrapped in try/catch, so
+// the thrown/pending promise just stalled the async function in place:
+// `busy` stayed true, the row's progress label never updated, and there
+// was no way out except reloading the page. withTimeout() bounds every
+// such call so a genuine hang surfaces as a real, actionable error within
+// NETWORK_TIMEOUT_MS instead of spinning forever; classifyOneFolder/
+// classifyAll/importAll below also now wrap their loops in try/catch so a
+// thrown error (timeout or otherwise) always lands on that folder's
+// "error" status and always clears `busy`, rather than leaving the whole
+// panel stuck.
+const NETWORK_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} is taking too long (over ${Math.round(ms / 1000)}s) — check your connection and try again.`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Something went wrong — please try again.";
+}
+
 function batchFiles(files: File[], maxCount: number, maxBytes: number): File[][] {
   const batches: File[][] = [];
   let current: File[] = [];
@@ -288,61 +325,69 @@ export default function DocumentIntakePanel() {
     const crewId = f.crewId;
     setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classifying", rows: [], error: undefined } : x)));
 
-    const createRes = await createBulkIntakeJob(crewId, f.folderName);
-    if ("error" in createRes) {
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: createRes.error } : x)));
-      return;
-    }
-    const jobId = createRes.jobId;
-    setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, jobId } : x)));
-
-    const batches = batchFiles(f.files, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
-    let uploaded = 0;
-    for (const chunk of batches) {
-      uploaded += chunk.length;
-      const label = `Uploading ${uploaded} of ${f.files.length} files…`;
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
-      const fd = new FormData();
-      for (const file of chunk) fd.append("files", file);
-      const res = await addBulkIntakeJobFiles(jobId, fd);
-      if ("error" in res) {
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: res.error, progressLabel: undefined } : x)));
+    try {
+      const createRes = await withTimeout(createBulkIntakeJob(crewId, f.folderName), NETWORK_TIMEOUT_MS, "Starting the job");
+      if ("error" in createRes) {
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: createRes.error } : x)));
         return;
       }
-    }
+      const jobId = createRes.jobId;
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, jobId } : x)));
 
-    const startRes = await startBulkIntakeJob(jobId);
-    if ("error" in startRes) {
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: startRes.error, progressLabel: undefined } : x)));
-      return;
-    }
+      const batches = batchFiles(f.files, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+      let uploaded = 0;
+      for (const chunk of batches) {
+        uploaded += chunk.length;
+        const label = `Uploading ${uploaded} of ${f.files.length} files…`;
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
+        const fd = new FormData();
+        for (const file of chunk) fd.append("files", file);
+        const res = await withTimeout(addBulkIntakeJobFiles(jobId, fd), NETWORK_TIMEOUT_MS, "Uploading files");
+        if ("error" in res) {
+          setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: res.error, progressLabel: undefined } : x)));
+          return;
+        }
+      }
 
-    // Poll until the worker's classified every file (or given up).
-    for (;;) {
-      const status = await getBulkIntakeJobStatus(jobId);
-      // BulkIntakeJobStatus itself carries a job-level `error` field
-      // (string | null), so "error" in status is true for both shapes —
-      // `items` is the only field unique to the success shape, so that's
-      // the actual discriminant here.
-      if (!("items" in status)) {
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: status.error ?? undefined, progressLabel: undefined } : x)));
+      const startRes = await withTimeout(startBulkIntakeJob(jobId), NETWORK_TIMEOUT_MS, "Starting classification");
+      if ("error" in startRes) {
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: startRes.error, progressLabel: undefined } : x)));
         return;
       }
-      const rows = status.items.map(rowFromJobItem);
-      const label = status.status === "processing" ? `Reading ${status.processedFiles} of ${status.totalFiles} files…` : undefined;
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, rows, progressLabel: label } : x)));
 
-      if (status.status === "awaiting_review") {
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classified", progressLabel: undefined } : x)));
-        return;
+      // Poll until the worker's classified every file (or given up).
+      for (;;) {
+        const status = await withTimeout(getBulkIntakeJobStatus(jobId), NETWORK_TIMEOUT_MS, "Checking progress");
+        // BulkIntakeJobStatus itself carries a job-level `error` field
+        // (string | null), so "error" in status is true for both shapes —
+        // `items` is the only field unique to the success shape, so that's
+        // the actual discriminant here.
+        if (!("items" in status)) {
+          setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: status.error ?? undefined, progressLabel: undefined } : x)));
+          return;
+        }
+        const rows = status.items.map(rowFromJobItem);
+        const label = status.status === "processing" ? `Reading ${status.processedFiles} of ${status.totalFiles} files…` : undefined;
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, rows, progressLabel: label } : x)));
+
+        if (status.status === "awaiting_review") {
+          setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classified", progressLabel: undefined } : x)));
+          return;
+        }
+        if (status.status === "failed" || status.status === "cancelled") {
+          setFolders((prev) =>
+            (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: status.error ?? "This job stopped before finishing.", progressLabel: undefined } : x))
+          );
+          return;
+        }
+        await sleep(JOB_POLL_INTERVAL_MS);
       }
-      if (status.status === "failed" || status.status === "cancelled") {
-        setFolders((prev) =>
-          (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: status.error ?? "This job stopped before finishing.", progressLabel: undefined } : x))
-        );
-        return;
-      }
-      await sleep(JOB_POLL_INTERVAL_MS);
+    } catch (err) {
+      // Anything that threw rather than resolved to an `{ error }` value —
+      // a dropped connection, a timed-out call above, a killed serverless
+      // function — lands here instead of leaving this folder's row stuck
+      // on its last progress label forever.
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: errorMessage(err), progressLabel: undefined } : x)));
     }
   }
 
@@ -350,12 +395,18 @@ export default function DocumentIntakePanel() {
     if (!folders) return;
     setBusy(true);
     setError(null);
-    for (const f of folders) {
-      if (!f.crewId) continue;
-      await classifyOneFolder(f);
+    try {
+      for (const f of folders) {
+        if (!f.crewId) continue;
+        // classifyOneFolder catches its own errors onto that folder's row —
+        // this outer try/finally exists so a bug there that somehow still
+        // throws can't also strand every folder after it in "classifying".
+        await classifyOneFolder(f);
+      }
+    } finally {
+      setBusy(false);
+      setPhase("reviewing");
     }
-    setBusy(false);
-    setPhase("reviewing");
   }
 
   function updateRow(folderName: string, filename: string, patch: Partial<FileRowState>) {
@@ -368,20 +419,32 @@ export default function DocumentIntakePanel() {
     if (!folders) return;
     setBusy(true);
     setError(null);
-    for (const f of folders) {
-      // Folders that were never classified (unmatched, skipped) have no
-      // rows and nothing to log; a classified folder goes through the
-      // commit step below regardless of whether anything in it ended up
-      // checked, so there's always exactly one review-log entry written
-      // per reviewed file — included or not.
-      if (!f.crewId || f.rows.length === 0) continue;
-      const included = f.rows.filter((r) => r.include && (r.documentTypeId || r.newDocumentTypeName));
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committing" } : x)));
+    try {
+      for (const f of folders) {
+        await importOneFolder(f);
+      }
+    } finally {
+      setBusy(false);
+      setPhase("done");
+      router.refresh();
+    }
+  }
 
-      let totalAttached = 0;
-      const allErrors: string[] = [];
-      const allWarnings: string[] = [];
+  async function importOneFolder(f: FolderState) {
+    // Folders that were never classified (unmatched, skipped) have no
+    // rows and nothing to log; a classified folder goes through the
+    // commit step below regardless of whether anything in it ended up
+    // checked, so there's always exactly one review-log entry written
+    // per reviewed file — included or not.
+    if (!f.crewId || f.rows.length === 0) return;
+    const included = f.rows.filter((r) => r.include && (r.documentTypeId || r.newDocumentTypeName));
+    setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committing" } : x)));
 
+    let totalAttached = 0;
+    const allErrors: string[] = [];
+    const allWarnings: string[] = [];
+
+    try {
       if (included.length > 0) {
         // Upload/commit in small batches too — same reasoning as
         // classifyAll above. A failed batch is recorded as an error for
@@ -410,7 +473,7 @@ export default function DocumentIntakePanel() {
             // see the alias-learning block in commitDocumentIntakeFolder.
             aiGuessedName: r.unmatchedGuess && r.documentTypeId ? r.unmatchedGuess : null,
           }));
-          const res = await commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd);
+          const res = await withTimeout(commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd), NETWORK_TIMEOUT_MS, "Importing files");
           if ("error" in res) {
             allErrors.push(`Batch of ${chunk.length} file(s): ${res.error}`);
           } else {
@@ -443,7 +506,7 @@ export default function DocumentIntakePanel() {
         finalIssueDate: r.issueDate || null,
         finalExpiryDate: r.expiryDate || null,
       }));
-      const logRes = await logBulkIntakeReview(f.crewId, f.folderName, logEntries);
+      const logRes = await withTimeout(logBulkIntakeReview(f.crewId, f.folderName, logEntries), NETWORK_TIMEOUT_MS, "Saving the review log");
       if ("error" in logRes) {
         allWarnings.push(`Review log wasn't saved for this folder: ${logRes.error}`);
         setFolders((prev) =>
@@ -457,15 +520,25 @@ export default function DocumentIntakePanel() {
       // review/import is finished. This clears its staged files and
       // marks it completed rather than leaving it sitting there looking
       // like unfinished work.
-      if (f.jobId) await finalizeBulkIntakeJob(f.jobId);
+      if (f.jobId) await withTimeout(finalizeBulkIntakeJob(f.jobId), NETWORK_TIMEOUT_MS, "Finishing up the job");
 
       setFolders((prev) =>
         (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committed", progressLabel: undefined } : x))
       );
+    } catch (err) {
+      // Same reasoning as classifyOneFolder's catch — a thrown error
+      // (dropped connection, a timeout from withTimeout above) used to
+      // leave this folder stuck on "committing" forever with importAll
+      // never reaching setBusy(false). Record what was attached so far
+      // (earlier batches in this folder aren't lost) and let the import
+      // move on to the next folder instead of hanging the whole panel.
+      allErrors.push(errorMessage(err));
+      setFolders((prev) =>
+        (prev ?? []).map((x) =>
+          x.folderName === f.folderName ? { ...x, status: "committed", attached: totalAttached, commitErrors: allErrors, commitWarnings: allWarnings, progressLabel: undefined } : x
+        )
+      );
     }
-    setBusy(false);
-    setPhase("done");
-    router.refresh();
   }
 
   const unmatchedFolderCount = folders ? folders.filter((f) => !f.crewId).length : 0;
