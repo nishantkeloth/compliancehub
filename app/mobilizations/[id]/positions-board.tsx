@@ -1005,6 +1005,7 @@ function RejectWaiverButton({ onReject }: { onReject: (note: string) => void }) 
 function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSubmit: (fd: FormData) => void; onCancel: () => void }) {
   const [actualDepartureAt, setActualDepartureAt] = useState("");
   const [actualArrivalAt, setActualArrivalAt] = useState("");
+  const [countryArrivalAt, setCountryArrivalAt] = useState("");
   const [actualOnboardAt, setActualOnboardAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
   const [vesselAcknowledged, setVesselAcknowledged] = useState(false);
   const [vesselAcknowledgedBy, setVesselAcknowledgedBy] = useState("");
@@ -1019,6 +1020,7 @@ function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSu
     const fd = new FormData();
     fd.set("actualDepartureAt", actualDepartureAt);
     fd.set("actualArrivalAt", actualArrivalAt);
+    fd.set("countryArrivalAt", countryArrivalAt);
     fd.set("actualOnboardAt", actualOnboardAt);
     if (vesselAcknowledged) fd.set("vesselAcknowledged", "on");
     fd.set("vesselAcknowledgedBy", vesselAcknowledgedBy);
@@ -1039,8 +1041,12 @@ function BoardingForm({ crewName, onSubmit, onCancel }: { crewName: string; onSu
           <input type="datetime-local" className={`${inputCls} w-full mt-1`} style={inputStyle} value={actualDepartureAt} onChange={(e) => setActualDepartureAt(e.target.value)} />
         </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Actual arrival
+          Actual arrival (at vessel)
           <input type="datetime-local" className={`${inputCls} w-full mt-1`} style={inputStyle} value={actualArrivalAt} onChange={(e) => setActualArrivalAt(e.target.value)} />
+        </label>
+        <label className="text-xs" style={{ color: "var(--ch-sub)" }} title="When they landed in-country — can be days before boarding (medical checks, courses, documentation on land first). This is what pay is calculated from, not the onboard date.">
+          Arrived in-country
+          <input type="datetime-local" className={`${inputCls} w-full mt-1`} style={inputStyle} value={countryArrivalAt} onChange={(e) => setCountryArrivalAt(e.target.value)} />
         </label>
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Actual onboard (required)

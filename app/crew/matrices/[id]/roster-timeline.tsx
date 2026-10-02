@@ -53,6 +53,9 @@ type RosterChangeRequestRow = {
   outgoing_crew_id: string | null;
   incoming_crew_id: string | null;
   effective_date: string;
+  // Only set (and only ever distinct from effective_date) on a replace —
+  // see roster-change-actions.ts's requestRosterChange.
+  incoming_effective_date?: string | null;
   reason_code: string;
   reason_notes: string | null;
   status: "pending_approval" | "approved" | "rejected" | "cancelled";
@@ -113,7 +116,14 @@ function changeDetail(r: RosterChangeRequestRow) {
   const inName = unwrap(r.incoming)?.full_name;
   const reasonLabel = REASON_CODES.find((c) => c.value === r.reason_code)?.label ?? r.reason_code;
   const swap = r.change_type === "replace" ? `${outName ?? "—"} → ${inName ?? "—"}` : r.change_type === "unassign" ? `${outName ?? "—"} leaving` : `${inName ?? "—"} joining`;
-  return `Reason: ${reasonLabel}${r.reason_notes ? ` — ${r.reason_notes}` : ""} · ${swap} · Effective ${r.effective_date}`;
+  // A replace with a gap between sign-off and the reliever boarding has
+  // two distinct dates worth showing; same-day (the common case) stays a
+  // single "Effective" date so this doesn't get noisier for no reason.
+  const dates =
+    r.change_type === "replace" && r.incoming_effective_date && r.incoming_effective_date !== r.effective_date
+      ? `${outName ?? "Outgoing"} off ${r.effective_date} · ${inName ?? "Incoming"} on ${r.incoming_effective_date}`
+      : `Effective ${r.effective_date}`;
+  return `Reason: ${reasonLabel}${r.reason_notes ? ` — ${r.reason_notes}` : ""} · ${swap} · ${dates}`;
 }
 
 function requestToNodes(r: RosterChangeRequestRow, versionLabel?: string): Node[] {

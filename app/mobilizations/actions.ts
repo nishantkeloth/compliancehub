@@ -897,6 +897,15 @@ export async function confirmBoarding(positionId: string, requestId: string, for
       offshore_site_id: req.offshore_site_id,
       actual_departure_at: optStr(formData, "actualDepartureAt"),
       actual_arrival_at: optStr(formData, "actualArrivalAt"),
+      // Distinct from actual_arrival_at above (arrival at the vessel/
+      // transfer point, part of the boarding sequence) — this is arrival
+      // in-country, which can be days earlier (medical/courses/documentation
+      // on land first). AHM pays from this date, not actual_onboard_at —
+      // see migration 0036's note. Not wired into crew-cost/billing
+      // calculation (lib/ops.ts still derives cost from crew_assignments'
+      // own start_date/end_date) — captured here for payroll cross-
+      // reference only, a deliberate separate decision from this one.
+      country_arrival_at: optStr(formData, "countryArrivalAt"),
       actual_onboard_at: actualOnboardAt,
       confirmed_by: userId,
       vessel_acknowledged: formData.get("vesselAcknowledged") === "on",

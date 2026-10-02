@@ -1202,6 +1202,13 @@ function RowActions({
   // side — a replace/unassign request's effective date is "when the
   // change happens", unrelated to when the site itself started.
   const [effectiveDate, setEffectiveDate] = useState(showAssign ? siteEffectiveFrom || today : today);
+  // Only shown/used for a Replace — the incoming person's own assign
+  // date, which can genuinely differ from the outgoing person's unassign
+  // date above (someone signs off before their reliever actually
+  // boards). Defaults to the same date as effectiveDate but is fully
+  // independent from then on — each is its own plain date input.
+  const [incomingEffectiveDate, setIncomingEffectiveDate] = useState(effectiveDate);
+  const [confirmAssignDate, setConfirmAssignDate] = useState(siteEffectiveFrom || today);
 
   const doAssign = async () => {
     setError(null);
@@ -1221,24 +1228,24 @@ function RowActions({
   };
 
   // Confirm Assign, from an already-reserved row — same insert as the
-  // ordinary Assign above, just site-dated with no date inputs to fill in
-  // first (matches the approved mockup, which shows this as a single
-  // button). Falls back to today/no end date when the matrix has no
-  // Effective dates set, same as assignDate/plannedEndDate above.
-  // assignCandidateToMatrix releases the reservation server-side once the
-  // insert succeeds, so there's nothing extra to call here for that half.
+  // ordinary Assign above. Used to silently use siteEffectiveFrom/today
+  // with no way to change it; now exposes the same editable date input
+  // as the ordinary Assign row (confirmAssignDate, defaulted the same
+  // way) since AHM calculates on-board day counts/payroll from this date
+  // same as any other assign. assignCandidateToMatrix releases the
+  // reservation server-side once the insert succeeds, so there's nothing
+  // extra to call here for that half.
   const doConfirmAssign = async () => {
     setError(null);
     setBusy("assign");
-    const confirmDate = siteEffectiveFrom || today;
     const confirmEnd = siteEffectiveTo || null;
-    const res = await assignCandidateToMatrix(crewId, crewMatrixId, confirmDate, confirmEnd || undefined);
+    const res = await assignCandidateToMatrix(crewId, crewMatrixId, confirmAssignDate, confirmEnd || undefined);
     setBusy(null);
     if (res?.error) {
       setError(res.error);
       return;
     }
-    onAssigned(crewId, { assignment_start_date: confirmDate, assignment_planned_end_date: confirmEnd });
+    onAssigned(crewId, { assignment_start_date: confirmAssignDate, assignment_planned_end_date: confirmEnd });
     onChanged?.();
   };
 
@@ -1321,6 +1328,7 @@ function RowActions({
       outgoingCrewId: showAssign ? undefined : crewId,
       incomingCrewId: showAssign ? crewId : requestKind === "replace" ? incomingCrewId : undefined,
       effectiveDate,
+      incomingEffectiveDate: changeType === "replace" ? incomingEffectiveDate : undefined,
       reasonCode,
       reasonNotes: reasonNotes || undefined,
     });
@@ -1336,12 +1344,13 @@ function RowActions({
     if (changeType === "assign") onAssigned(crewId, { assignment_start_date: effectiveDate, assignment_planned_end_date: null });
     if (changeType === "replace") {
       const incoming = candidateOptions.find((c) => c.crew_id === incomingCrewId);
-      if (incoming) onAssigned(incoming.crew_id, { assignment_start_date: effectiveDate, assignment_planned_end_date: null });
+      if (incoming) onAssigned(incoming.crew_id, { assignment_start_date: incomingEffectiveDate, assignment_planned_end_date: null });
     }
     setRequestOpen(false);
     setReasonCode("");
     setReasonNotes("");
     setIncomingCrewId("");
+    setIncomingEffectiveDate(effectiveDate);
     onChanged?.();
   };
 
@@ -1374,6 +1383,15 @@ function RowActions({
             </span>
           )}
           <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={confirmAssignDate}
+              onChange={(e) => setConfirmAssignDate(e.target.value)}
+              disabled={busy !== null}
+              title="Assign date"
+              className="text-[11px] rounded px-1.5 py-1 border"
+              style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)", width: "6.5rem" }}
+            />
             <button
               onClick={doConfirmAssign}
               disabled={busy !== null}
@@ -1575,7 +1593,7 @@ function RowActions({
             />
           </label>
           <label className={`${lbl} block`} style={lblStyle}>
-            Effective date
+            {showAssign ? "Assign date" : requestKind === "replace" ? "Unassign date (outgoing)" : "Unassign date"}
             <input
               type="date"
               value={effectiveDate}
@@ -1584,6 +1602,18 @@ function RowActions({
               style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
             />
           </label>
+          {showUnassign && requestKind === "replace" && (
+            <label className={`${lbl} block`} style={lblStyle}>
+              Assign date (incoming)
+              <input
+                type="date"
+                value={incomingEffectiveDate}
+                onChange={(e) => setIncomingEffectiveDate(e.target.value)}
+                className="text-[11px] rounded px-1.5 py-1 border w-full mt-1"
+                style={{ borderColor: "var(--ch-line)", color: "var(--ch-ink)" }}
+              />
+            </label>
+          )}
           <div className="flex items-center gap-1.5">
             <button
               onClick={doRosterChange}

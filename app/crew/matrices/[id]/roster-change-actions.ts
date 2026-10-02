@@ -84,12 +84,21 @@ export async function requestRosterChange(input: {
   outgoingCrewId?: string | null;
   incomingCrewId?: string | null;
   effectiveDate: string;
+  // Only meaningful (and only ever set by the UI) when changeType is
+  // "replace" — the incoming person's own assign date, independent of
+  // effectiveDate (which for a replace is the outgoing person's unassign
+  // date). Left null for a plain assign/unassign, where effectiveDate
+  // alone already is that change's one date.
+  incomingEffectiveDate?: string | null;
   reasonCode: string;
   reasonNotes?: string | null;
 }) {
   const { supabase, access, userId } = await requirePermission("crew.manage", "You don't have permission to change crew on this matrix.");
 
   if (!DATE_RE.test(input.effectiveDate)) return { error: "Effective date is required." };
+  if (input.changeType === "replace" && input.incomingEffectiveDate && !DATE_RE.test(input.incomingEffectiveDate)) {
+    return { error: "Incoming assign date isn't a valid date." };
+  }
   if (!REASON_CODES.some((r) => r.value === input.reasonCode)) return { error: "Please choose a reason." };
   if (input.changeType !== "assign" && !input.outgoingCrewId) return { error: "Outgoing crew member is required for a replace or unassign." };
   if (input.changeType !== "unassign" && !input.incomingCrewId) return { error: "Incoming crew member is required for an assign or replace." };
@@ -122,6 +131,7 @@ export async function requestRosterChange(input: {
       outgoing_crew_id: input.outgoingCrewId ?? null,
       incoming_crew_id: input.incomingCrewId ?? null,
       effective_date: input.effectiveDate,
+      incoming_effective_date: input.changeType === "replace" ? input.incomingEffectiveDate || input.effectiveDate : null,
       reason_code: input.reasonCode,
       reason_notes: input.reasonNotes?.trim() || null,
       requested_by: userId,
@@ -231,6 +241,11 @@ export async function applyApprovedRosterChanges(
 
   for (const request of requests ?? []) {
     const effectiveDate = request.effective_date as string;
+    // Only ever set (distinct from effectiveDate) on a replace — see
+    // requestRosterChange's comment. Falls back to effectiveDate for an
+    // older request recorded before this column existed, or a plain
+    // assign/unassign where it was never set at all.
+    const incomingDate = (request.incoming_effective_date as string | null) ?? effectiveDate;
     let appliedAssignmentId: string | null = null;
 
     if (request.change_type === "unassign" || request.change_type === "replace") {
@@ -271,9 +286,9 @@ export async function applyApprovedRosterChanges(
           org_id: access.orgId,
           crew_id: request.incoming_crew_id,
           offshore_site_id: matrix.offshore_site_id,
-          start_date: effectiveDate,
-          planned_start_date: effectiveDate,
-          actual_start_date: effectiveDate,
+          start_date: incomingDate,
+          planned_start_date: incomingDate,
+          actual_start_date: incomingDate,
           assignment_status: "active",
           roster_change_request_id: request.id,
           notes: "Assigned when this crew matrix version was activated (approved roster change).",
@@ -315,7 +330,7 @@ export async function listRosterChangeRequests(crewMatrixId: string | string[]) 
   let query = supabase
     .from("roster_change_requests")
     .select(
-      "id, crew_matrix_id, change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes, status, requested_by, requested_at, decided_by, decided_at, decision_comment, applied_assignment_id, crew_matrix_line_id, " +
+      "id, crew_matrix_id, change_type, outgoing_crew_id, incoming_crew_id, effective_date, incoming_effective_date, reason_code, reason_notes, status, requested_by, requested_at, decided_by, decided_at, decision_comment, applied_assignment_id, crew_matrix_line_id, " +
         "outgoing:crew_profiles!outgoing_crew_id(full_name), incoming:crew_profiles!incoming_crew_id(full_name)"
     )
     .eq("org_id", access.orgId);

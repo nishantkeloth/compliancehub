@@ -126,7 +126,7 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     // roster-change-actions.ts for why this preview exists at all.
     supabase
       .from("roster_change_requests")
-      .select("change_type, outgoing_crew_id, incoming_crew_id, effective_date, reason_code, reason_notes")
+      .select("change_type, outgoing_crew_id, incoming_crew_id, effective_date, incoming_effective_date, reason_code, reason_notes")
       .eq("crew_matrix_id", id)
       .eq("org_id", access.orgId)
       .eq("status", "approved")
@@ -210,7 +210,11 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       stagedOutgoingIds.add(r.outgoing_crew_id as string);
     }
     if ((r.change_type === "assign" || r.change_type === "replace") && r.incoming_crew_id) {
-      stagedIncoming.set(r.incoming_crew_id as string, r.effective_date as string);
+      // A replace's incoming person boards on incoming_effective_date
+      // when that's set (see roster-change-actions.ts) — falls back to
+      // effective_date for a plain assign, or an older request recorded
+      // before this column existed.
+      stagedIncoming.set(r.incoming_crew_id as string, (r.incoming_effective_date as string | null) ?? (r.effective_date as string));
     }
   }
 
