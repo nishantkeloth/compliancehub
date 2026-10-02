@@ -151,6 +151,17 @@ const bulkClassifySchema = z.object({
   expiry_date: z.string().nullable().default(null),
   confidence: z.number().min(0).max(1).default(0.5),
   source_excerpt: z.string().nullable().default(null),
+  // Phase 16c, part 2 — identity cross-check. Most documents (a
+  // training certificate, a course completion letter) don't carry a
+  // full name at all; these stay null for those and the check below
+  // is simply skipped. The ones that matter are passports, seaman's
+  // books, visas, national IDs — anything bearing a person's own
+  // identity — where a mismatch against the matched crew member's
+  // stored profile is a strong signal the file landed in the wrong
+  // person's folder.
+  document_full_name: z.string().nullable().default(null),
+  document_nationality: z.string().nullable().default(null),
+  document_date_of_birth: z.string().nullable().default(null),
 });
 
 const SYSTEM_CLASSIFY = `You are identifying a single scanned document (a certificate, ID, or similar) that may or may not belong to an offshore marine crew member's compliance record.
@@ -160,7 +171,8 @@ Rules:
 - Set document_type_name to null whenever: the document isn't an identity or certification document at all (payroll slips, remittance advices, invoices, letters, personal correspondence, etc.), OR it is a certificate/ID but doesn't clearly match any of the configured names given to you. Do NOT invent a new type name in either case — null is the correct answer, not a guess.
 - Never invent a value the document doesn't support; leave a field null rather than guess.
 - Dates must be ISO yyyy-mm-dd when the document states a full date; leave null if only partial or unclear.
-- document_number is whatever the document itself labels as its own number/ID/reference (certificate number, passport number, visa number, etc.), not an unrelated reference on the page.`;
+- document_number is whatever the document itself labels as its own number/ID/reference (certificate number, passport number, visa number, etc.), not an unrelated reference on the page.
+- document_full_name/document_nationality/document_date_of_birth: fill these in ONLY when the document itself is a personal identity document (passport, seaman's book, visa, national ID, or similar) and actually shows that field printed on it. Leave all three null for anything else (a training certificate, a course letter, a form with no photo-ID-style personal details) — do not guess a name from context like a filename or folder.`;
 
 function classifyPrompt(documentTypeNames: string[], documentText: string | null, hasAttachedFile: boolean) {
   return [
@@ -191,16 +203,23 @@ export type ClassifiedFile = {
   // used elsewhere in this file) so a reviewer sees "already on file"
   // or "expires soon" before clicking Import, when it can still change
   // their mind, rather than as a warning on the done screen after the
-  // document is already attached. Only computed when the file actually
-  // matched a configured document type — a not-applicable / unmatched
-  // row has nothing meaningful to check yet.
+  // document is already attached. Duplicate/expiry checks only run once
+  // the file matched a configured document type; the identity
+  // cross-check below runs independent of that, whenever the document
+  // itself carries a readable name (a misfiled passport is just as much
+  // a problem whether or not "Passport" happens to be a configured type).
   warnings: string[];
 };
 
 export async function classifyDocumentFolder(crewId: string, formData: FormData): Promise<{ files: ClassifiedFile[] } | { error: string }> {
   const { supabase, orgId, userId } = await requireBulkDocumentAccess();
 
-  const { data: crewRow } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", orgId).maybeSingle();
+  const { data: crewRow } = await supabase
+    .from("crew_profiles")
+    .select("id, full_name, nationality, date_of_birth")
+    .eq("id", crewId)
+    .eq("org_id", orgId)
+    .maybeSingle();
   if (!crewRow) return { error: "Crew member not found." };
 
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
@@ -274,6 +293,33 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
       }
       const dateCheck = validateDocumentDates(p.issue_date, p.expiry_date, { warnExpiringWithinDays: 60 });
       warnings.push(...dateCheck.errors, ...dateCheck.warnings);
+    }
+
+    // Identity cross-check — independent of whether a document type
+    // matched. Only fires when the document actually carries a
+    // readable name (most files leave this null and skip the check
+    // entirely) and the crew member's own profile has something to
+    // compare it against. A low name-similarity score is treated the
+    // same way folder-matching treats one (see matchDocumentFolders
+    // above) — token overlap below 0.6, not an exact-string demand, so
+    // "J. Smith" vs "John Smith" doesn't false-positive. Nationality
+    // and date of birth are compared more strictly since those have
+    // much less legitimate formatting variance.
+    if (p.document_full_name && crewRow.full_name) {
+      const score = nameSimilarity(p.document_full_name, crewRow.full_name);
+      if (score < 0.6) {
+        warnings.push(`Name on document ("${p.document_full_name}") doesn't closely match this crew member's profile ("${crewRow.full_name}") — check this is the right person's file.`);
+      }
+    }
+    if (p.document_nationality && crewRow.nationality && normName(p.document_nationality) !== normName(crewRow.nationality)) {
+      warnings.push(`Nationality on document ("${p.document_nationality}") differs from the profile ("${crewRow.nationality}").`);
+    }
+    if (p.document_date_of_birth && crewRow.date_of_birth) {
+      const docDob = new Date(p.document_date_of_birth);
+      const profileDob = new Date(crewRow.date_of_birth);
+      if (!Number.isNaN(docDob.getTime()) && !Number.isNaN(profileDob.getTime()) && docDob.getTime() !== profileDob.getTime()) {
+        warnings.push(`Date of birth on document (${p.document_date_of_birth}) differs from the profile (${crewRow.date_of_birth}).`);
+      }
     }
 
     results.push({
