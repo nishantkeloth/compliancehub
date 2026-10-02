@@ -36,6 +36,20 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 const CHUNK_MAX_FILES = 5;
 const CHUNK_MAX_BYTES = 15 * 1024 * 1024; // stay well under the 25MB body limit, leaving room for multipart overhead
 
+// commitDocumentIntakeFolder does far more per file than the classify-
+// upload step above (a version-number lookup, two duplicate checks, the
+// storage upload itself, an insert, and an update — several sequential
+// Supabase round trips per file, not just one storage write), so 5 files
+// in one request can run long enough to hit the platform's function
+// timeout even with maxDuration raised on the page (see
+// app/team/bulk-intake/document-intake/page.tsx — some hosting plans cap
+// that regardless of what's requested). A timed-out request comes back
+// as a platform error page, not a normal app error, which is what
+// produces the generic "An unexpected response was received from the
+// server" message. A smaller batch here trades a few more requests for
+// a much larger safety margin under that ceiling.
+const COMMIT_CHUNK_MAX_FILES = 2;
+
 // Phase 16d — how often the panel checks in on a background classify job.
 // getBulkIntakeJobStatus is cheap (a couple of indexed selects), and this
 // is only ever polled while this one admin's tab has this one job open,
@@ -451,7 +465,7 @@ export default function DocumentIntakePanel() {
         // that batch and the loop moves on, so documents already
         // attached from earlier batches in this folder are never lost.
         const includedFiles = f.files.filter((file) => included.some((r) => r.filename === file.name));
-        const fileBatches = batchFiles(includedFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+        const fileBatches = batchFiles(includedFiles, COMMIT_CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
         let doneCount = 0;
         for (const chunk of fileBatches) {
           doneCount += chunk.length;
