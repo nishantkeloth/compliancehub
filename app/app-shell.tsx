@@ -96,6 +96,9 @@ export default async function AppShell({
     // not linked from day-to-day navigation anymore.
     crewItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
   }
+  if (can(access, "crew.report.send")) {
+    crewItems.push({ href: "/reports", key: "client-reports", label: "Client Reports" });
+  }
 
   const mobilizationItems: NavItem[] = [];
   if (can(access, "mobilization.view")) {

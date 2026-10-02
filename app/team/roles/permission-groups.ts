@@ -25,6 +25,7 @@ export type PermissionGroup = {
 const GROUP_RULES: { prefix: string; label: string }[] = [
   { prefix: "crew.matrix.", label: "Crew Matrix" },
   { prefix: "crew.documents.", label: "Crew Documents" },
+  { prefix: "crew.report.", label: "Client Reports" },
   { prefix: "crew.", label: "Crew Register" },
   { prefix: "contracts.", label: "Contracts" },
   { prefix: "projects.", label: "Projects" },

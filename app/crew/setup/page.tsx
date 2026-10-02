@@ -25,7 +25,7 @@ export default async function CrewSetupPage() {
     documentTemplatesRes,
     documentTemplateItemsRes,
   ] = await Promise.all([
-    supabase.from("job_roles").select("id, name, category, is_active").eq("org_id", access.orgId).order("name"),
+    supabase.from("job_roles").select("id, name, category, is_active, is_key_officer").eq("org_id", access.orgId).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
     supabase.from("rotation_templates").select("id, name, pattern_type, days_on, days_off, notes, is_active").eq("org_id", access.orgId).order("name"),
     supabase

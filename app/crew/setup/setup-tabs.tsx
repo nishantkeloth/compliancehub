@@ -31,7 +31,7 @@ import {
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import DocumentTypesImportPanel from "./document-types-import-panel";
 
-type JobRole = { id: string; name: string; category: string | null; is_active: boolean };
+type JobRole = { id: string; name: string; category: string | null; is_active: boolean; is_key_officer?: boolean };
 type Skill = { id: string; name: string };
 type RotationTemplate = {
   id: string;
@@ -206,6 +206,7 @@ function JobRolesPanel({ jobRoles }: { jobRoles: JobRole[] }) {
   const [, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [isKeyOfficer, setIsKeyOfficer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -217,10 +218,12 @@ function JobRolesPanel({ jobRoles }: { jobRoles: JobRole[] }) {
     const fd = new FormData();
     fd.set("name", name.trim());
     fd.set("category", category.trim());
-    const optimisticItem: JobRole = { id: tempId(), name: name.trim(), category: category.trim() || null, is_active: true };
+    if (isKeyOfficer) fd.set("isKeyOfficer", "on");
+    const optimisticItem: JobRole = { id: tempId(), name: name.trim(), category: category.trim() || null, is_active: true, is_key_officer: isKeyOfficer };
     addOptimistic(optimisticItem);
     setName("");
     setCategory("");
+    setIsKeyOfficer(false);
     startTransition(async () => {
       const res = await createJobRole(fd);
       if (res?.error) {
@@ -272,6 +275,9 @@ function JobRolesPanel({ jobRoles }: { jobRoles: JobRole[] }) {
             Category (optional)
             <input className={`${inputCls} w-48 mt-1`} style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} />
           </label>
+          <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+            <input type="checkbox" checked={isKeyOfficer} onChange={(e) => setIsKeyOfficer(e.target.checked)} /> Key Officer
+          </label>
           <button onClick={add} disabled={!name.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
             + Add role
           </button>
@@ -289,6 +295,7 @@ function JobRolesPanel({ jobRoles }: { jobRoles: JobRole[] }) {
               <div className="flex-1 min-w-[160px]">
                 <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{r.name}</span>
                 {r.category && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>{r.category}</span>}
+                {r.is_key_officer && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>Key Officer</span>}
                 {!r.is_active && <span className="text-xs ml-2 font-semibold" style={{ color: "var(--ch-fail)" }}>Inactive</span>}
                 <SavingTag id={r.id} />
               </div>
@@ -314,6 +321,7 @@ function JobRoleEditRow({
   const [name, setName] = useState(role.name);
   const [category, setCategory] = useState(role.category ?? "");
   const [isActive, setIsActive] = useState(role.is_active);
+  const [isKeyOfficer, setIsKeyOfficer] = useState(role.is_key_officer ?? false);
   const [submitted, setSubmitted] = useState(false);
 
   const save = () => {
@@ -322,8 +330,9 @@ function JobRoleEditRow({
     fd.set("name", name.trim());
     fd.set("category", category.trim());
     if (isActive) fd.set("isActive", "on");
+    if (isKeyOfficer) fd.set("isKeyOfficer", "on");
     setSubmitted(true);
-    onSubmit(fd, { name: name.trim(), category: category.trim() || null, is_active: isActive });
+    onSubmit(fd, { name: name.trim(), category: category.trim() || null, is_active: isActive, is_key_officer: isKeyOfficer });
   };
 
   return (
@@ -339,6 +348,9 @@ function JobRoleEditRow({
         </label>
         <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
+        </label>
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+          <input type="checkbox" checked={isKeyOfficer} onChange={(e) => setIsKeyOfficer(e.target.checked)} /> Key Officer
         </label>
         <button onClick={save} disabled={submitted} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Save</button>
         <button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>

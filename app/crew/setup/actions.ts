@@ -40,9 +40,13 @@ export async function createJobRole(formData: FormData) {
   const name = str(formData, "name");
   if (!name) return { error: "Name is required." };
 
-  const { error } = await supabase
-    .from("job_roles")
-    .insert({ org_id: access.orgId, name, category: optStr(formData, "category"), created_by: userId });
+  const { error } = await supabase.from("job_roles").insert({
+    org_id: access.orgId,
+    name,
+    category: optStr(formData, "category"),
+    is_key_officer: formData.get("isKeyOfficer") === "on",
+    created_by: userId,
+  });
   if (error) return { error: error.message };
   revalidateSetup();
   return {};
@@ -55,7 +59,12 @@ export async function updateJobRole(id: string, formData: FormData) {
 
   const { error } = await supabase
     .from("job_roles")
-    .update({ name, category: optStr(formData, "category"), is_active: formData.get("isActive") === "on" })
+    .update({
+      name,
+      category: optStr(formData, "category"),
+      is_active: formData.get("isActive") === "on",
+      is_key_officer: formData.get("isKeyOfficer") === "on",
+    })
     .eq("id", id);
   if (error) return { error: error.message };
   revalidateSetup();
