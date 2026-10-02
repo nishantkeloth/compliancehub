@@ -15,17 +15,34 @@ import { classifyOneFile, loadClassifyContext, type ClassifyCrewRow } from "@/li
 // chain that dies outright (a deploy landing mid-chain, a crashed
 // invocation that never got to fire its own next hop).
 //
-// Each invocation claims and processes pending items one at a time
-// until either a time budget runs out or there's nothing left pending,
-// then re-fires itself if there's more to do. Hobby-plan Vercel
-// functions are capped at 10s of real execution regardless of
-// maxDuration below (same note as the existing cron route) — the time
-// budget here is set well under that so a slow AI call doesn't blow
-// past it; a plan that allows the full maxDuration just means fewer
-// hops per job, not a correctness difference.
-export const maxDuration = 60;
+// Each invocation claims and processes pending items — several at once
+// (see CONCURRENCY below) — until either a time budget runs out or
+// there's nothing left pending, then re-fires itself if there's more to
+// do. An earlier version of this comment assumed Hobby-plan Vercel
+// functions were hard-capped at 10s regardless of maxDuration and kept
+// both constants tiny as a result; that's no longer how Vercel's limits
+// work (fluid compute gives Hobby the same 300s default/maximum as
+// Pro — https://vercel.com/docs/functions/limitations#max-duration), and
+// that stale assumption was a big part of why a folder's classify job
+// crawled one file per serverless hop. maxDuration/TIME_BUDGET_MS below
+// are now set to use most of that real budget, so one invocation gets
+// through many files — and several at a time — instead of one every few
+// seconds. A plan with a lower actual ceiling just means more hops, not
+// a correctness difference (claimNextItem's atomic claim is what makes
+// concurrent/overlapping invocations safe either way).
+export const maxDuration = 280;
 
-const TIME_BUDGET_MS = 8_000;
+const TIME_BUDGET_MS = 240_000;
+
+// How many files this hop reads with AI at once. classifyOneFile's AI
+// call is I/O-bound (waiting on the model provider), so running several
+// concurrently is mostly free wall-clock time, not CPU — runStructured
+// (lib/ai/router.ts) already falls back across models/providers on a
+// 429/quota error, so a burst of concurrent calls degrades gracefully
+// into slower/sequential-feeling behavior rather than failing outright
+// if a provider's rate limit is hit. Kept modest rather than maximal:
+// worth raising later if the provider in use comfortably allows more.
+const CONCURRENCY = 4;
 
 type Supa = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -87,6 +104,7 @@ export async function POST(req: NextRequest) {
     // fall through to the missing-jobId response below
   }
   if (!jobId) return NextResponse.json({ error: "jobId required" }, { status: 400 });
+  const resolvedJobId: string = jobId; // narrowed once here — closing over the `let` above loses that narrowing inside runWorkerLoop below
 
   const admin = createAdminClient();
 
@@ -118,27 +136,41 @@ export async function POST(req: NextRequest) {
   }
 
   const deadline = Date.now() + TIME_BUDGET_MS;
-  while (Date.now() < deadline) {
-    const item = await claimNextItem(admin, jobId);
-    if (!item) break; // nothing left pending
 
-    try {
-      const { data: blob, error: dlErr } = await admin.storage.from("bulk-intake-staging").download(item.storage_path);
-      if (dlErr || !blob) throw new Error(dlErr?.message || "Could not download the staged file.");
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const file = new File([bytes], item.filename, { type: item.content_type || "application/octet-stream" });
+  // One worker loop: claim one item, process it, repeat until the
+  // deadline or nothing's left — then CONCURRENCY of these run at once.
+  // claimNextItem's atomic conditional UPDATE means two loops can never
+  // walk away with the same row, so this is safe without any extra
+  // locking: each loop just gets back null once there's nothing left to
+  // claim and exits.
+  async function runWorkerLoop() {
+    while (Date.now() < deadline) {
+      const item = await claimNextItem(admin, resolvedJobId);
+      if (!item) return; // nothing left pending
 
-      const classified = await classifyOneFile(admin, ctx, job.org_id, job.created_by, job.crew_id, crewForClassify, documentTypes, documentTypeNames, aliases, file);
-      await admin.from("bulk_intake_job_items").update({ status: "done", classified, processed_at: new Date().toISOString() }).eq("id", item.id);
-    } catch (e) {
-      await admin
-        .from("bulk_intake_job_items")
-        .update({ status: "error", error: e instanceof Error ? e.message : String(e), processed_at: new Date().toISOString() })
-        .eq("id", item.id);
+      try {
+        const { data: blob, error: dlErr } = await admin.storage.from("bulk-intake-staging").download(item.storage_path);
+        if (dlErr || !blob) throw new Error(dlErr?.message || "Could not download the staged file.");
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const file = new File([bytes], item.filename, { type: item.content_type || "application/octet-stream" });
+
+        const classified = await classifyOneFile(admin, ctx, job.org_id, job.created_by, job.crew_id, crewForClassify, documentTypes, documentTypeNames, aliases, file);
+        await admin.from("bulk_intake_job_items").update({ status: "done", classified, processed_at: new Date().toISOString() }).eq("id", item.id);
+      } catch (e) {
+        await admin
+          .from("bulk_intake_job_items")
+          .update({ status: "error", error: e instanceof Error ? e.message : String(e), processed_at: new Date().toISOString() })
+          .eq("id", item.id);
+      }
+
+      // Harmless to race across concurrent loops — it's just a
+      // timestamp, and the self-heal check in getBulkIntakeJobStatus
+      // only cares that it's recent, not which loop set it last.
+      await admin.from("bulk_intake_jobs").update({ last_heartbeat_at: new Date().toISOString() }).eq("id", resolvedJobId);
     }
-
-    await admin.from("bulk_intake_jobs").update({ last_heartbeat_at: new Date().toISOString() }).eq("id", jobId);
   }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => runWorkerLoop()));
 
   const { count: doneOrErrorCount } = await admin
     .from("bulk_intake_job_items")

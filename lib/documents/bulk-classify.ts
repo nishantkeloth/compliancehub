@@ -92,6 +92,39 @@ function nameSimilarity(a: string, b: string) {
 export type ClassifyCrewRow = { full_name: string; nationality: string | null; date_of_birth: string | null };
 export type ClassifyDocType = { id: string; name: string };
 
+// A bulk-intake folder is routinely half (or more) administrative
+// paperwork that was never going to match a compliance document type —
+// payroll/remittance slips, HR letters, job descriptions — mixed in
+// alongside the real certificates. Every one of those still used to cost
+// a full AI call (extractDocument + a vision/structured-output request)
+// just to be told "not applicable", which is most of what made a large
+// folder slow. Filenames for this kind of paperwork are reliably
+// explicit, so a short, deliberately conservative keyword list lets
+// classifyOneFile skip the AI call entirely for an obvious match —
+// never to ASSERT a document type this way, only to rule one out, so a
+// false hit here costs nothing worse than "this file now needs a human
+// to double-check it's really irrelevant" rather than a wrong type being
+// attached to someone's record. Keep this list short and unambiguous;
+// when in doubt, leave a keyword out and let the AI call decide.
+const FILENAME_IRRELEVANT_KEYWORDS = [
+  "remittance",
+  "payslip",
+  "pay slip",
+  "payroll",
+  "job description",
+  "performance evaluation",
+  "performance review",
+  "offer letter",
+  "employee declaration",
+  "bank statement",
+  "invoice",
+];
+
+export function filenameLooksIrrelevant(filename: string): boolean {
+  const n = normName(filename);
+  return FILENAME_IRRELEVANT_KEYWORDS.some((k) => n.includes(k));
+}
+
 export async function classifyOneFile(
   supabase: Supa,
   ctx: AiContext,
@@ -104,6 +137,9 @@ export async function classifyOneFile(
   aliases: Alias[],
   file: File
 ): Promise<ClassifiedFile> {
+  if (filenameLooksIrrelevant(file.name)) {
+    return { filename: file.name, mapping: null, documentTypeName: null, notApplicable: true, documentNumber: null, issueDate: null, expiryDate: null, confidence: 1, error: null, warnings: [] };
+  }
   const extracted = await extractDocument(file);
   if (extracted.unreadable) {
     return { filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: "Doesn't look like a valid file of its type.", warnings: [] };
