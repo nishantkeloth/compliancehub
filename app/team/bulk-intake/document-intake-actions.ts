@@ -1,14 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
-import type { ModelMessage } from "ai";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import { loadAiContext, runStructured } from "@/lib/ai/router";
-import { extractDocument } from "@/lib/ai/extract";
-import { mapName, type Alias, type Mapping } from "@/lib/ai/mapping";
 import { sha256Hex, checkDuplicateFile, checkDuplicateDocumentNumber, validateDocumentDates } from "@/lib/documents/checks";
+import { classifyOneFile, loadClassifyContext, type ClassifiedFile } from "@/lib/documents/bulk-classify";
 
 // Bulk Data Migration — Bulk Document Intake, phase 2 of the flow shown in
 // the Crew Data Migration Flow diagram. Given a folder tree (one
@@ -128,88 +124,16 @@ export async function matchDocumentFolders(
 }
 
 /* ================= per-folder classification ================= */
+//
+// The actual per-file logic (AI classify + Phase 16c's pre-commit
+// checks) lives in lib/documents/bulk-classify.ts now, shared with the
+// background worker (app/api/bulk-intake/process-job/route.ts) added in
+// Phase 16d below — see that file's header for why. classifyDocumentFolder
+// stays as a synchronous, same-request path: still used for a small
+// folder opened for a quick re-check, where waiting for a background job
+// to spin up would be slower than just doing the handful of files inline.
 
-// Deliberately NOT the shared crewIntakeDocumentSchema from
-// lib/ai/crew-intake-schema.ts (used by the single-document Auto-read
-// button) — that flow already has a document type pre-selected by the
-// person uploading, so the model is only confirming/extracting against
-// a known type. Bulk intake has no pre-selection: the model has to
-// classify from a closed list with no human in the loop yet, so it gets
-// its own stricter contract — document_type_name is nullable and MUST
-// be either an exact name from the provided list, or null. It must
-// never invent a name that isn't already configured; "doesn't match
-// anything in the list" and "isn't a compliance document at all"
-// (payroll slips, invoices, personal correspondence, etc.) both map to
-// null, and the UI treats a null the same way either way — excluded by
-// default, with creating a brand-new document type left as a separate,
-// deliberate action a human takes on purpose, never something this
-// classification step does for them.
-const bulkClassifySchema = z.object({
-  document_type_name: z.string().nullable().default(null),
-  document_number: z.string().nullable().default(null),
-  issue_date: z.string().nullable().default(null),
-  expiry_date: z.string().nullable().default(null),
-  confidence: z.number().min(0).max(1).default(0.5),
-  source_excerpt: z.string().nullable().default(null),
-  // Phase 16c, part 2 — identity cross-check. Most documents (a
-  // training certificate, a course completion letter) don't carry a
-  // full name at all; these stay null for those and the check below
-  // is simply skipped. The ones that matter are passports, seaman's
-  // books, visas, national IDs — anything bearing a person's own
-  // identity — where a mismatch against the matched crew member's
-  // stored profile is a strong signal the file landed in the wrong
-  // person's folder.
-  document_full_name: z.string().nullable().default(null),
-  document_nationality: z.string().nullable().default(null),
-  document_date_of_birth: z.string().nullable().default(null),
-});
-
-const SYSTEM_CLASSIFY = `You are identifying a single scanned document (a certificate, ID, or similar) that may or may not belong to an offshore marine crew member's compliance record.
-Rules:
-- Return only the requested JSON. No prose outside it.
-- document_type_name must be EXACTLY one of the configured type names given to you (copy it verbatim, do not paraphrase or invent a variant) — or null.
-- Set document_type_name to null whenever: the document isn't an identity or certification document at all (payroll slips, remittance advices, invoices, letters, personal correspondence, etc.), OR it is a certificate/ID but doesn't clearly match any of the configured names given to you. Do NOT invent a new type name in either case — null is the correct answer, not a guess.
-- Never invent a value the document doesn't support; leave a field null rather than guess.
-- Dates must be ISO yyyy-mm-dd when the document states a full date; leave null if only partial or unclear.
-- document_number is whatever the document itself labels as its own number/ID/reference (certificate number, passport number, visa number, etc.), not an unrelated reference on the page.
-- document_full_name/document_nationality/document_date_of_birth: fill these in ONLY when the document itself is a personal identity document (passport, seaman's book, visa, national ID, or similar) and actually shows that field printed on it. Leave all three null for anything else (a training certificate, a course letter, a form with no photo-ID-style personal details) — do not guess a name from context like a filename or folder.`;
-
-function classifyPrompt(documentTypeNames: string[], documentText: string | null, hasAttachedFile: boolean) {
-  return [
-    "TASK: Identify which of this company's configured document types (if any) this file is, and extract its own number and validity dates.",
-    `Configured document/certificate types for this company — document_type_name MUST be one of these exact strings, or null: ${documentTypeNames.join("; ") || "(none configured)"}`,
-    documentText
-      ? `--- Extracted text ---\n${documentText}`
-      : hasAttachedFile
-        ? "(The document is attached below as an image/file — read it directly.)"
-        : "(No readable text could be extracted from this file.)",
-  ].join("\n\n");
-}
-
-export type ClassifiedFile = {
-  filename: string;
-  mapping: Mapping | null;
-  documentTypeName: string | null;
-  // true when the AI positively returned null (not applicable / no
-  // configured type fits) rather than this being a read error.
-  notApplicable: boolean;
-  documentNumber: string | null;
-  issueDate: string | null;
-  expiryDate: string | null;
-  confidence: number;
-  error: string | null;
-  // Phase 16c — surfaced during classification (not after commit, the
-  // way checkDuplicateFile/checkDuplicateDocumentNumber were originally
-  // used elsewhere in this file) so a reviewer sees "already on file"
-  // or "expires soon" before clicking Import, when it can still change
-  // their mind, rather than as a warning on the done screen after the
-  // document is already attached. Duplicate/expiry checks only run once
-  // the file matched a configured document type; the identity
-  // cross-check below runs independent of that, whenever the document
-  // itself carries a readable name (a misfiled passport is just as much
-  // a problem whether or not "Passport" happens to be a configured type).
-  warnings: string[];
-};
+export type { ClassifiedFile } from "@/lib/documents/bulk-classify";
 
 export async function classifyDocumentFolder(crewId: string, formData: FormData): Promise<{ files: ClassifiedFile[] } | { error: string }> {
   const { supabase, orgId, userId } = await requireBulkDocumentAccess();
@@ -226,117 +150,189 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
   if (files.length === 0) return { error: "No files for this folder." };
   if (files.length > MAX_FILES_PER_FOLDER) return { error: `This folder has more than ${MAX_FILES_PER_FOLDER} files — split it up.` };
 
-  const ctx = await loadAiContext(supabase, orgId);
+  const { ctx, documentTypes, documentTypeNames, aliases } = await loadClassifyContext(supabase, orgId);
   if (!ctx.settings.ai_enabled) return { error: "AI features are disabled for this company (Administration → AI Settings)." };
   const maxBytes = ctx.settings.max_upload_mb * 1024 * 1024;
   for (const f of files) if (f.size > maxBytes || f.size > MAX_DOCUMENT_FILE_BYTES) return { error: `"${f.name}" is larger than the ${Math.min(ctx.settings.max_upload_mb, MAX_DOCUMENT_FILE_BYTES / 1024 / 1024)} MB limit.` };
 
-  const [dt, al] = await Promise.all([
-    supabase.from("document_types").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
-    supabase.from("ai_name_aliases").select("entity_type, alias, target_id").eq("org_id", orgId),
-  ]);
-  const documentTypes = dt.data ?? [];
-  const aliases = (al.data ?? []) as Alias[];
-  const documentTypeNames = documentTypes.map((d) => d.name);
-
   const results: ClassifiedFile[] = [];
   for (const file of files) {
-    const extracted = await extractDocument(file);
-    if (extracted.unreadable) {
-      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: "Doesn't look like a valid file of its type.", warnings: [] });
-      continue;
-    }
-    const prompt = classifyPrompt(documentTypeNames, extracted.text, extracted.needsModelVision);
-    const fileParts = extracted.needsModelVision ? [{ type: "file" as const, data: extracted.bytes, mediaType: extracted.mediaType, filename: extracted.filename }] : [];
-    const content: Exclude<ModelMessage, { role: "system" | "assistant" | "tool" }>["content"] = fileParts.length ? [{ type: "text", text: prompt }, ...fileParts] : prompt;
-    const messages: ModelMessage[] = [{ role: "user", content }];
-
-    const result = await runStructured(supabase, ctx, {
-      task: "crew_intake",
-      schema: bulkClassifySchema,
-      system: SYSTEM_CLASSIFY,
-      messages,
-      needsDocuments: extracted.needsModelVision,
-      userId,
-    });
-    if ("error" in result) {
-      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: result.error, warnings: [] });
-      continue;
-    }
-    const p = result.object;
-    // mapName still runs even on a name the model wasn't supposed to
-    // invent — if it ever does anyway, this correctly comes back with
-    // targetId: null (method "none"), and the UI treats that exactly
-    // like notApplicable: it's never auto-included or auto-created.
-    const mapping = p.document_type_name ? mapName(p.document_type_name, "document_type", documentTypes, aliases) : null;
-
-    // Pre-commit checks — only meaningful once we actually know which
-    // configured document type this is. checkDuplicateFile/
-    // checkDuplicateDocumentNumber already existed but only ran inside
-    // commitDocumentIntakeFolder, after the file was already attached;
-    // running them here means the review table can show "already on
-    // file" before Import is ever clicked.
-    const warnings: string[] = [];
-    if (mapping?.targetId) {
-      const fileHash = sha256Hex(extracted.bytes);
-      const dupFile = await checkDuplicateFile(supabase, orgId, crewId, fileHash);
-      if (dupFile) {
-        warnings.push(
-          `Same file already on record${dupFile.documentTypeName ? ` (as ${dupFile.documentTypeName})` : ""}, uploaded ${new Date(dupFile.uploadedAt).toLocaleDateString()}.`
-        );
-      }
-      if (p.document_number) {
-        const dupNumber = await checkDuplicateDocumentNumber(supabase, orgId, mapping.targetId, p.document_number, crewId);
-        if (dupNumber) {
-          warnings.push(`Document number already on file for ${dupNumber.fullName}${dupNumber.employeeCode ? ` (${dupNumber.employeeCode})` : ""}.`);
-        }
-      }
-      const dateCheck = validateDocumentDates(p.issue_date, p.expiry_date, { warnExpiringWithinDays: 60 });
-      warnings.push(...dateCheck.errors, ...dateCheck.warnings);
-    }
-
-    // Identity cross-check — independent of whether a document type
-    // matched. Only fires when the document actually carries a
-    // readable name (most files leave this null and skip the check
-    // entirely) and the crew member's own profile has something to
-    // compare it against. A low name-similarity score is treated the
-    // same way folder-matching treats one (see matchDocumentFolders
-    // above) — token overlap below 0.6, not an exact-string demand, so
-    // "J. Smith" vs "John Smith" doesn't false-positive. Nationality
-    // and date of birth are compared more strictly since those have
-    // much less legitimate formatting variance.
-    if (p.document_full_name && crewRow.full_name) {
-      const score = nameSimilarity(p.document_full_name, crewRow.full_name);
-      if (score < 0.6) {
-        warnings.push(`Name on document ("${p.document_full_name}") doesn't closely match this crew member's profile ("${crewRow.full_name}") — check this is the right person's file.`);
-      }
-    }
-    if (p.document_nationality && crewRow.nationality && normName(p.document_nationality) !== normName(crewRow.nationality)) {
-      warnings.push(`Nationality on document ("${p.document_nationality}") differs from the profile ("${crewRow.nationality}").`);
-    }
-    if (p.document_date_of_birth && crewRow.date_of_birth) {
-      const docDob = new Date(p.document_date_of_birth);
-      const profileDob = new Date(crewRow.date_of_birth);
-      if (!Number.isNaN(docDob.getTime()) && !Number.isNaN(profileDob.getTime()) && docDob.getTime() !== profileDob.getTime()) {
-        warnings.push(`Date of birth on document (${p.document_date_of_birth}) differs from the profile (${crewRow.date_of_birth}).`);
-      }
-    }
-
-    results.push({
-      filename: file.name,
-      mapping,
-      documentTypeName: p.document_type_name,
-      notApplicable: p.document_type_name === null,
-      documentNumber: p.document_number,
-      issueDate: p.issue_date,
-      expiryDate: p.expiry_date,
-      confidence: p.confidence,
-      error: null,
-      warnings,
-    });
+    results.push(await classifyOneFile(supabase, ctx, orgId, userId, crewId, crewRow, documentTypes, documentTypeNames, aliases, file));
   }
 
   return { files: results };
+}
+
+/* ================= background jobs (Phase 16d) ================= */
+//
+// The classify step above runs entirely in the request that calls it —
+// fine for a folder of a few files, but it's exactly the thing that
+// breaks if a large folder takes longer than the browser tab stays
+// open. These three actions move that step onto a durable, server-owned
+// job instead: createBulkIntakeJob uploads the raw files once (to the
+// private bulk-intake-staging bucket) and writes one bulk_intake_jobs
+// row + one bulk_intake_job_items row per file, then kicks off the
+// worker route (app/api/bulk-intake/process-job/route.ts) which works
+// through them in the background and writes each file's ClassifiedFile
+// result straight into its job_items row. getBulkIntakeJobStatus is what
+// the panel polls — it also doubles as a self-healing check: if a job
+// claims to be "processing" but hasn't heartbeat in a while (the worker's
+// self-chaining fetch died somewhere — a cold start, a deploy, a crashed
+// invocation), this re-fires the worker right here before replying,
+// rather than waiting for the once-a-day watchdog cron to notice.
+//
+// Deliberately NOT extended to the commit/import step — that stays
+// exactly as it is today, human-gated, reading from a completed job's
+// items instead of in-memory state. See the Phase 16d plan doc.
+
+const MAX_JOB_FILES = MAX_FILES_PER_FOLDER * 5; // generous headroom over a single synchronous folder
+const STALE_HEARTBEAT_MS = 2 * 60 * 1000;
+
+function workerUrl() {
+  // VERCEL_URL is the deployment's own hostname, always set in a Vercel
+  // runtime (preview or production) — building the worker's own fetch
+  // target from it rather than a hardcoded domain means this keeps
+  // working across preview deployments without any env var to maintain.
+  // NEXT_PUBLIC_SITE_URL is checked first in case a canonical custom
+  // domain is ever configured there for some other reason.
+  const base = process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) || "http://localhost:3000";
+  return `${base.replace(/\/$/, "")}/api/bulk-intake/process-job`;
+}
+
+// Fire-and-forget on purpose — the caller (createBulkIntakeJob, or the
+// self-heal check in getBulkIntakeJobStatus) must not wait on the worker
+// actually finishing a whole job's worth of files; it just needs the
+// chain started. INTERNAL_JOB_SECRET is the same shared-secret pattern
+// as CRON_SECRET on the existing cron route, just reused here since this
+// is also a server-to-server call with no user session.
+function kickWorker(jobId: string) {
+  const secret = process.env.INTERNAL_JOB_SECRET;
+  fetch(workerUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
+    body: JSON.stringify({ jobId }),
+  }).catch(() => {
+    // Nothing to do with a failed kick here — the stale-heartbeat check
+    // in getBulkIntakeJobStatus (and the daily watchdog cron) will
+    // notice the job never advanced and re-kick it.
+  });
+}
+
+export type BulkIntakeJobItemStatus = {
+  id: string;
+  filename: string;
+  status: "pending" | "processing" | "done" | "error";
+  error: string | null;
+  classified: ClassifiedFile | null;
+};
+
+export type BulkIntakeJobStatus = {
+  id: string;
+  folderName: string;
+  status: "pending" | "processing" | "awaiting_review" | "completed" | "failed" | "cancelled";
+  totalFiles: number;
+  processedFiles: number;
+  error: string | null;
+  items: BulkIntakeJobItemStatus[];
+};
+
+export async function createBulkIntakeJob(crewId: string, folderName: string, formData: FormData): Promise<{ jobId: string } | { error: string }> {
+  const { supabase, orgId, userId } = await requireBulkDocumentAccess();
+
+  const { data: crewRow } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", orgId).maybeSingle();
+  if (!crewRow) return { error: "Crew member not found." };
+
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return { error: "No files for this folder." };
+  if (files.length > MAX_JOB_FILES) return { error: `This folder has more than ${MAX_JOB_FILES} files — split it up.` };
+
+  const maxBytes = MAX_DOCUMENT_FILE_BYTES;
+  for (const f of files) if (f.size > maxBytes) return { error: `"${f.name}" is larger than the ${Math.round(maxBytes / 1024 / 1024)} MB limit.` };
+
+  const { data: job, error: jobErr } = await supabase
+    .from("bulk_intake_jobs")
+    .insert({ org_id: orgId, crew_id: crewId, folder_name: folderName, total_files: files.length, status: "processing", created_by: userId })
+    .select("id")
+    .single();
+  if (jobErr) return { error: jobErr.message };
+  const jobId = job!.id as string;
+
+  // Upload every file to staging before any item row exists for it, so
+  // a job never has an item pointing at a path that isn't there yet.
+  const itemRows: { org_id: string; job_id: string; filename: string; storage_path: string; content_type: string | null; file_size_bytes: number }[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const storagePath = `${orgId}/${jobId}/${i}-${sanitizeFileName(file.name)}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { error: upErr } = await supabase.storage.from("bulk-intake-staging").upload(storagePath, bytes, { contentType: file.type || "application/octet-stream" });
+    if (upErr) {
+      await supabase.from("bulk_intake_jobs").update({ status: "failed", error: `Upload failed for "${file.name}": ${upErr.message}` }).eq("id", jobId);
+      return { error: `Upload failed for "${file.name}": ${upErr.message}` };
+    }
+    itemRows.push({ org_id: orgId, job_id: jobId, filename: file.name, storage_path: storagePath, content_type: file.type || null, file_size_bytes: file.size });
+  }
+
+  const { error: itemsErr } = await supabase.from("bulk_intake_job_items").insert(itemRows);
+  if (itemsErr) {
+    await supabase.from("bulk_intake_jobs").update({ status: "failed", error: itemsErr.message }).eq("id", jobId);
+    return { error: itemsErr.message };
+  }
+
+  kickWorker(jobId);
+  return { jobId };
+}
+
+export async function getBulkIntakeJobStatus(jobId: string): Promise<BulkIntakeJobStatus | { error: string }> {
+  const { supabase, orgId } = await requireBulkDocumentAccess();
+
+  const { data: jobRow } = await supabase.from("bulk_intake_jobs").select("*").eq("id", jobId).eq("org_id", orgId).maybeSingle();
+  if (!jobRow) return { error: "Job not found." };
+
+  if (jobRow.status === "processing") {
+    const heartbeatAge = Date.now() - new Date(jobRow.last_heartbeat_at).getTime();
+    if (heartbeatAge > STALE_HEARTBEAT_MS) kickWorker(jobId);
+  }
+
+  const { data: itemRows } = await supabase
+    .from("bulk_intake_job_items")
+    .select("id, filename, status, error, classified")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: true });
+
+  return {
+    id: jobRow.id,
+    folderName: jobRow.folder_name,
+    status: jobRow.status,
+    totalFiles: jobRow.total_files,
+    processedFiles: jobRow.processed_files,
+    error: jobRow.error,
+    items: (itemRows ?? []).map((r: { id: string; filename: string; status: string; error: string | null; classified: ClassifiedFile | null }) => ({
+      id: r.id,
+      filename: r.filename,
+      status: r.status as BulkIntakeJobItemStatus["status"],
+      error: r.error,
+      classified: r.classified,
+    })),
+  };
+}
+
+// Called once the reviewer finishes importing from an awaiting_review
+// job (successfully or not — see importAll() in document-intake-panel.tsx),
+// so a finished job doesn't sit around looking actionable forever. Also
+// cleans up its staged files now that crew_document_versions (for
+// anything actually attached) and bulk_intake_review_log (for the record
+// of the whole review) already have everything worth keeping.
+export async function finalizeBulkIntakeJob(jobId: string): Promise<{ ok: true } | { error: string }> {
+  const { supabase, orgId } = await requireBulkDocumentAccess();
+  const { data: jobRow } = await supabase.from("bulk_intake_jobs").select("id").eq("id", jobId).eq("org_id", orgId).maybeSingle();
+  if (!jobRow) return { error: "Job not found." };
+
+  const { data: items } = await supabase.from("bulk_intake_job_items").select("storage_path").eq("job_id", jobId);
+  const paths = (items ?? []).map((r: { storage_path: string }) => r.storage_path);
+  if (paths.length) await supabase.storage.from("bulk-intake-staging").remove(paths);
+
+  await supabase.from("bulk_intake_jobs").update({ status: "completed" }).eq("id", jobId);
+  return { ok: true };
 }
 
 /* ================= commit ================= */

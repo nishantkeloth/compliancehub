@@ -4,11 +4,16 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   matchDocumentFolders,
-  classifyDocumentFolder,
+  createBulkIntakeJob,
+  addBulkIntakeJobFiles,
+  startBulkIntakeJob,
+  getBulkIntakeJobStatus,
+  finalizeBulkIntakeJob,
   commitDocumentIntakeFolder,
   logBulkIntakeReview,
   type FolderMatch,
   type ClassifiedFile,
+  type BulkIntakeJobItemStatus,
   type ReviewLogEntry,
 } from "../document-intake-actions";
 
@@ -30,6 +35,16 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 // instead of one long silent wait.
 const CHUNK_MAX_FILES = 5;
 const CHUNK_MAX_BYTES = 15 * 1024 * 1024; // stay well under the 25MB body limit, leaving room for multipart overhead
+
+// Phase 16d — how often the panel checks in on a background classify job.
+// getBulkIntakeJobStatus is cheap (a couple of indexed selects), and this
+// is only ever polled while this one admin's tab has this one job open,
+// so there's no real cost to checking fairly often.
+const JOB_POLL_INTERVAL_MS = 1500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function batchFiles(files: File[], maxCount: number, maxBytes: number): File[][] {
   const batches: File[][] = [];
@@ -74,6 +89,13 @@ type FileRowState = {
   documentNumber: string;
   issueDate: string;
   expiryDate: string;
+  // Phase 16d — while a row's file is still sitting in the background
+  // job's queue (not yet picked up by the worker, or picked up but not
+  // finished), classified is null for a reason other than an error: it
+  // just hasn't been read yet. Left undefined for rows built the old
+  // way (rowFromClassified, still used for the done/error cases), which
+  // always have a real result by the time they exist.
+  itemStatus?: "pending" | "processing" | "done" | "error";
 };
 
 type FolderState = {
@@ -91,6 +113,11 @@ type FolderState = {
   // Set while classifying/committing in batches, so the panel can show
   // "N of M files" instead of one long, silent wait.
   progressLabel?: string;
+  // Phase 16d — the background job backing this folder's classify pass,
+  // once createBulkIntakeJob has returned one. Carried through so
+  // importAll can finalize (clean up staging + mark completed) it once
+  // review/import finishes.
+  jobId?: string;
 };
 
 function relativeFolderName(file: File): string {
@@ -126,6 +153,47 @@ function rowFromClassified(c: ClassifiedFile): FileRowState {
     documentNumber: c.documentNumber ?? "",
     issueDate: c.issueDate ?? "",
     expiryDate: c.expiryDate ?? "",
+    itemStatus: "done",
+  };
+}
+
+// Phase 16d — builds a row straight from a job item's current state,
+// whether or not the worker has gotten to it yet. Once classified is
+// set, this is identical to rowFromClassified; until then it's an inert
+// placeholder (unchecked, unresolved, nothing to edit) that just carries
+// the filename and a status the table uses to show "reading…" instead
+// of a confusing empty dropdown.
+function rowFromJobItem(item: BulkIntakeJobItemStatus): FileRowState {
+  if (item.classified) return { ...rowFromClassified(item.classified), itemStatus: item.status };
+  if (item.status === "error") {
+    return {
+      ...rowFromClassified({
+        filename: item.filename,
+        mapping: null,
+        documentTypeName: null,
+        notApplicable: false,
+        documentNumber: null,
+        issueDate: null,
+        expiryDate: null,
+        confidence: 0,
+        error: item.error ?? "Failed to read this file.",
+        warnings: [],
+      }),
+      itemStatus: "error",
+    };
+  }
+  return {
+    filename: item.filename,
+    classified: null,
+    include: false,
+    documentTypeId: "",
+    newDocumentTypeName: null,
+    notApplicable: false,
+    unmatchedGuess: null,
+    documentNumber: "",
+    issueDate: "",
+    expiryDate: "",
+    itemStatus: item.status,
   };
 }
 
@@ -204,46 +272,87 @@ export default function DocumentIntakePanel() {
     );
   }
 
+  // Phase 16d — classify now runs as a background job instead of the
+  // browser driving a sequential AI call per file itself: upload the
+  // folder's files to the job once (still chunked for the same body-size
+  // reason as before), start it, then poll its status until the worker
+  // has worked through every file. The AI calls themselves now happen
+  // server-side in app/api/bulk-intake/process-job/route.ts and survive
+  // this tab closing partway through — closing the tab just means
+  // nobody's watching the progress bar for a while; reopening Bulk Data
+  // Migration later and re-selecting the same folder re-matches it, and
+  // a still-running job for that crew member picks up from wherever the
+  // worker got to (see getBulkIntakeJobStatus's self-heal check).
+  async function classifyOneFolder(f: FolderState) {
+    if (!f.crewId) return;
+    const crewId = f.crewId;
+    setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classifying", rows: [], error: undefined } : x)));
+
+    const createRes = await createBulkIntakeJob(crewId, f.folderName);
+    if ("error" in createRes) {
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: createRes.error } : x)));
+      return;
+    }
+    const jobId = createRes.jobId;
+    setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, jobId } : x)));
+
+    const batches = batchFiles(f.files, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+    let uploaded = 0;
+    for (const chunk of batches) {
+      uploaded += chunk.length;
+      const label = `Uploading ${uploaded} of ${f.files.length} files…`;
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
+      const fd = new FormData();
+      for (const file of chunk) fd.append("files", file);
+      const res = await addBulkIntakeJobFiles(jobId, fd);
+      if ("error" in res) {
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: res.error, progressLabel: undefined } : x)));
+        return;
+      }
+    }
+
+    const startRes = await startBulkIntakeJob(jobId);
+    if ("error" in startRes) {
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: startRes.error, progressLabel: undefined } : x)));
+      return;
+    }
+
+    // Poll until the worker's classified every file (or given up).
+    for (;;) {
+      const status = await getBulkIntakeJobStatus(jobId);
+      // BulkIntakeJobStatus itself carries a job-level `error` field
+      // (string | null), so "error" in status is true for both shapes —
+      // `items` is the only field unique to the success shape, so that's
+      // the actual discriminant here.
+      if (!("items" in status)) {
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: status.error ?? undefined, progressLabel: undefined } : x)));
+        return;
+      }
+      const rows = status.items.map(rowFromJobItem);
+      const label = status.status === "processing" ? `Reading ${status.processedFiles} of ${status.totalFiles} files…` : undefined;
+      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, rows, progressLabel: label } : x)));
+
+      if (status.status === "awaiting_review") {
+        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classified", progressLabel: undefined } : x)));
+        return;
+      }
+      if (status.status === "failed" || status.status === "cancelled") {
+        setFolders((prev) =>
+          (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "error", error: status.error ?? "This job stopped before finishing.", progressLabel: undefined } : x))
+        );
+        return;
+      }
+      await sleep(JOB_POLL_INTERVAL_MS);
+    }
+  }
+
   async function classifyAll() {
     if (!folders) return;
     setBusy(true);
     setError(null);
     for (const f of folders) {
       if (!f.crewId) continue;
-      setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classifying", rows: [] } : x)));
-
-      // Read/classify in small batches rather than the whole folder in one
-      // request — see CHUNK_MAX_FILES/CHUNK_MAX_BYTES above. Results from
-      // earlier batches are kept even if a later batch fails (network
-      // hiccup, timeout, etc.) — that batch's own files just come through
-      // as unresolved rows (flagged in the table below) instead of losing
-      // everything already read for this folder.
-      const allFiles = f.files;
-      const batches = batchFiles(allFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
-      const collected: ClassifiedFile[] = [];
-      let doneCount = 0;
-      for (const chunk of batches) {
-        doneCount += chunk.length;
-        const label = `Reading ${doneCount} of ${allFiles.length} files…`;
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
-        const fd = new FormData();
-        for (const file of chunk) fd.append("files", file);
-        const res = await classifyDocumentFolder(f.crewId, fd);
-        if ("error" in res) {
-          for (const file of chunk) {
-            collected.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: res.error, warnings: [] });
-          }
-        } else {
-          collected.push(...res.files);
-        }
-        // Show what's been read so far, even before the folder finishes —
-        // a slow/large folder isn't just a blank spinner the whole time.
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, rows: collected.map(rowFromClassified) } : x)));
-      }
-
-      setFolders((prev) =>
-        (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "classified", progressLabel: undefined } : x))
-      );
+      await classifyOneFolder(f);
     }
     setBusy(false);
     setPhase("reviewing");
@@ -341,6 +450,14 @@ export default function DocumentIntakePanel() {
           (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, commitWarnings: [...(x.commitWarnings ?? []), ...allWarnings.slice(-1)] } : x))
         );
       }
+
+      // Phase 16d — the background job behind this folder (if any; a
+      // folder classified before this feature shipped, or re-reviewed
+      // from a fresh tab, may not have one) has nothing left to do once
+      // review/import is finished. This clears its staged files and
+      // marks it completed rather than leaving it sitting there looking
+      // like unfinished work.
+      if (f.jobId) await finalizeBulkIntakeJob(f.jobId);
 
       setFolders((prev) =>
         (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committed", progressLabel: undefined } : x))
@@ -489,8 +606,13 @@ export default function DocumentIntakePanel() {
                     const locked = phase === "done" || f.status === "committing" || f.status === "committed";
                     const creatingNew = r.newDocumentTypeName !== null;
                     const canResolve = !!r.documentTypeId || (creatingNew && !!r.newDocumentTypeName?.trim());
+                    // Phase 16d — still sitting in the background job's
+                    // queue, not read yet. Show that plainly instead of
+                    // an empty "— unresolved —" dropdown that looks like
+                    // a classification result rather than a non-result.
+                    const notYetRead = (r.itemStatus === "pending" || r.itemStatus === "processing") && !r.classified;
                     return (
-                      <tr key={r.filename} style={{ borderTop: "1px solid var(--ch-line)", opacity: locked && !r.include ? 0.5 : 1 }}>
+                      <tr key={r.filename} style={{ borderTop: "1px solid var(--ch-line)", opacity: locked && !r.include ? 0.5 : notYetRead ? 0.6 : 1 }}>
                         <td className="px-4 py-1.5">
                           <input
                             type="checkbox"
@@ -500,6 +622,14 @@ export default function DocumentIntakePanel() {
                           />
                         </td>
                         <td className="px-2 py-1.5 max-w-[160px] truncate" style={{ color: "var(--ch-ink, #171717)" }} title={r.filename}>{r.filename}</td>
+                        {notYetRead ? (
+                          <>
+                            <td className="px-2 py-1.5 italic animate-pulse" style={{ color: "var(--ch-sub)" }} colSpan={5}>
+                              {r.itemStatus === "processing" ? "Reading…" : "Queued…"}
+                            </td>
+                          </>
+                        ) : (
+                        <>
                         <td className="px-2 py-1.5">
                           <select
                             className={inputCls}
@@ -563,6 +693,8 @@ export default function DocumentIntakePanel() {
                             </span>
                           )}
                         </td>
+                        </>
+                        )}
                       </tr>
                     );
                   })}

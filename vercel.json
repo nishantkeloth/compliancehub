@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/send-reminders",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/bulk-intake-watchdog",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
