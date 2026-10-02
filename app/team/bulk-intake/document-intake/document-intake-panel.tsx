@@ -25,30 +25,49 @@ const cardStyle = { borderColor: "var(--ch-line)" };
 // A folder can hold up to MAX_FILES_PER_FOLDER (40, server-side) files, and
 // both classifyDocumentFolder and commitDocumentIntakeFolder used to get
 // every one of them in a single request — one big multipart upload, then a
-// sequential AI call per file inside one server action invocation. A large
-// folder pushed that past the request body size limit (25MB, next.config.ts
-// serverActions.bodySizeLimit) and/or the platform's function timeout,
-// which is what "crashed" the import. Sending files in small batches
-// instead — bounded by count AND total size — means each request does a
-// bounded amount of work, a slow/failed batch doesn't lose progress
-// already made on earlier ones, and the panel can show real progress
-// instead of one long silent wait.
+// sequential AI call per file inside one server action invocation. Sending
+// files in small batches instead — bounded by count AND total size — means
+// each request does a bounded amount of work, a slow/failed batch doesn't
+// lose progress already made on earlier ones, and the panel can show real
+// progress instead of one long silent wait.
+//
+// The byte ceiling below is NOT about next.config.ts's
+// serverActions.bodySizeLimit (currently set to "25mb" there) — that config
+// only controls what Next.js itself is willing to parse. On Vercel, every
+// serverless Function (Server Actions included) is also subject to a
+// separate, platform-enforced hard cap of 4.5MB on the request body,
+// which next.config.ts cannot raise:
+// https://vercel.com/docs/functions/limitations#request-body-size
+// A request over that cap never reaches the app's code at all — Vercel
+// rejects it at the edge with an HTML error page, which is exactly what
+// produces the generic "An unexpected response was received from the
+// server" message here (Next's client sees a non-RSC-formatted response
+// and falls back to that wording — see server-action-reducer.js). This is
+// what was actually crashing imports for crew members with a few larger
+// scanned files (e.g. "Sunder Singh - Cook"): the old 15MB chunk ceiling
+// was built on a mistaken belief that 25MB was the real limit, so batches
+// — and even some single files — routinely sailed past Vercel's actual
+// 4.5MB wall regardless of CHUNK_MAX_FILES/COMMIT_CHUNK_MAX_FILES.
 const CHUNK_MAX_FILES = 5;
-const CHUNK_MAX_BYTES = 15 * 1024 * 1024; // stay well under the 25MB body limit, leaving room for multipart overhead
+const CHUNK_MAX_BYTES = 3.5 * 1024 * 1024; // safely under Vercel's hard 4.5MB request-body cap, leaving headroom for multipart boundaries + the batch's manifest/metadata
+
+// Any single file bigger than this can never be sent in one request no
+// matter how small the batch is — it alone would exceed Vercel's 4.5MB
+// cap. These are filtered out before upload (see filesTooLargeForBulk)
+// instead of being attempted and failing with the same opaque error.
+const MAX_BULK_FILE_BYTES = 4 * 1024 * 1024;
 
 // commitDocumentIntakeFolder does far more per file than the classify-
 // upload step above (a version-number lookup, two duplicate checks, the
 // storage upload itself, an insert, and an update — several sequential
-// Supabase round trips per file, not just one storage write), so 5 files
-// in one request can run long enough to hit the platform's function
-// timeout even with maxDuration raised on the page (see
-// app/team/bulk-intake/document-intake/page.tsx — some hosting plans cap
-// that regardless of what's requested). A timed-out request comes back
-// as a platform error page, not a normal app error, which is what
-// produces the generic "An unexpected response was received from the
-// server" message. A smaller batch here trades a few more requests for
-// a much larger safety margin under that ceiling.
-const COMMIT_CHUNK_MAX_FILES = 2;
+// Supabase round trips per file, not just one storage write). The byte
+// ceiling above is now the real guard against the 4.5MB platform wall;
+// this count cap is just a secondary sanity limit on top of it.
+const COMMIT_CHUNK_MAX_FILES = 3;
+
+function filesTooLargeForBulk(files: File[]): File[] {
+  return files.filter((f) => f.size > MAX_BULK_FILE_BYTES);
+}
 
 // Phase 16d — how often the panel checks in on a background classify job.
 // getBulkIntakeJobStatus is cheap (a couple of indexed selects), and this
@@ -276,14 +295,34 @@ export default function DocumentIntakePanel() {
   async function handleFolderSelect(fileList: FileList) {
     setError(null);
     const grouped = new Map<string, File[]>();
+    const excluded: { folderName: string; fileName: string; sizeMb: number }[] = [];
     for (const file of Array.from(fileList)) {
       const name = relativeFolderName(file);
       if (name === "(ungrouped)") continue; // files dropped at the top level aren't attributable to anyone
+      // A file this large can never fit in one bulk-intake request on
+      // Vercel (see MAX_BULK_FILE_BYTES above) — excluded up front with a
+      // clear reason instead of being attempted and failing with the
+      // generic "unexpected response" error partway through the import.
+      if (file.size > MAX_BULK_FILE_BYTES) {
+        excluded.push({ folderName: name, fileName: file.name, sizeMb: Math.round((file.size / (1024 * 1024)) * 10) / 10 });
+        continue;
+      }
       if (!grouped.has(name)) grouped.set(name, []);
       grouped.get(name)!.push(file);
     }
+    if (excluded.length > 0) {
+      const maxMb = Math.round((MAX_BULK_FILE_BYTES / (1024 * 1024)) * 10) / 10;
+      setError(
+        `${excluded.length} file${excluded.length === 1 ? "" : "s"} skipped — larger than the ${maxMb} MB bulk-import limit: ` +
+          excluded.map((x) => `"${x.fileName}" (${x.sizeMb} MB, ${x.folderName})`).join(", ") +
+          `. Upload ${excluded.length === 1 ? "it" : "these"} directly from the crew member's own Documents tab instead.`
+      );
+    }
     if (grouped.size === 0) {
-      setError("No per-crew-member subfolders found — select the parent folder that contains one folder per crew member.");
+      setError((prev) => {
+        const msg = "No per-crew-member subfolders found — select the parent folder that contains one folder per crew member.";
+        return prev ? `${prev} ${msg}` : msg;
+      });
       return;
     }
 
@@ -348,11 +387,15 @@ export default function DocumentIntakePanel() {
       const jobId = createRes.jobId;
       setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, jobId } : x)));
 
-      const batches = batchFiles(f.files, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+      // Defense in depth — handleFolderSelect already excludes files over
+      // MAX_BULK_FILE_BYTES before a folder ever reaches here, but filter
+      // again in case f.files was ever populated some other way.
+      const sendableFiles = f.files.filter((x) => x.size <= MAX_BULK_FILE_BYTES);
+      const batches = batchFiles(sendableFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
       let uploaded = 0;
       for (const chunk of batches) {
         uploaded += chunk.length;
-        const label = `Uploading ${uploaded} of ${f.files.length} files…`;
+        const label = `Uploading ${uploaded} of ${sendableFiles.length} files…`;
         setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
         const fd = new FormData();
         for (const file of chunk) fd.append("files", file);
@@ -464,7 +507,18 @@ export default function DocumentIntakePanel() {
         // classifyAll above. A failed batch is recorded as an error for
         // that batch and the loop moves on, so documents already
         // attached from earlier batches in this folder are never lost.
-        const includedFiles = f.files.filter((file) => included.some((r) => r.filename === file.name));
+        const includedFilesAll = f.files.filter((file) => included.some((r) => r.filename === file.name));
+        // Defense in depth — handleFolderSelect already excludes files
+        // over MAX_BULK_FILE_BYTES before a folder ever reaches review,
+        // but a file this large could never be committed in one request
+        // regardless, so skip it with a clear per-file error rather than
+        // letting it blow up the whole batch with the generic platform
+        // error (see the comment above CHUNK_MAX_BYTES for why).
+        const tooLarge = filesTooLargeForBulk(includedFilesAll);
+        for (const big of tooLarge) {
+          allErrors.push(`${big.name}: too large to import (${Math.round((big.size / (1024 * 1024)) * 10) / 10} MB) — upload it directly from the crew member's Documents tab instead.`);
+        }
+        const includedFiles = includedFilesAll.filter((file) => !tooLarge.includes(file));
         const fileBatches = batchFiles(includedFiles, COMMIT_CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
         let doneCount = 0;
         for (const chunk of fileBatches) {

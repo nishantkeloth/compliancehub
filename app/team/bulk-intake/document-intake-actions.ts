@@ -29,7 +29,19 @@ import { classifyOneFile, loadClassifyContext, type ClassifiedFile } from "@/lib
 
 const MAX_FOLDERS = 300;
 const MAX_FILES_PER_FOLDER = 40;
-const MAX_DOCUMENT_FILE_BYTES = 20 * 1024 * 1024;
+// Every path here (classifyDocumentFolder's sync upload and
+// addBulkIntakeJobFiles) sends the file as part of a Server Action's
+// request body, which on Vercel is hard-capped at 4.5MB per request —
+// a platform limit next.config.ts's serverActions.bodySizeLimit cannot
+// raise (https://vercel.com/docs/functions/limitations#request-body-size).
+// 20MB used to be allowed here on the mistaken belief that 25MB was the
+// real ceiling; any file over ~4.3MB would reach Vercel's edge, get
+// rejected before this code ever ran, and surface client-side as the
+// generic "An unexpected response was received from the server" message
+// (see document-intake-panel.tsx's CHUNK_MAX_BYTES comment for the full
+// story). 4MB leaves headroom for multipart overhead on top of the file
+// itself.
+const MAX_DOCUMENT_FILE_BYTES = 4 * 1024 * 1024;
 
 async function requireBulkDocumentAccess() {
   const supabase = await createClient();
@@ -240,9 +252,10 @@ export type BulkIntakeJobStatus = {
 // several times → start) rather than one call, for the same reason
 // classifyAll/importAll already chunk their own calls (see
 // CHUNK_MAX_FILES/CHUNK_MAX_BYTES in document-intake-panel.tsx): a
-// folder's files have to cross the same ~25MB server-action body limit
-// to get here at all, so a large folder is several addBulkIntakeJobFiles
-// calls against one job, not one call that itself exceeds the limit.
+// folder's files have to cross Vercel's actual 4.5MB-per-request platform
+// limit to get here at all, so a large folder is several
+// addBulkIntakeJobFiles calls against one job, not one call that itself
+// exceeds the limit.
 // The job is only kicked to "processing" once every batch has actually
 // landed in staging, so total_files (and the worker's view of "is there
 // anything still pending") is always accurate by the time it starts.

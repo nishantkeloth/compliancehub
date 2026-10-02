@@ -235,7 +235,16 @@ export async function generateMatrixDraft(formData: FormData): Promise<{ proposa
   if (mode === "document") {
     task = "matrix_from_document";
     if (file instanceof File && file.size > 0) {
-      if (file.size > ctx.settings.max_upload_mb * 1024 * 1024) return { error: `File is larger than the ${ctx.settings.max_upload_mb} MB limit.` };
+      // ctx.settings.max_upload_mb is an admin-configurable setting (20MB
+      // by default) that only limits what this app is willing to accept —
+      // it can't raise Vercel's own hard 4.5MB-per-request cap on a
+      // Server Action's body, which is what actually rejects anything
+      // bigger before this code runs (see document-intake-actions.ts's
+      // MAX_DOCUMENT_FILE_BYTES comment for the full story). Clamp to
+      // whichever is smaller so the error here is the one the user
+      // actually sees, not the generic platform crash.
+      const maxUploadBytes = Math.min(ctx.settings.max_upload_mb * 1024 * 1024, 4 * 1024 * 1024);
+      if (file.size > maxUploadBytes) return { error: `File is larger than the ${Math.round(maxUploadBytes / 1024 / 1024)} MB limit.` };
       extracted = await extractDocument(file);
       sourceFilename = extracted.filename;
       if (extracted.unreadable) return { error: `"${extracted.filename}" doesn't look like a valid file of its type — check it opens correctly on your computer and re-upload it.` };

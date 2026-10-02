@@ -91,8 +91,11 @@ export async function readDocumentFields(
 ): Promise<{ result: DocumentReadResult } | { error: string }> {
   const ctx = await loadAiContext(supabase, orgId);
   if (!ctx.settings.ai_enabled) return { error: "AI reading isn't enabled for this company (Administration → AI Settings) — enter the number and expiry manually." };
-  const maxBytes = ctx.settings.max_upload_mb * 1024 * 1024;
-  if (file.size > maxBytes) return { error: `File is larger than the ${ctx.settings.max_upload_mb} MB limit AI reading allows — enter the details manually.` };
+  // Clamped against Vercel's hard 4.5MB-per-request Server Action body
+  // cap, which ctx.settings.max_upload_mb can't raise — see
+  // document-intake-actions.ts's MAX_DOCUMENT_FILE_BYTES comment.
+  const maxBytes = Math.min(ctx.settings.max_upload_mb * 1024 * 1024, 4 * 1024 * 1024);
+  if (file.size > maxBytes) return { error: `File is larger than the ${Math.round(maxBytes / 1024 / 1024)} MB limit AI reading allows — enter the details manually.` };
 
   const extracted = await extractDocument(file);
   if (extracted.unreadable) return { error: `"${extracted.filename}" doesn't look like a valid file — check it opens correctly and re-upload it.` };

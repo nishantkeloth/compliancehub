@@ -254,7 +254,11 @@ export async function parseCrewRegisterFile(formData: FormData): Promise<{ previ
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Choose the filled-in crew register workbook (.xlsx)." };
-  if (file.size > 15 * 1024 * 1024) return { error: `"${file.name}" is larger than the 15 MB limit.` };
+  // 4MB, not 15MB — this file crosses as part of a Server Action request
+  // body, which Vercel hard-caps at 4.5MB regardless of any app-level
+  // limit (see document-intake-actions.ts's MAX_DOCUMENT_FILE_BYTES
+  // comment). A workbook this large is already unusual.
+  if (file.size > 4 * 1024 * 1024) return { error: `"${file.name}" is larger than the 4 MB limit.` };
 
   const XLSX = await import("xlsx");
   let wb: ReturnType<typeof XLSX.read>;

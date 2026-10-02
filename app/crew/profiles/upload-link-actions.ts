@@ -24,7 +24,10 @@ import { sha256Hex, checkDuplicateFile, checkDuplicateDocumentNumber, validateDo
 // team/actions.ts's admin.auth.admin.createUser() already bypasses
 // normal auth for a privileged, pre-validated action.
 
-const MAX_DOCUMENT_FILE_BYTES = 20 * 1024 * 1024; // matches the cap in actions.ts's uploadCrewDocumentVersion
+// Matches the cap in actions.ts's uploadCrewDocumentVersion — kept in
+// sync with it there for why 4MB (not the old, mistaken 20MB) is the
+// real ceiling a Server Action's request body can hit on Vercel.
+const MAX_DOCUMENT_FILE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_LINK_DAYS = 7;
 
 function randomToken(bytes = 24) {

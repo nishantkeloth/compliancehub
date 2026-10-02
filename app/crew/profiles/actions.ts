@@ -468,7 +468,17 @@ export async function deactivateCrewDocument(id: string, crewId: string) {
 
 /* ---------------- Document file uploads & versions (Phase 13) ---------------- */
 
-const MAX_DOCUMENT_FILE_BYTES = 20 * 1024 * 1024; // matches the 20 MB cap used elsewhere for uploaded documents
+// This file crosses to the server as part of a Server Action's request
+// body, which on Vercel is hard-capped at 4.5MB per request regardless of
+// any app-level config (https://vercel.com/docs/functions/limitations#request-body-size).
+// 20MB used to be allowed here on the mistaken belief that was the real
+// ceiling; anything bigger reached Vercel's edge, got rejected before
+// this code ever ran, and surfaced as the generic "An unexpected response
+// was received from the server" message instead of this clean error (see
+// app/team/bulk-intake/document-intake/document-intake-panel.tsx's
+// CHUNK_MAX_BYTES comment for the full story — the same bug, found there
+// first). 4MB leaves headroom for multipart overhead on top of the file.
+const MAX_DOCUMENT_FILE_BYTES = 4 * 1024 * 1024;
 
 function sanitizeFileName(name: string) {
   const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "_");

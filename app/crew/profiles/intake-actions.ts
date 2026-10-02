@@ -119,8 +119,14 @@ export async function extractCrewIntake(formData: FormData): Promise<{ proposal:
   const extractAsImage = String(formData.get("extractAsImage") ?? "true") !== "false";
 
   const ctx = await loadAiContext(supabase, orgId);
-  const maxBytes = ctx.settings.max_upload_mb * 1024 * 1024;
-  for (const f of files) if (f.size > maxBytes) return { error: `"${f.name}" is larger than the ${ctx.settings.max_upload_mb} MB limit.` };
+  // ctx.settings.max_upload_mb (20MB by default) only limits what this
+  // app is willing to accept — it can't raise Vercel's own hard 4.5MB
+  // cap on a Server Action request body, which rejects anything bigger
+  // before this code runs at all (see document-intake-actions.ts's
+  // MAX_DOCUMENT_FILE_BYTES comment for the full story). Clamp per-file
+  // so the error here is the one the user actually sees.
+  const maxBytes = Math.min(ctx.settings.max_upload_mb * 1024 * 1024, 4 * 1024 * 1024);
+  for (const f of files) if (f.size > maxBytes) return { error: `"${f.name}" is larger than the ${Math.round(maxBytes / 1024 / 1024)} MB limit.` };
 
   const [jr, dt, al] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", orgId).eq("is_active", true).order("name"),
