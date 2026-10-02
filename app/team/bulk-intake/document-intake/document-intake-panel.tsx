@@ -231,7 +231,7 @@ export default function DocumentIntakePanel() {
         const res = await classifyDocumentFolder(f.crewId, fd);
         if ("error" in res) {
           for (const file of chunk) {
-            collected.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: res.error });
+            collected.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: res.error, warnings: [] });
           }
         } else {
           collected.push(...res.files);
@@ -296,6 +296,10 @@ export default function DocumentIntakePanel() {
             issueDate: r.issueDate || null,
             expiryDate: r.expiryDate || null,
             confidence: r.classified?.confidence ?? null,
+            // Only meaningful when the reviewer picked an existing type
+            // for a row the AI guessed but couldn't match on its own —
+            // see the alias-learning block in commitDocumentIntakeFolder.
+            aiGuessedName: r.unmatchedGuess && r.documentTypeId ? r.unmatchedGuess : null,
           }));
           const res = await commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd);
           if ("error" in res) {
@@ -477,6 +481,7 @@ export default function DocumentIntakePanel() {
                     <th className="text-left px-2 py-2">Issue</th>
                     <th className="text-left px-2 py-2">Expiry</th>
                     <th className="text-left px-2 py-2">Confidence</th>
+                    <th className="text-left px-2 py-2">Flags</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -547,6 +552,17 @@ export default function DocumentIntakePanel() {
                           <input type="date" className={inputCls} style={{ ...inputStyle, width: 130 }} disabled={locked} value={r.expiryDate} onChange={(e) => updateRow(f.folderName, r.filename, { expiryDate: e.target.value })} />
                         </td>
                         <td className="px-2 py-1.5">{Math.round((r.classified?.confidence ?? 0) * 100)}%</td>
+                        <td className="px-2 py-1.5">
+                          {!!r.classified?.warnings?.length && (
+                            <span
+                              className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 whitespace-nowrap cursor-help"
+                              style={{ background: "#fef3c7", color: "#92400e" }}
+                              title={r.classified.warnings.join("\n")}
+                            >
+                              {r.classified.warnings.length === 1 ? "1 flag" : `${r.classified.warnings.length} flags`}
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}

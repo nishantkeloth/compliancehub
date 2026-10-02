@@ -92,7 +92,20 @@ export async function checkDuplicateDocumentNumber(
 // Pure date-logic checks — no DB access, safe to call for every row in a
 // bulk batch. `errors` should block the row from saving; `warnings`
 // should not.
-export function validateDocumentDates(issueDate: string | null, expiryDate: string | null): { errors: string[]; warnings: string[] } {
+//
+// warnExpiringWithinDays (Phase 16c): opt-in — only passed by Bulk
+// Document Intake's pre-commit classification step for now, so every
+// other existing caller (manual upload, self-upload link, Crew
+// Register Import) keeps its exact current behavior. When set, a
+// document that hasn't expired yet but will within that many days
+// gets its own warning, distinct from "already expired" — the whole
+// point of surfacing it during a bulk import is to catch a renewal
+// gap while there's still time to act on it, not just after the fact.
+export function validateDocumentDates(
+  issueDate: string | null,
+  expiryDate: string | null,
+  opts?: { warnExpiringWithinDays?: number }
+): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -111,6 +124,13 @@ export function validateDocumentDates(issueDate: string | null, expiryDate: stri
       today.setUTCHours(0, 0, 0, 0);
       if (expiry.getTime() < today.getTime()) {
         warnings.push(`This document already expired on ${expiryDate} — saved as-is, but check whether a renewed copy should be uploaded instead.`);
+      } else if (opts?.warnExpiringWithinDays) {
+        const soonCutoff = new Date(today);
+        soonCutoff.setUTCDate(soonCutoff.getUTCDate() + opts.warnExpiringWithinDays);
+        if (expiry.getTime() <= soonCutoff.getTime()) {
+          const daysLeft = Math.round((expiry.getTime() - today.getTime()) / 86_400_000);
+          warnings.push(`Expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"} (${expiryDate}) — may need a renewal flagged.`);
+        }
       }
     }
   }

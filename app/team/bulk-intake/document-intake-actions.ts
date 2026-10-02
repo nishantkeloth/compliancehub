@@ -186,6 +186,15 @@ export type ClassifiedFile = {
   expiryDate: string | null;
   confidence: number;
   error: string | null;
+  // Phase 16c — surfaced during classification (not after commit, the
+  // way checkDuplicateFile/checkDuplicateDocumentNumber were originally
+  // used elsewhere in this file) so a reviewer sees "already on file"
+  // or "expires soon" before clicking Import, when it can still change
+  // their mind, rather than as a warning on the done screen after the
+  // document is already attached. Only computed when the file actually
+  // matched a configured document type — a not-applicable / unmatched
+  // row has nothing meaningful to check yet.
+  warnings: string[];
 };
 
 export async function classifyDocumentFolder(crewId: string, formData: FormData): Promise<{ files: ClassifiedFile[] } | { error: string }> {
@@ -215,7 +224,7 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
   for (const file of files) {
     const extracted = await extractDocument(file);
     if (extracted.unreadable) {
-      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: "Doesn't look like a valid file of its type." });
+      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: "Doesn't look like a valid file of its type.", warnings: [] });
       continue;
     }
     const prompt = classifyPrompt(documentTypeNames, extracted.text, extracted.needsModelVision);
@@ -232,7 +241,7 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
       userId,
     });
     if ("error" in result) {
-      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: result.error });
+      results.push({ filename: file.name, mapping: null, documentTypeName: null, notApplicable: false, documentNumber: null, issueDate: null, expiryDate: null, confidence: 0, error: result.error, warnings: [] });
       continue;
     }
     const p = result.object;
@@ -241,6 +250,32 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
     // targetId: null (method "none"), and the UI treats that exactly
     // like notApplicable: it's never auto-included or auto-created.
     const mapping = p.document_type_name ? mapName(p.document_type_name, "document_type", documentTypes, aliases) : null;
+
+    // Pre-commit checks — only meaningful once we actually know which
+    // configured document type this is. checkDuplicateFile/
+    // checkDuplicateDocumentNumber already existed but only ran inside
+    // commitDocumentIntakeFolder, after the file was already attached;
+    // running them here means the review table can show "already on
+    // file" before Import is ever clicked.
+    const warnings: string[] = [];
+    if (mapping?.targetId) {
+      const fileHash = sha256Hex(extracted.bytes);
+      const dupFile = await checkDuplicateFile(supabase, orgId, crewId, fileHash);
+      if (dupFile) {
+        warnings.push(
+          `Same file already on record${dupFile.documentTypeName ? ` (as ${dupFile.documentTypeName})` : ""}, uploaded ${new Date(dupFile.uploadedAt).toLocaleDateString()}.`
+        );
+      }
+      if (p.document_number) {
+        const dupNumber = await checkDuplicateDocumentNumber(supabase, orgId, mapping.targetId, p.document_number, crewId);
+        if (dupNumber) {
+          warnings.push(`Document number already on file for ${dupNumber.fullName}${dupNumber.employeeCode ? ` (${dupNumber.employeeCode})` : ""}.`);
+        }
+      }
+      const dateCheck = validateDocumentDates(p.issue_date, p.expiry_date, { warnExpiringWithinDays: 60 });
+      warnings.push(...dateCheck.errors, ...dateCheck.warnings);
+    }
+
     results.push({
       filename: file.name,
       mapping,
@@ -251,6 +286,7 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
       expiryDate: p.expiry_date,
       confidence: p.confidence,
       error: null,
+      warnings,
     });
   }
 
@@ -267,6 +303,13 @@ type CommitFileEntry = {
   issueDate: string | null;
   expiryDate: string | null;
   confidence: number | null;
+  // Phase 16c — set only when the AI guessed a type name during
+  // classification that didn't match any configured type AND the
+  // reviewer then manually picked an existing type for that row (not
+  // "+ Create new"). That combination means the reviewer just taught
+  // the system what the AI's guess actually means, so it's worth
+  // remembering — see the alias-learning block below.
+  aiGuessedName: string | null;
 };
 
 export type FolderCommitResult = { attached: number; errors: string[]; warnings: string[] };
@@ -329,6 +372,19 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
       if (!documentTypeId) {
         errors.push(`${entry.filename}: no document type resolved.`);
         continue;
+      }
+
+      // Alias learning — only when the reviewer resolved an AI guess
+      // that didn't match anything by picking an EXISTING type (not
+      // creating a new one). Ignore the insert error on purpose: the
+      // unique index on (org_id, entity_type, lower(alias)) means a
+      // duplicate from an earlier file in this same batch, or an
+      // earlier import, is expected and harmless — same pattern as the
+      // existing alias-learning in intake-actions.ts / matrices/ai-actions.ts.
+      if (entry.aiGuessedName && entry.documentTypeId) {
+        await supabase
+          .from("ai_name_aliases")
+          .insert({ org_id: orgId, entity_type: "document_type", alias: entry.aiGuessedName.trim(), target_id: entry.documentTypeId, created_by: userId });
       }
 
       let crewDocumentId = crewDocumentCache.get(documentTypeId);
