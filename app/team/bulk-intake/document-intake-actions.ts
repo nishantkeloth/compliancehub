@@ -438,3 +438,69 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
   revalidatePath("/crew/documents");
   return { result: { attached, errors, warnings } };
 }
+
+/* ================= review audit log ================= */
+//
+// Phase 16b — a record of the review step itself, not just its final
+// outcome. commitDocumentIntakeFolder above only ever sees the rows the
+// reviewer left checked (crew_document_versions is the record of what
+// got attached); this is the complementary record of what the AI
+// originally proposed for EVERY file in a folder — including the ones
+// the reviewer excluded, and what if anything the reviewer changed
+// before confirming. Called once per folder after its commit batches
+// finish (see importAll() in document-intake-panel.tsx), independent
+// of the chunked file-upload loop above so a file with nothing to
+// upload (excluded, or "not applicable") still gets logged exactly
+// once rather than needing to ride along with a file-bytes batch it
+// isn't part of.
+
+export type ReviewLogEntry = {
+  filename: string;
+  aiDocumentTypeName: string | null;
+  aiNotApplicable: boolean;
+  aiDocumentNumber: string | null;
+  aiIssueDate: string | null;
+  aiExpiryDate: string | null;
+  aiConfidence: number | null;
+  included: boolean;
+  finalDocumentTypeId: string | null;
+  finalNewDocumentTypeName: string | null;
+  finalDocumentNumber: string | null;
+  finalIssueDate: string | null;
+  finalExpiryDate: string | null;
+};
+
+export async function logBulkIntakeReview(crewId: string, folderName: string, entries: ReviewLogEntry[]): Promise<{ ok: true } | { error: string }> {
+  if (entries.length === 0) return { ok: true };
+  const { supabase, orgId, userId } = await requireBulkDocumentAccess();
+
+  const { data: crewRow } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", orgId).maybeSingle();
+  if (!crewRow) return { error: "Crew member not found." };
+
+  const rows = entries.map((e) => ({
+    org_id: orgId,
+    crew_id: crewId,
+    folder_name: folderName,
+    filename: e.filename,
+    ai_document_type_name: e.aiDocumentTypeName,
+    ai_not_applicable: e.aiNotApplicable,
+    ai_document_number: e.aiDocumentNumber,
+    ai_issue_date: e.aiIssueDate,
+    ai_expiry_date: e.aiExpiryDate,
+    ai_confidence: e.aiConfidence,
+    included: e.included,
+    final_document_type_id: e.finalDocumentTypeId,
+    final_new_document_type_name: e.finalNewDocumentTypeName,
+    final_document_number: e.finalDocumentNumber,
+    final_issue_date: e.finalIssueDate,
+    final_expiry_date: e.finalExpiryDate,
+    reviewed_by: userId,
+  }));
+
+  // Logging failures must never block the import itself — the caller
+  // surfaces this as a warning, not an error, since the documents
+  // themselves (if any) are already safely attached by this point.
+  const { error } = await supabase.from("bulk_intake_review_log").insert(rows);
+  if (error) return { error: error.message };
+  return { ok: true };
+}

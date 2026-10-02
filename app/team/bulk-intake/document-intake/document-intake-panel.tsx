@@ -6,8 +6,10 @@ import {
   matchDocumentFolders,
   classifyDocumentFolder,
   commitDocumentIntakeFolder,
+  logBulkIntakeReview,
   type FolderMatch,
   type ClassifiedFile,
+  type ReviewLogEntry,
 } from "../document-intake-actions";
 
 const inputCls = "border rounded-lg px-2.5 py-1.5 text-xs";
@@ -258,46 +260,81 @@ export default function DocumentIntakePanel() {
     setBusy(true);
     setError(null);
     for (const f of folders) {
+      // Folders that were never classified (unmatched, skipped) have no
+      // rows and nothing to log; a classified folder goes through the
+      // commit step below regardless of whether anything in it ended up
+      // checked, so there's always exactly one review-log entry written
+      // per reviewed file — included or not.
+      if (!f.crewId || f.rows.length === 0) continue;
       const included = f.rows.filter((r) => r.include && (r.documentTypeId || r.newDocumentTypeName));
-      if (!f.crewId || included.length === 0) continue;
       setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, status: "committing" } : x)));
 
-      // Upload/commit in small batches too — same reasoning as classifyAll
-      // above. A failed batch is recorded as an error for that batch and
-      // the loop moves on, so documents already attached from earlier
-      // batches in this folder are never lost.
-      const includedFiles = f.files.filter((file) => included.some((r) => r.filename === file.name));
-      const fileBatches = batchFiles(includedFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
       let totalAttached = 0;
-      let doneCount = 0;
       const allErrors: string[] = [];
       const allWarnings: string[] = [];
-      for (const chunk of fileBatches) {
-        doneCount += chunk.length;
-        const label = `Uploading ${doneCount} of ${includedFiles.length} files…`;
-        setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
-        const chunkRows = included.filter((r) => chunk.some((file) => file.name === r.filename));
-        const fd = new FormData();
-        for (const file of chunk) fd.append("files", file);
-        const manifest = chunkRows.map((r) => ({
-          filename: r.filename,
-          documentTypeId: r.documentTypeId || null,
-          newDocumentTypeName: r.documentTypeId ? null : r.newDocumentTypeName,
-          documentNumber: r.documentNumber || null,
-          issueDate: r.issueDate || null,
-          expiryDate: r.expiryDate || null,
-          confidence: r.classified?.confidence ?? null,
-        }));
-        const res = await commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd);
-        if ("error" in res) {
-          allErrors.push(`Batch of ${chunk.length} file(s): ${res.error}`);
-        } else {
-          totalAttached += res.result.attached;
-          allErrors.push(...res.result.errors);
-          allWarnings.push(...res.result.warnings);
+
+      if (included.length > 0) {
+        // Upload/commit in small batches too — same reasoning as
+        // classifyAll above. A failed batch is recorded as an error for
+        // that batch and the loop moves on, so documents already
+        // attached from earlier batches in this folder are never lost.
+        const includedFiles = f.files.filter((file) => included.some((r) => r.filename === file.name));
+        const fileBatches = batchFiles(includedFiles, CHUNK_MAX_FILES, CHUNK_MAX_BYTES);
+        let doneCount = 0;
+        for (const chunk of fileBatches) {
+          doneCount += chunk.length;
+          const label = `Uploading ${doneCount} of ${includedFiles.length} files…`;
+          setFolders((prev) => (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, progressLabel: label } : x)));
+          const chunkRows = included.filter((r) => chunk.some((file) => file.name === r.filename));
+          const fd = new FormData();
+          for (const file of chunk) fd.append("files", file);
+          const manifest = chunkRows.map((r) => ({
+            filename: r.filename,
+            documentTypeId: r.documentTypeId || null,
+            newDocumentTypeName: r.documentTypeId ? null : r.newDocumentTypeName,
+            documentNumber: r.documentNumber || null,
+            issueDate: r.issueDate || null,
+            expiryDate: r.expiryDate || null,
+            confidence: r.classified?.confidence ?? null,
+          }));
+          const res = await commitDocumentIntakeFolder(f.crewId, JSON.stringify(manifest), fd);
+          if ("error" in res) {
+            allErrors.push(`Batch of ${chunk.length} file(s): ${res.error}`);
+          } else {
+            totalAttached += res.result.attached;
+            allErrors.push(...res.result.errors);
+            allWarnings.push(...res.result.warnings);
+          }
+          setFolders((prev) =>
+            (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, attached: totalAttached, commitErrors: allErrors, commitWarnings: allWarnings } : x))
+          );
         }
+      }
+
+      // One audit entry per reviewed file in this folder — what the AI
+      // proposed and what the reviewer actually decided — whether or not
+      // that file ended up attached. Logging failures are surfaced as a
+      // warning, never as a reason to treat the import itself as failed.
+      const logEntries: ReviewLogEntry[] = f.rows.map((r) => ({
+        filename: r.filename,
+        aiDocumentTypeName: r.classified?.documentTypeName ?? null,
+        aiNotApplicable: r.notApplicable,
+        aiDocumentNumber: r.classified?.documentNumber ?? null,
+        aiIssueDate: r.classified?.issueDate ?? null,
+        aiExpiryDate: r.classified?.expiryDate ?? null,
+        aiConfidence: r.classified?.confidence ?? null,
+        included: r.include,
+        finalDocumentTypeId: r.documentTypeId || null,
+        finalNewDocumentTypeName: r.documentTypeId ? null : r.newDocumentTypeName,
+        finalDocumentNumber: r.documentNumber || null,
+        finalIssueDate: r.issueDate || null,
+        finalExpiryDate: r.expiryDate || null,
+      }));
+      const logRes = await logBulkIntakeReview(f.crewId, f.folderName, logEntries);
+      if ("error" in logRes) {
+        allWarnings.push(`Review log wasn't saved for this folder: ${logRes.error}`);
         setFolders((prev) =>
-          (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, attached: totalAttached, commitErrors: allErrors, commitWarnings: allWarnings } : x))
+          (prev ?? []).map((x) => (x.folderName === f.folderName ? { ...x, commitWarnings: [...(x.commitWarnings ?? []), ...allWarnings.slice(-1)] } : x))
         );
       }
 
