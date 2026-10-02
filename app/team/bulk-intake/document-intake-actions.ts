@@ -185,7 +185,7 @@ export async function classifyDocumentFolder(crewId: string, formData: FormData)
 // exactly as it is today, human-gated, reading from a completed job's
 // items instead of in-memory state. See the Phase 16d plan doc.
 
-const MAX_JOB_FILES = MAX_FILES_PER_FOLDER * 5; // generous headroom over a single synchronous folder
+const MAX_JOB_FILES = 500; // generous headroom over a single synchronous folder's 40-file cap
 const STALE_HEARTBEAT_MS = 2 * 60 * 1000;
 
 function workerUrl() {
@@ -236,50 +236,69 @@ export type BulkIntakeJobStatus = {
   items: BulkIntakeJobItemStatus[];
 };
 
-export async function createBulkIntakeJob(crewId: string, folderName: string, formData: FormData): Promise<{ jobId: string } | { error: string }> {
+// Splitting job creation into three steps (create → add files, possibly
+// several times → start) rather than one call, for the same reason
+// classifyAll/importAll already chunk their own calls (see
+// CHUNK_MAX_FILES/CHUNK_MAX_BYTES in document-intake-panel.tsx): a
+// folder's files have to cross the same ~25MB server-action body limit
+// to get here at all, so a large folder is several addBulkIntakeJobFiles
+// calls against one job, not one call that itself exceeds the limit.
+// The job is only kicked to "processing" once every batch has actually
+// landed in staging, so total_files (and the worker's view of "is there
+// anything still pending") is always accurate by the time it starts.
+export async function createBulkIntakeJob(crewId: string, folderName: string): Promise<{ jobId: string } | { error: string }> {
   const { supabase, orgId, userId } = await requireBulkDocumentAccess();
-
   const { data: crewRow } = await supabase.from("crew_profiles").select("id").eq("id", crewId).eq("org_id", orgId).maybeSingle();
   if (!crewRow) return { error: "Crew member not found." };
 
-  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
-  if (files.length === 0) return { error: "No files for this folder." };
-  if (files.length > MAX_JOB_FILES) return { error: `This folder has more than ${MAX_JOB_FILES} files — split it up.` };
-
-  const maxBytes = MAX_DOCUMENT_FILE_BYTES;
-  for (const f of files) if (f.size > maxBytes) return { error: `"${f.name}" is larger than the ${Math.round(maxBytes / 1024 / 1024)} MB limit.` };
-
-  const { data: job, error: jobErr } = await supabase
+  const { data: job, error } = await supabase
     .from("bulk_intake_jobs")
-    .insert({ org_id: orgId, crew_id: crewId, folder_name: folderName, total_files: files.length, status: "processing", created_by: userId })
+    .insert({ org_id: orgId, crew_id: crewId, folder_name: folderName, status: "pending", created_by: userId })
     .select("id")
     .single();
-  if (jobErr) return { error: jobErr.message };
-  const jobId = job!.id as string;
+  if (error) return { error: error.message };
+  return { jobId: job!.id as string };
+}
 
-  // Upload every file to staging before any item row exists for it, so
-  // a job never has an item pointing at a path that isn't there yet.
+export async function addBulkIntakeJobFiles(jobId: string, formData: FormData): Promise<{ added: number } | { error: string }> {
+  const { supabase, orgId } = await requireBulkDocumentAccess();
+  const { data: job } = await supabase.from("bulk_intake_jobs").select("id, status, total_files").eq("id", jobId).eq("org_id", orgId).maybeSingle();
+  if (!job) return { error: "Job not found." };
+  if (job.status !== "pending") return { error: "This job has already started processing — can't add more files to it." };
+
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return { error: "No files in this batch." };
+  for (const f of files) if (f.size > MAX_DOCUMENT_FILE_BYTES) return { error: `"${f.name}" is larger than the ${Math.round(MAX_DOCUMENT_FILE_BYTES / 1024 / 1024)} MB limit.` };
+
+  const startIndex = job.total_files as number;
+  if (startIndex + files.length > MAX_JOB_FILES) return { error: `This folder has more than ${MAX_JOB_FILES} files — split it up.` };
+
   const itemRows: { org_id: string; job_id: string; filename: string; storage_path: string; content_type: string | null; file_size_bytes: number }[] = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const storagePath = `${orgId}/${jobId}/${i}-${sanitizeFileName(file.name)}`;
+    const storagePath = `${orgId}/${jobId}/${startIndex + i}-${sanitizeFileName(file.name)}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
     const { error: upErr } = await supabase.storage.from("bulk-intake-staging").upload(storagePath, bytes, { contentType: file.type || "application/octet-stream" });
-    if (upErr) {
-      await supabase.from("bulk_intake_jobs").update({ status: "failed", error: `Upload failed for "${file.name}": ${upErr.message}` }).eq("id", jobId);
-      return { error: `Upload failed for "${file.name}": ${upErr.message}` };
-    }
+    if (upErr) return { error: `Upload failed for "${file.name}": ${upErr.message}` };
     itemRows.push({ org_id: orgId, job_id: jobId, filename: file.name, storage_path: storagePath, content_type: file.type || null, file_size_bytes: file.size });
   }
 
   const { error: itemsErr } = await supabase.from("bulk_intake_job_items").insert(itemRows);
-  if (itemsErr) {
-    await supabase.from("bulk_intake_jobs").update({ status: "failed", error: itemsErr.message }).eq("id", jobId);
-    return { error: itemsErr.message };
-  }
+  if (itemsErr) return { error: itemsErr.message };
 
+  await supabase.from("bulk_intake_jobs").update({ total_files: startIndex + files.length }).eq("id", jobId);
+  return { added: files.length };
+}
+
+export async function startBulkIntakeJob(jobId: string): Promise<{ ok: true } | { error: string }> {
+  const { supabase, orgId } = await requireBulkDocumentAccess();
+  const { data: job } = await supabase.from("bulk_intake_jobs").select("id, total_files").eq("id", jobId).eq("org_id", orgId).maybeSingle();
+  if (!job) return { error: "Job not found." };
+  if (!job.total_files) return { error: "No files were uploaded for this job." };
+
+  await supabase.from("bulk_intake_jobs").update({ status: "processing", last_heartbeat_at: new Date().toISOString() }).eq("id", jobId);
   kickWorker(jobId);
-  return { jobId };
+  return { ok: true };
 }
 
 export async function getBulkIntakeJobStatus(jobId: string): Promise<BulkIntakeJobStatus | { error: string }> {
