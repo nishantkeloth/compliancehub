@@ -388,7 +388,13 @@ export async function submitSelfUploadDocument(token: string, documentTypeId: st
     }
   }
 
-  const filePath = `${link.org_id}/${link.crew_id}/${documentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
+  // Random token mixed into the path — see the matching comment in
+  // app/crew/profiles/actions.ts's uploadCrewDocumentVersion. Keeps a
+  // retry here from ever colliding with a leftover object from an
+  // earlier partial failure, even though this path runs on the admin
+  // client and so isn't exposed to the storage RLS wrinkle that bit
+  // the other two upload sites.
+  const filePath = `${link.org_id}/${link.crew_id}/${documentId}/${nextVersion}_${crypto.randomUUID()}_${sanitizeFileName(file.name)}`;
 
   const { error: upErr } = await admin.storage
     .from("crew-documents")

@@ -1,5 +1,6 @@
 "use server";
 
+import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
@@ -550,21 +551,28 @@ export async function uploadCrewDocumentVersion(documentId: string, crewId: stri
     }
   }
 
-  const filePath = `${access.orgId}/${crewId}/${documentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
+  // A random token is mixed into the path (not just nextVersion) so a
+  // retry after an earlier partial failure never collides with a
+  // leftover object from that attempt. It used to be purely
+  // version-numbered, which meant a crash after the storage write but
+  // before the crew_document_versions insert below left an orphaned
+  // object sitting at that exact path — invisible on this document's
+  // history (nothing to show a link to), yet blocking a plain retry
+  // with "The resource already exists" since nextVersion is computed
+  // from the database, which still thinks that version was never
+  // written. upsert: true papered over that ("Upload failed: new row
+  // violates row-level security policy") because crew-documents is
+  // deliberately append-only — no UPDATE policy on storage.objects —
+  // and an upsert onto an existing path resolves as an update, which
+  // RLS then has nothing to allow. Giving every attempt its own path
+  // avoids the collision outright, so a plain insert (no upsert) is
+  // always correct and the orphaned object, if any, is just dead
+  // weight rather than something a retry has to overwrite.
+  const filePath = `${access.orgId}/${crewId}/${documentId}/${nextVersion}_${crypto.randomUUID()}_${sanitizeFileName(file.name)}`;
 
-  // upsert: true — a path here is version-numbered and should only ever
-  // be written once in the normal case, but if an earlier attempt at
-  // this exact version crashed after the storage write and before the
-  // crew_document_versions insert below, the file is left sitting in
-  // storage with no database record pointing at it: invisible on this
-  // document's history (nothing to show a link to), yet blocking a
-  // retry with "The resource already exists" since nextVersion is
-  // computed from the database, which still thinks that version was
-  // never written. Overwriting lets a retry actually succeed instead of
-  // requiring the orphaned object to be deleted by hand first.
   const { error: upErr } = await supabase.storage
     .from("crew-documents")
-    .upload(filePath, bytes, { contentType: file.type || "application/octet-stream", upsert: true });
+    .upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
   if (upErr) return { error: `Upload failed: ${upErr.message}` };
 
   const { error: versionErr } = await supabase.from("crew_document_versions").insert({

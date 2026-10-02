@@ -1,5 +1,6 @@
 "use server";
 
+import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
@@ -529,16 +530,20 @@ export async function commitDocumentIntakeFolder(crewId: string, manifestJson: s
         }
       }
 
-      const filePath = `${orgId}/${crewId}/${crewDocumentId}/${nextVersion}_${sanitizeFileName(file.name)}`;
-      // upsert: true — see the matching comment in app/crew/profiles/
-      // actions.ts's uploadCrewDocumentVersion: an earlier partial
-      // failure (storage write succeeded, the crew_document_versions
-      // insert below never ran) can leave an orphaned object at this
-      // exact version-numbered path with no database row pointing at
-      // it — invisible in the Documents tab, yet blocking a retry of
-      // this same file with "The resource already exists" rather than
-      // letting it actually succeed.
-      const { error: upErr } = await supabase.storage.from("crew-documents").upload(filePath, bytes, { contentType: file.type || "application/octet-stream", upsert: true });
+      // A random token is mixed into the path — see the matching comment
+      // in app/crew/profiles/actions.ts's uploadCrewDocumentVersion.
+      // nextVersion alone made the path deterministic, so an earlier
+      // partial failure (storage write succeeded, the
+      // crew_document_versions insert below never ran) could leave an
+      // orphaned object sitting at the exact path a retry would reuse —
+      // invisible in the Documents tab, yet blocking the retry with
+      // "The resource already exists". upsert: true used to paper over
+      // that, but crew-documents is deliberately append-only (no UPDATE
+      // policy on storage.objects), so overwriting an existing path hit
+      // RLS instead ("new row violates row-level security policy").
+      // Giving every attempt its own path avoids the collision outright.
+      const filePath = `${orgId}/${crewId}/${crewDocumentId}/${nextVersion}_${crypto.randomUUID()}_${sanitizeFileName(file.name)}`;
+      const { error: upErr } = await supabase.storage.from("crew-documents").upload(filePath, bytes, { contentType: file.type || "application/octet-stream" });
       if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
 
       const { error: versionErr } = await supabase.from("crew_document_versions").insert({
