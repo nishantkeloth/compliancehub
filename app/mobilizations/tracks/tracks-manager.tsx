@@ -7,7 +7,7 @@
 // types in whatever a client's flow actually requires. See
 // claude/phase12-adnoc-mobilization-flow-scope.md.
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createTrack,
@@ -65,6 +65,23 @@ export default function TracksManager({
   const [, startTransition] = useTransition();
   const [creatingTrack, setCreatingTrack] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracks start collapsed. A track that appears after the first render
+  // (one just created) opens by itself so steps can be added straight away.
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const knownIds = useRef<Set<string>>(new Set(tracks.map((t) => t.id)));
+  useEffect(() => {
+    const fresh = tracks.filter((t) => !knownIds.current.has(t.id)).map((t) => t.id);
+    if (fresh.length === 0) return;
+    for (const id of fresh) knownIds.current.add(id);
+    setOpenIds((cur) => new Set([...cur, ...fresh]));
+  }, [tracks]);
+  const toggleTrack = (id: string) =>
+    setOpenIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const run = (fn: () => Promise<{ error?: string } | undefined>, onOk?: () => void) => {
     setError(null);
@@ -89,6 +106,16 @@ export default function TracksManager({
         <button onClick={() => setCreatingTrack((v) => !v)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">
           {creatingTrack ? "Cancel" : "+ New track"}
         </button>
+        {tracks.length > 1 && (
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => setOpenIds(new Set(tracks.map((t) => t.id)))} className="rounded-lg px-3 py-2 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>
+              Expand all
+            </button>
+            <button onClick={() => setOpenIds(new Set())} className="rounded-lg px-3 py-2 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>
+              Collapse all
+            </button>
+          </div>
+        )}
       </div>
 
       {creatingTrack && (
@@ -110,6 +137,8 @@ export default function TracksManager({
             documentTypes={documentTypes}
             items={items.filter((i) => i.track_id === track.id).sort((a, b) => a.sequence - b.sequence)}
             run={run}
+            open={openIds.has(track.id)}
+            onToggle={() => toggleTrack(track.id)}
           />
         ))}
       </div>
@@ -122,11 +151,15 @@ function TrackCard({
   documentTypes,
   items,
   run,
+  open,
+  onToggle,
 }: {
   track: TrackRow;
   documentTypes: DocTypeOpt[];
   items: ChecklistTemplateItemRow[];
   run: (fn: () => Promise<{ error?: string } | undefined>, onOk?: () => void) => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
@@ -141,14 +174,27 @@ function TrackCard({
           onCancel={() => setEditing(false)}
         />
       ) : (
-        <div className="flex items-center gap-2 flex-wrap mb-1">
-          <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{track.name}</span>
-          {!track.is_active && (
-            <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
-              inactive
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="flex items-center gap-2 flex-1 min-w-[200px] text-left"
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="w-4 h-4 shrink-0" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", color: "var(--ch-sub)" }}>
+              <path d="M7 4l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{track.name}</span>
+            <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
+              {items.length} step{items.length === 1 ? "" : "s"}
             </span>
-          )}
-          <div className="ml-auto flex items-center gap-2">
+            {!track.is_active && (
+              <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+                inactive
+              </span>
+            )}
+          </button>
+          <div className="flex items-center gap-2">
             <button onClick={() => setEditing(true)} className="text-xs font-semibold ch-link-navy">Edit</button>
             <button
               onClick={() => {
@@ -162,6 +208,8 @@ function TrackCard({
           </div>
         </div>
       )}
+      {open && !editing && (
+        <div className="mt-2">
       {track.description && !editing && <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>{track.description}</div>}
 
       <div className="mt-3">
@@ -238,6 +286,8 @@ function TrackCard({
           <button onClick={() => setAddingItem(true)} className="text-xs font-semibold ch-link-navy mt-2">+ Add step</button>
         )}
       </div>
+        </div>
+      )}
     </div>
   );
 }
