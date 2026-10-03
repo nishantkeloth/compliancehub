@@ -7,7 +7,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setPositionTrack, updateChecklistItemStatus, updatePlannedArrival } from "../actions";
+import { setPositionTrack, updateChecklistItemStatus, updatePlannedArrival, refreshPositionSteps } from "../actions";
 import { VISA_TYPES, VISA_LABEL } from "../visa-types";
 
 export type ChecklistItem = {
@@ -80,15 +80,18 @@ export default function ChecklistTab({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const run = (fn: () => Promise<{ error?: string } | undefined>) => {
+  const run = (fn: () => Promise<{ error?: string; count?: number } | undefined>, okMessage?: (count: number) => string) => {
     setError(null);
+    setNotice(null);
     startTransition(async () => {
       const res = await fn();
       if (res?.error) {
         setError(res.error);
         return;
       }
+      if (okMessage) setNotice(okMessage(res?.count ?? 0));
       router.refresh();
     });
   };
@@ -102,6 +105,7 @@ export default function ChecklistTab({
   return (
     <div className="space-y-4">
       {error && <div className="text-sm mb-1" style={{ color: "var(--ch-fail)" }}>{error}</div>}
+      {notice && <div className="text-sm mb-1" style={{ color: "var(--ch-pass)" }}>{notice}</div>}
       {tracks.length === 0 && canManage && (
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
           No mobilization tracks yet — add one under Mobilization → Mobilization Tracks.
@@ -145,8 +149,26 @@ export default function ChecklistTab({
                 onSave={(d) => run(() => updatePlannedArrival(p.id, requestId, d))}
               />
             )}
-            {p.mobilization_track_id && items.length === 0 && (
-              <div className="text-xs mt-2" style={{ color: "var(--ch-sub)" }}>No checklist steps apply to this person (the pathway has none, or they are switched off or for other visa types).</div>
+            {p.mobilization_track_id && canManage && (
+              <div className="flex items-center gap-2 flex-wrap mt-2">
+                {items.length === 0 && (
+                  <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
+                    No steps yet. Add steps to this pathway in Mobilization Tracks, then click Refresh steps.
+                  </span>
+                )}
+                <button
+                  onClick={() =>
+                    run(
+                      () => refreshPositionSteps(p.id, requestId),
+                      (n) => (n === 0 ? "Nothing to add. This checklist already has every step that applies." : `Added ${n} step${n === 1 ? "" : "s"} to ${p.selected_crew_name ?? "this person"}.`)
+                    )
+                  }
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold border"
+                  style={{ borderColor: "var(--ch-line)" }}
+                >
+                  Refresh steps from pathway
+                </button>
+              </div>
             )}
             {p.mobilization_track_id && items.length > 0 && (
               <div className="space-y-1.5 mt-2">

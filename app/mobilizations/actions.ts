@@ -1451,6 +1451,96 @@ export async function setPositionTrack(
   return { count: rows.length };
 }
 
+// Add any steps the person's pathway now has but their checklist doesn't.
+// For people whose checklist was created before the pathway's steps were
+// entered, or before more steps were added. Never changes, reorders or
+// removes a step they already have, so progress is kept.
+export async function refreshPositionSteps(positionId: string, requestId: string) {
+  const { supabase, access, userId } = await requireManage();
+  await assertNotTerminal(supabase, requestId);
+
+  const { data: position, error: posErr } = await supabase
+    .from("mobilization_positions")
+    .select("id, mobilization_track_id, visa_type, planned_arrival_date")
+    .eq("id", positionId)
+    .eq("mobilization_request_id", requestId)
+    .single();
+  if (posErr || !position) return { error: "Could not find that position." };
+  if (!position.mobilization_track_id) return { error: "Choose a pathway for this person first." };
+
+  const { data: reqRow, error: reqErr } = await supabase.from("mobilization_requests").select("created_at, required_onboard_date").eq("id", requestId).single();
+  if (reqErr || !reqRow) return { error: "Could not find that mobilization request." };
+
+  const [{ data: templateItems, error: itemsErr }, { data: existing, error: existErr }] = await Promise.all([
+    supabase
+      .from("mobilization_checklist_items")
+      .select("id, sequence, title, description, is_parallel, due_basis, due_offset_days, due_relative_item_id, linked_document_type_id, is_active, visa_types")
+      .eq("track_id", position.mobilization_track_id)
+      .order("sequence", { ascending: true }),
+    supabase.from("mobilization_position_checklist_items").select("id, source_item_id").eq("mobilization_position_id", positionId),
+  ]);
+  if (itemsErr) return { error: itemsErr.message };
+  if (existErr) return { error: existErr.message };
+
+  const visaType = position.visa_type as string | null;
+  const have = new Set((existing ?? []).map((e) => e.source_item_id as string | null).filter((v): v is string => !!v));
+  const missing = (templateItems ?? []).filter((item) => {
+    if (have.has(item.id as string)) return false;
+    if (item.is_active === false) return false;
+    const visas = item.visa_types as string[] | null;
+    if (!visas || visas.length === 0) return true;
+    return visaType ? visas.includes(visaType) : false;
+  });
+  if (missing.length === 0) {
+    return { count: 0 };
+  }
+
+  const requestCreatedDate = (reqRow.created_at as string).slice(0, 10);
+  const requiredOnboardDate = reqRow.required_onboard_date as string | null;
+  const plannedArrivalDate = position.planned_arrival_date as string | null;
+  const addDays = (dateStr: string, days: number) => {
+    const d = new Date(dateStr + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  // Steps this one is relative to may already exist on the person, or be
+  // added in this same call.
+  const instanceIdByTemplateId = new Map<string, string>();
+  for (const e of existing ?? []) if (e.source_item_id) instanceIdByTemplateId.set(e.source_item_id as string, e.id as string);
+  for (const item of missing) instanceIdByTemplateId.set(item.id as string, crypto.randomUUID());
+
+  const rows = missing.map((item) => {
+    const basis = item.due_basis as string;
+    let dueDate: string | null = null;
+    if (basis === "request_created") dueDate = addDays(requestCreatedDate, item.due_offset_days as number);
+    else if (basis === "required_onboard_date" && requiredOnboardDate) dueDate = addDays(requiredOnboardDate, item.due_offset_days as number);
+    else if (basis === "planned_arrival_date" && plannedArrivalDate) dueDate = addDays(plannedArrivalDate, item.due_offset_days as number);
+    return {
+      id: instanceIdByTemplateId.get(item.id as string),
+      org_id: access.orgId,
+      mobilization_position_id: positionId,
+      source_item_id: item.id,
+      sequence: item.sequence,
+      title: item.title,
+      description: item.description,
+      is_parallel: item.is_parallel,
+      due_basis: basis,
+      due_offset_days: item.due_offset_days,
+      due_relative_item_id: item.due_relative_item_id ? instanceIdByTemplateId.get(item.due_relative_item_id as string) ?? null : null,
+      due_date: dueDate,
+      linked_document_type_id: item.linked_document_type_id,
+      updated_by: userId,
+    };
+  });
+
+  const { error: insertErr } = await supabase.from("mobilization_position_checklist_items").insert(rows);
+  if (insertErr) return { error: insertErr.message };
+
+  revalidateMobilization(requestId);
+  return { count: rows.length };
+}
+
 // Change a person's planned arrival date after their checklist exists.
 // Recomputes the due date of every not-yet-done step that counts from it.
 export async function updatePlannedArrival(positionId: string, requestId: string, plannedArrivalDate: string) {
