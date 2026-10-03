@@ -1190,6 +1190,8 @@ export async function approveCurrentStage(id: string, comment?: string) {
     comment: trimmed,
   });
 
+  if (result.outcome === "already_decided") return { error: "This stage has already been decided by someone else — refresh to see the latest." };
+
   if (result.outcome === "completed") {
     // Preserve client_approval_reference's role as "the reference/comment
     // the final approval step was recorded with", regardless of what that
@@ -1242,7 +1244,7 @@ export async function rejectCurrentStage(id: string, reason: string) {
     };
   }
 
-  await actOnCurrentStage(supabase, {
+  const rejectResult = await actOnCurrentStage(supabase, {
     orgId: access.orgId,
     entityType: "crew_matrix",
     entityId: id,
@@ -1254,6 +1256,7 @@ export async function rejectCurrentStage(id: string, reason: string) {
     decision: "reject",
     comment: reason,
   });
+  if (rejectResult.outcome === "already_decided") return { error: "This stage has already been decided by someone else — refresh to see the latest." };
 
   const { error } = await supabase.from("crew_matrices").update({ status: "rejected", rejection_reason: reason, updated_by: user.id }).eq("id", id);
   if (error) return { error: error.message };

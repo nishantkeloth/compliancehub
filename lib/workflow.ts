@@ -243,14 +243,24 @@ export async function actOnCurrentStage(
     decision: "approve" | "reject";
     comment: string | null;
   }
-): Promise<{ outcome: "advanced"; nextStageName: string } | { outcome: "completed" } | { outcome: "rejected" }> {
+): Promise<{ outcome: "advanced"; nextStageName: string } | { outcome: "completed" } | { outcome: "rejected" } | { outcome: "already_decided" }> {
   const { orgId, entityType, entityId, instanceId, stageId, stageSequence, stageName, userId, decision, comment } = opts;
   const nowIso = new Date().toISOString();
 
-  await supabase
+  // Claim the stage atomically: only a still-"pending" row can be decided.
+  // Without this guard two approvers acting at the same moment (or one
+  // double-clicking) both pass the caller's pre-check, both write a
+  // decision, both log an event, and both advance the instance — skipping
+  // a stage or completing it twice. Zero rows back means someone else got
+  // there first, so do nothing further.
+  const { data: claimed, error: claimErr } = await supabase
     .from("workflow_instance_stages")
     .update({ status: decision === "approve" ? "approved" : "rejected", acted_by: userId, acted_at: nowIso, comment })
-    .eq("id", stageId);
+    .eq("id", stageId)
+    .eq("status", "pending")
+    .select("id");
+  if (claimErr) throw new Error(claimErr.message);
+  if (!claimed || claimed.length === 0) return { outcome: "already_decided" };
 
   await supabase.from("workflow_instance_events").insert({
     workflow_instance_id: instanceId,
