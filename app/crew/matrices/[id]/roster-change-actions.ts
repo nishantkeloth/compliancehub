@@ -163,6 +163,22 @@ export async function cancelRosterChangeRequest(requestId: string) {
   // left in that state (decideRosterChangeRequest still exists for it).
   const withdrawable = request.status === "pending_approval" || (request.status === "approved" && !request.applied_assignment_id);
   if (!withdrawable) return { error: "This change can no longer be withdrawn." };
+
+  // Same gate as requestRosterChange: staged changes can only be touched
+  // while the matrix is still a draft. Once it is submitted for approval
+  // (or live), the roster is frozen — withdrawing a staged change then
+  // would alter what the approver is looking at.
+  const { data: matrix, error: matrixErr } = await supabase
+    .from("crew_matrices")
+    .select("status")
+    .eq("id", request.crew_matrix_id as string)
+    .eq("org_id", access.orgId)
+    .single();
+  if (matrixErr || !matrix) return { error: "Matrix not found." };
+  if (matrix.status !== "draft") {
+    return { error: "Crew changes can only be withdrawn while this new version is still a draft — return it to draft first." };
+  }
+
   if (request.requested_by !== userId && !can(access, "crew.matrix.approve_internal")) {
     return { error: "You can only withdraw a change you made yourself." };
   }
