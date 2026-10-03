@@ -214,6 +214,37 @@ async function assertDraft(supabase: Supa, crewMatrixId: string) {
   }
 }
 
+// assertDraft only proves the matrix id the CALLER passed in is a draft —
+// it says nothing about whether the line / requirement row the caller is
+// about to write actually belongs to that matrix. Every write below that
+// is keyed by a line id or a sub-item id has to pair assertDraft with one
+// of these, otherwise a caller can pass their own draft matrix's id
+// alongside a row id from a different (approved/active) matrix, clear the
+// draft check, and mutate the locked matrix's data (the RLS policies on
+// these tables only check org + permission, not status). Both throw on
+// mismatch, same as assertDraft, so call sites stay one line each.
+async function assertLineInMatrix(supabase: Supa, lineId: string, crewMatrixId: string) {
+  const { data, error } = await supabase
+    .from("crew_matrix_lines")
+    .select("id")
+    .eq("id", lineId)
+    .eq("crew_matrix_id", crewMatrixId)
+    .maybeSingle();
+  if (error || !data) throw new Error("That manning line doesn't belong to this matrix.");
+}
+
+type LineSubItemTable =
+  | "crew_matrix_line_skills"
+  | "crew_matrix_line_documents"
+  | "crew_matrix_line_competencies"
+  | "crew_matrix_line_client_requirements";
+
+async function assertSubItemInMatrix(supabase: Supa, table: LineSubItemTable, id: string, crewMatrixId: string) {
+  const { data: item, error: itemErr } = await supabase.from(table).select("line_id").eq("id", id).maybeSingle();
+  if (itemErr || !item) throw new Error("Could not find that requirement.");
+  await assertLineInMatrix(supabase, item.line_id as string, crewMatrixId);
+}
+
 /* ================= Header ================= */
 
 export async function createCrewMatrix(formData: FormData) {
@@ -689,6 +720,7 @@ export async function createCrewMatrixLine(crewMatrixId: string, formData: FormD
 export async function updateCrewMatrixLine(lineId: string, crewMatrixId: string, formData: FormData) {
   const { supabase, userId } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
   const jobRoleId = str(formData, "jobRoleId");
   if (!jobRoleId) return { error: "Job role is required." };
 
@@ -719,6 +751,7 @@ export async function updateCrewMatrixLine(lineId: string, crewMatrixId: string,
 export async function deleteCrewMatrixLine(lineId: string, crewMatrixId: string) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
   const { error } = await supabase.from("crew_matrix_lines").delete().eq("id", lineId);
   if (error) return { error: error.message };
   revalidateMatrix(crewMatrixId);
@@ -863,6 +896,7 @@ export async function reorderCrewMatrixLines(crewMatrixId: string, orderedLineId
 export async function copyCrewMatrixLine(lineId: string, crewMatrixId: string) {
   const { supabase, access, userId } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
 
   const { data: source, error: sourceError } = await supabase.from("crew_matrix_lines").select("*").eq("id", lineId).single();
   if (sourceError || !source) return { error: "Could not find that manning line." };
@@ -944,6 +978,7 @@ export async function copyCrewMatrixLine(lineId: string, crewMatrixId: string) {
 export async function addLineSkill(lineId: string, crewMatrixId: string, skillId: string) {
   const { supabase, access } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
   const { error } = await supabase.from("crew_matrix_line_skills").insert({ org_id: access.orgId, line_id: lineId, skill_id: skillId });
   if (error && !error.message.includes("duplicate")) return { error: error.message };
   revalidateMatrix(crewMatrixId);
@@ -953,6 +988,7 @@ export async function addLineSkill(lineId: string, crewMatrixId: string, skillId
 export async function removeLineSkill(id: string, crewMatrixId: string) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertSubItemInMatrix(supabase, "crew_matrix_line_skills", id, crewMatrixId);
   const { error } = await supabase.from("crew_matrix_line_skills").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateMatrix(crewMatrixId);
@@ -962,6 +998,7 @@ export async function removeLineSkill(id: string, crewMatrixId: string) {
 export async function addLineDocument(lineId: string, crewMatrixId: string, formData: FormData) {
   const { supabase, access } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
   const documentTypeId = str(formData, "documentTypeId");
   if (!documentTypeId) return { error: "Document type is required." };
   const { data, error } = await supabase
@@ -987,6 +1024,7 @@ export async function addLineDocument(lineId: string, crewMatrixId: string, form
 export async function updateLineDocument(id: string, crewMatrixId: string, formData: FormData) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertSubItemInMatrix(supabase, "crew_matrix_line_documents", id, crewMatrixId);
   const { error } = await supabase
     .from("crew_matrix_line_documents")
     .update({
@@ -1003,6 +1041,7 @@ export async function updateLineDocument(id: string, crewMatrixId: string, formD
 export async function removeLineDocument(id: string, crewMatrixId: string) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertSubItemInMatrix(supabase, "crew_matrix_line_documents", id, crewMatrixId);
   const { error } = await supabase.from("crew_matrix_line_documents").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateMatrix(crewMatrixId);
@@ -1012,6 +1051,7 @@ export async function removeLineDocument(id: string, crewMatrixId: string) {
 export async function addLineCompetency(lineId: string, crewMatrixId: string, formData: FormData) {
   const { supabase, access } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
   const name = str(formData, "competencyName");
   if (!name) return { error: "Competency name is required." };
   const { error } = await supabase.from("crew_matrix_line_competencies").insert({
@@ -1029,6 +1069,7 @@ export async function addLineCompetency(lineId: string, crewMatrixId: string, fo
 export async function removeLineCompetency(id: string, crewMatrixId: string) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertSubItemInMatrix(supabase, "crew_matrix_line_competencies", id, crewMatrixId);
   const { error } = await supabase.from("crew_matrix_line_competencies").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateMatrix(crewMatrixId);
@@ -1038,6 +1079,7 @@ export async function removeLineCompetency(id: string, crewMatrixId: string) {
 export async function addLineClientRequirement(lineId: string, crewMatrixId: string, formData: FormData) {
   const { supabase, access } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertLineInMatrix(supabase, lineId, crewMatrixId);
   const text = str(formData, "requirementText");
   if (!text) return { error: "Requirement text is required." };
   const { error } = await supabase.from("crew_matrix_line_client_requirements").insert({
@@ -1054,6 +1096,7 @@ export async function addLineClientRequirement(lineId: string, crewMatrixId: str
 export async function removeLineClientRequirement(id: string, crewMatrixId: string) {
   const { supabase } = await requireManage();
   await assertDraft(supabase, crewMatrixId);
+  await assertSubItemInMatrix(supabase, "crew_matrix_line_client_requirements", id, crewMatrixId);
   const { error } = await supabase.from("crew_matrix_line_client_requirements").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidateMatrix(crewMatrixId);
