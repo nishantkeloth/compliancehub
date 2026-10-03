@@ -274,20 +274,30 @@ export async function generatePositionsFromMatrix(requestId: string) {
   // member already pending on another mobilization is silently skipped
   // (left Open here) instead of failing position generation outright.
   let prefilled = 0;
+  // Crew who are assigned to the site but couldn't be given a position, so
+  // the caller can warn rather than silently dropping them: "extra" = more
+  // people of that rank are assigned than the matrix requires; "skipped" =
+  // a slot existed but the person is already reserved on another pending
+  // mobilization.
+  const unplaced: { name: string; reason: "extra" | "reserved_elsewhere" }[] = [];
   if (req.offshore_site_id) {
     const lineJobRoleIds = Array.from(new Set(lines.map((l) => l.job_role_id as string)));
     const { data: siteAssignments } = await supabase
       .from("crew_assignments")
-      .select("crew_id")
+      .select("crew_id, start_date")
       .eq("org_id", access.orgId)
       .eq("offshore_site_id", req.offshore_site_id)
       .is("end_date", null);
     const assignedCrewIds = Array.from(new Set((siteAssignments ?? []).map((a) => a.crew_id as string)));
+    // Each person's Start Date from the Staffing Plan becomes their
+    // position's own required onboard date.
+    const startDateByCrew = new Map<string, string | null>();
+    for (const a of siteAssignments ?? []) startDateByCrew.set(a.crew_id as string, (a.start_date as string | null) ?? null);
 
     if (assignedCrewIds.length && lineJobRoleIds.length) {
       const { data: assignedCrew } = await supabase
         .from("crew_profiles")
-        .select("id, primary_job_role_id")
+        .select("id, full_name, primary_job_role_id")
         .eq("org_id", access.orgId)
         .eq("employment_status", "active")
         .in("id", assignedCrewIds)
@@ -298,11 +308,13 @@ export async function generatePositionsFromMatrix(requestId: string) {
       // "Cook" split the assigned Cooks between them instead of the same
       // person filling a slot on both.
       const candidatesByRole = new Map<string, string[]>();
+      const nameByCrew = new Map<string, string>();
       for (const c of assignedCrew ?? []) {
         const roleId = c.primary_job_role_id as string;
         const list = candidatesByRole.get(roleId) ?? [];
         list.push(c.id as string);
         candidatesByRole.set(roleId, list);
+        nameByCrew.set(c.id as string, (c.full_name as string) ?? "Crew member");
       }
 
       const positionsByLine = new Map<string, { id: string; position_sequence: number }[]>();
@@ -321,8 +333,14 @@ export async function generatePositionsFromMatrix(requestId: string) {
           if (!crewId) break;
           const { error: fillError } = await supabase
             .from("mobilization_positions")
-            .update({ selected_crew_id: crewId, readiness_status: "selected", updated_by: userId })
+            .update({
+              selected_crew_id: crewId,
+              readiness_status: "selected",
+              required_onboard_date: startDateByCrew.get(crewId) ?? null,
+              updated_by: userId,
+            })
             .eq("id", pos.id);
+          if (fillError) unplaced.push({ name: nameByCrew.get(crewId) ?? "Crew member", reason: "reserved_elsewhere" });
           if (!fillError) {
             prefilled++;
             await supabase.from("mobilization_position_history").insert({
@@ -339,11 +357,73 @@ export async function generatePositionsFromMatrix(requestId: string) {
           // this position Open — never fails the overall generate step.
         }
       }
+
+      // Whoever is still queued once every slot for their rank is filled is
+      // assigned beyond the matrix's required headcount.
+      for (const leftover of candidatesByRole.values()) {
+        for (const crewId of leftover) unplaced.push({ name: nameByCrew.get(crewId) ?? "Crew member", reason: "extra" });
+      }
     }
   }
 
   revalidateMobilization(requestId);
-  return { count: rows.length, prefilled };
+  return { count: rows.length, prefilled, unplaced };
+}
+
+// Started from the crew matrix's Staffing Plan ("Initiate Mobilization"
+// button on the Assigned tab) instead of the standalone New Mobilization
+// form. Same two steps that form runs — create the request, then generate
+// its positions (which also pre-fills each from the matrix's assigned
+// crew) — but with two additions: it refuses to start a second request
+// while one is still open for this matrix (returning the open one so the
+// UI can link to it), and it reports anyone it couldn't place so the
+// caller can show a warning instead of dropping them silently.
+export async function initiateMobilizationFromMatrix(
+  crewMatrixId: string,
+  formData: FormData
+): Promise<
+  | { error: string }
+  | { existing: { id: string; mobilization_number: string | null; status: string } }
+  | { id: string; count: number; prefilled: number; unplaced: { name: string; reason: "extra" | "reserved_elsewhere" }[]; generateError?: string }
+> {
+  const { supabase, access } = await requireManage();
+
+  const { data: open } = await supabase
+    .from("mobilization_requests")
+    .select("id, mobilization_number, status")
+    .eq("org_id", access.orgId)
+    .eq("crew_matrix_id", crewMatrixId)
+    .not("status", "in", `(${TERMINAL_STATUSES.join(",")})`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (open) {
+    return { existing: { id: open.id as string, mobilization_number: (open.mobilization_number as string | null) ?? null, status: open.status as string } };
+  }
+
+  const fd = new FormData();
+  fd.set("crewMatrixId", crewMatrixId);
+  for (const key of ["mobilizationType", "requiredOnboardDate", "crewChangeLocation", "travelOrigin", "specialInstructions", "priority"]) {
+    fd.set(key, str(formData, key));
+  }
+  const created = await createMobilizationRequest(fd);
+  if (created.error || !created.id) return { error: created.error ?? "Could not create the mobilization request." };
+
+  const generated = await generatePositionsFromMatrix(created.id);
+  if ("error" in generated && generated.error) {
+    // The request exists; the user can generate positions from its page.
+    return { id: created.id, count: 0, prefilled: 0, unplaced: [], generateError: generated.error };
+  }
+
+  const g = generated as { count: number; prefilled: number; unplaced: { name: string; reason: "extra" | "reserved_elsewhere" }[] };
+  const extra = g.unplaced.filter((u) => u.reason === "extra").map((u) => u.name);
+  const reserved = g.unplaced.filter((u) => u.reason === "reserved_elsewhere").map((u) => u.name);
+  const notes = [`Initiated from the crew matrix's Staffing Plan — ${g.prefilled} of ${g.count} positions pre-filled from the assigned crew.`];
+  if (extra.length) notes.push(`Assigned beyond the matrix's required headcount, so not given a position: ${extra.join(", ")}.`);
+  if (reserved.length) notes.push(`Already reserved on another pending mobilization, so their position was left open: ${reserved.join(", ")}.`);
+  await postSystemComment(supabase, access.orgId, created.id, notes.join(" "));
+
+  return { id: created.id, count: g.count, prefilled: g.prefilled, unplaced: g.unplaced };
 }
 
 export async function addAdditionalPosition(requestId: string, formData: FormData) {

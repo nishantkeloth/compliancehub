@@ -78,6 +78,7 @@ import {
   type ReservationInfo,
 } from "@/lib/staffing-plan-shared";
 import RosterTimeline, { type HistoryRow } from "./roster-timeline";
+import InitiateMobilization from "./initiate-mobilization";
 
 // Re-exported for existing callers (matrix-detail.tsx) that import these
 // types from this file — the actual definitions now live in
@@ -164,6 +165,8 @@ export default function StaffingPlanView({
   customFieldDefinitions,
   canManage = false,
   canAssignCrew = false,
+  canMobilize = false,
+  openMobilization = null,
   canApproveInternal = false,
   statusHistory,
   matrixCreatedAt,
@@ -202,6 +205,11 @@ export default function StaffingPlanView({
   // hidden, same as no permissions.
   canManage?: boolean;
   canAssignCrew?: boolean;
+  // "Initiate Mobilization" button (Assigned tab, approved/active matrices
+  // only): needs mobilization.manage, and turns into a link to the matrix's
+  // still-open request when there is one.
+  canMobilize?: boolean;
+  openMobilization?: { id: string; mobilization_number: string | null; status: string } | null;
   // Phase 17 — the roster change/approval timeline, shown inline at the
   // top of the Assigned view rather than as its own top-level tab (see
   // matrix-detail.tsx, which used to route this to a separate "Approval
@@ -626,6 +634,19 @@ export default function StaffingPlanView({
               </button>
             ))}
           </div>
+        )}
+        {view === "assigned" && canMobilize && (matrixStatus === "approved" || matrixStatus === "active") && (
+          <InitiateMobilization
+            crewMatrixId={crewMatrixId}
+            defaultOnboardDate={
+              crew
+                .map((c) => c.assignment_start_date)
+                .filter((d): d is string => !!d)
+                .sort()[0] ?? siteEffectiveFrom ?? null
+            }
+            assignedCount={crew.length}
+            existing={openMobilization}
+          />
         )}
         {view === "assigned" && canAssignCrew && !readOnlyStaffing && candidateCrew !== undefined && (
           <button

@@ -79,6 +79,8 @@ export default function MatrixDetail({
   customFieldDefinitions,
   canManage,
   canAssignCrew,
+  canMobilize = false,
+  openMobilization = null,
   canShareMatrix,
   canSubmit,
   canApproveInternal,
@@ -107,6 +109,8 @@ export default function MatrixDetail({
   customFieldDefinitions: FieldDef[];
   canManage: boolean;
   canAssignCrew: boolean;
+  canMobilize?: boolean;
+  openMobilization?: { id: string; mobilization_number: string | null; status: string } | null;
   canShareMatrix: boolean;
   canSubmit: boolean;
   canApproveInternal: boolean;
@@ -555,6 +559,8 @@ export default function MatrixDetail({
             customFieldDefinitions={customFieldDefinitions}
             canManage={canManage}
             canAssignCrew={canAssignCrew}
+            canMobilize={canMobilize}
+            openMobilization={openMobilization}
             canApproveInternal={canApproveInternal}
             statusHistory={history}
             matrixCreatedAt={matrix.created_at}

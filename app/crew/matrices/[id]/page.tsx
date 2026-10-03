@@ -432,6 +432,32 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
     }
   }
 
+  // The one still-open mobilization request for this matrix, if any — the
+  // Staffing Plan's "Initiate Mobilization" button turns into a link to it
+  // so a second one can't be started by accident. Only looked up for people
+  // who can manage mobilizations (everyone else never sees the button), and
+  // for a matrix that can be mobilized from. Errors (e.g. the user can't
+  // read mobilization_requests) just mean "none".
+  let openMobilization: { id: string; mobilization_number: string | null; status: string } | null = null;
+  if (can(access, "mobilization.manage") && ["approved", "active"].includes(matrix.status as string)) {
+    const { data: openReq } = await supabase
+      .from("mobilization_requests")
+      .select("id, mobilization_number, status")
+      .eq("org_id", access.orgId)
+      .eq("crew_matrix_id", id)
+      .not("status", "in", "(completed,partially_completed,cancelled)")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (openReq) {
+      openMobilization = {
+        id: openReq.id as string,
+        mobilization_number: (openReq.mobilization_number as string | null) ?? null,
+        status: openReq.status as string,
+      };
+    }
+  }
+
   const staffingCrew = (matchedCrew ?? []).map((c) => {
     const documents: Record<
       string,
@@ -648,6 +674,8 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
       }))}
       canManage={can(access, "crew.matrix.manage")}
       canAssignCrew={can(access, "crew.manage")}
+      canMobilize={can(access, "mobilization.manage")}
+      openMobilization={openMobilization}
       canShareMatrix={can(access, "crew.matrix.share")}
       canSubmit={can(access, "crew.matrix.submit")}
       canApproveInternal={can(access, "crew.matrix.approve_internal")}
