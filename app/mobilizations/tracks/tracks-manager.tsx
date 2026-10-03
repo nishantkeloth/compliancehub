@@ -16,9 +16,11 @@ import {
   createChecklistItem,
   updateChecklistItem,
   deleteChecklistItem,
+  setChecklistItemActive,
   type TrackRow,
   type ChecklistTemplateItemRow,
 } from "../tracks-actions";
+import { VISA_TYPES, VISA_LABEL } from "../visa-types";
 
 type ClientOpt = { id: string; name: string };
 type DocTypeOpt = { id: string; name: string };
@@ -36,6 +38,7 @@ const ALL = "__all__";
 const DUE_BASIS_LABEL: Record<string, string> = {
   request_created: "days after the request is created",
   required_onboard_date: "days relative to the required onboard date",
+  planned_arrival_date: "days relative to the person's planned arrival date",
   relative_to_item: "days after another step is done",
 };
 
@@ -46,6 +49,9 @@ function dueRuleSummary(item: ChecklistTemplateItemRow, allItems: ChecklistTempl
   }
   if (item.due_basis === "required_onboard_date") {
     return item.due_offset_days === 0 ? "on the required onboard date" : `${item.due_offset_days} day(s) ${item.due_offset_days < 0 ? "before" : "after"} the required onboard date`;
+  }
+  if (item.due_basis === "planned_arrival_date") {
+    return item.due_offset_days === 0 ? "on the planned arrival date" : `${Math.abs(item.due_offset_days)} day(s) ${item.due_offset_days < 0 ? "before" : "after"} the planned arrival date`;
   }
   return item.due_offset_days === 0 ? "on the day the request is created" : `${item.due_offset_days} day(s) after the request is created`;
 }
@@ -204,7 +210,7 @@ function TrackCard({
                 />
               </div>
             ) : (
-              <div key={item.id} className="flex items-start gap-2 flex-wrap text-sm border rounded-lg px-2.5 py-1.5" style={{ borderColor: "var(--ch-line)" }}>
+              <div key={item.id} className="flex items-start gap-2 flex-wrap text-sm border rounded-lg px-2.5 py-1.5" style={{ borderColor: "var(--ch-line)", opacity: item.is_active ? 1 : 0.55 }}>
                 <span className="text-[10px] font-mono rounded px-1 py-0.5 mt-0.5" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
                   {item.sequence}
                 </span>
@@ -212,9 +218,13 @@ function TrackCard({
                   <div className="font-medium" style={{ color: "var(--ch-ink)" }}>
                     {item.title}
                     {item.is_parallel && <span className="ml-1 text-[10px]" style={{ color: "var(--ch-sub)" }}>(parallel)</span>}
+                    {!item.is_active && <span className="ml-1 text-[10px] font-bold uppercase" style={{ color: "var(--ch-sub)" }}>Off</span>}
                   </div>
                   {item.description && <div className="text-xs" style={{ color: "var(--ch-sub)" }}>{item.description}</div>}
                   <div className="text-xs" style={{ color: "var(--ch-sub)" }}>Due: {dueRuleSummary(item, items)}</div>
+                  <div className="text-xs" style={{ color: "var(--ch-sub)" }}>
+                    Visa: {item.visa_types && item.visa_types.length > 0 ? item.visa_types.map((v) => VISA_LABEL[v] ?? v).join(", ") : "all types"}
+                  </div>
                   {item.linked_document_type_id && (
                     <div className="text-xs" style={{ color: "var(--ch-sub)" }}>
                       Produces: {documentTypes.find((d) => d.id === item.linked_document_type_id)?.name ?? "—"}
@@ -222,6 +232,12 @@ function TrackCard({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => run(() => setChecklistItemActive(item.id, !item.is_active))}
+                    className="text-xs font-semibold ch-link-navy"
+                  >
+                    {item.is_active ? "Turn off" : "Turn on"}
+                  </button>
                   <button onClick={() => setEditingItemId(item.id)} className="text-xs font-semibold ch-link-navy">Edit</button>
                   <button
                     onClick={() => {
@@ -355,6 +371,7 @@ function ItemForm({
   const [dueOffsetDays, setDueOffsetDays] = useState(String(initial?.due_offset_days ?? 0));
   const [dueRelativeItemId, setDueRelativeItemId] = useState(initial?.due_relative_item_id ?? "");
   const [linkedDocumentTypeId, setLinkedDocumentTypeId] = useState(initial?.linked_document_type_id ?? "");
+  const [visaTypes, setVisaTypes] = useState<string[]>(initial?.visa_types ?? []);
 
   const submit = () => {
     if (!title.trim()) return;
@@ -368,6 +385,7 @@ function ItemForm({
     fd.set("dueOffsetDays", dueOffsetDays);
     fd.set("dueRelativeItemId", dueRelativeItemId);
     fd.set("linkedDocumentTypeId", linkedDocumentTypeId);
+    for (const v of visaTypes) fd.append("visaTypes", v);
     onSubmit(fd);
   };
 
@@ -393,6 +411,7 @@ function ItemForm({
           <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={dueBasis} onChange={(e) => setDueBasis(e.target.value)}>
             <option value="request_created">Request created</option>
             <option value="required_onboard_date">Required onboard date</option>
+            <option value="planned_arrival_date">Planned arrival date (per person)</option>
             <option value="relative_to_item">Another step finishing</option>
           </select>
         </label>
@@ -430,6 +449,21 @@ function ItemForm({
         <label className="flex items-center gap-1.5 text-xs mt-5" style={{ color: "var(--ch-ink)" }}>
           <input type="checkbox" checked={isParallel} onChange={(e) => setIsParallel(e.target.checked)} /> Runs in parallel with other steps
         </label>
+      </div>
+      <div className="mb-3">
+        <div className="text-xs mb-1" style={{ color: "var(--ch-sub)" }}>Applies to visa types (none ticked = every visa type)</div>
+        <div className="flex items-center gap-3 flex-wrap">
+          {VISA_TYPES.map((v) => (
+            <label key={v} className="flex items-center gap-1.5 text-xs" style={{ color: "var(--ch-ink)" }}>
+              <input
+                type="checkbox"
+                checked={visaTypes.includes(v)}
+                onChange={(e) => setVisaTypes((cur) => (e.target.checked ? [...cur, v] : cur.filter((x) => x !== v)))}
+              />
+              {VISA_LABEL[v]}
+            </label>
+          ))}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <button

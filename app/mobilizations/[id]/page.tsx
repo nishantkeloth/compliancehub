@@ -42,7 +42,7 @@ export default async function MobilizationDetailPage({ params }: { params: Promi
     supabase
       .from("mobilization_positions")
       .select(
-        "id, crew_matrix_line_id, job_role_id, position_sequence, required_onboard_date, selected_crew_id, reliever_for_crew_id, readiness_status, client_approval_status, final_status, is_additional, additional_reason, remarks, mobilization_track_id, job_roles(name), selected_crew:crew_profiles!selected_crew_id(id, full_name, employee_code), reliever_crew:crew_profiles!reliever_for_crew_id(id, full_name)"
+        "id, crew_matrix_line_id, job_role_id, position_sequence, required_onboard_date, selected_crew_id, reliever_for_crew_id, readiness_status, client_approval_status, final_status, is_additional, additional_reason, remarks, mobilization_track_id, visa_type, planned_arrival_date, job_roles(name), selected_crew:crew_profiles!selected_crew_id(id, full_name, employee_code), reliever_crew:crew_profiles!reliever_for_crew_id(id, full_name)"
       )
       .eq("mobilization_request_id", id)
       .order("job_role_id", { ascending: true })
@@ -116,6 +116,8 @@ export default async function MobilizationDetailPage({ params }: { params: Promi
       additional_reason: p.additional_reason as string | null,
       remarks: p.remarks as string | null,
       mobilization_track_id: p.mobilization_track_id as string | null,
+      visa_type: p.visa_type as string | null,
+      planned_arrival_date: p.planned_arrival_date as string | null,
     };
   });
 

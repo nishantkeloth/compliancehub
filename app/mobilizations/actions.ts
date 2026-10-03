@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { VISA_TYPES } from "./visa-types";
 import { loadPositionContext, evaluateCandidateReadiness, evaluateCandidatesReadiness, snapshotSelectedPositions, writeReadinessSnapshot } from "@/lib/readiness";
 
 type Supa = Awaited<ReturnType<typeof createClient>>;
@@ -1350,8 +1351,16 @@ export async function emergencyFastTrack(id: string) {
 // someone currently mobilizing. Deliberately one-way: once a track is
 // set it can't be changed here, since that would mean deciding what to
 // do with any checklist progress already made against the old track.
-export async function setPositionTrack(positionId: string, requestId: string, trackId: string) {
+export async function setPositionTrack(
+  positionId: string,
+  requestId: string,
+  trackId: string,
+  visaType: string | null = null,
+  plannedArrivalDate: string | null = null
+) {
   const { supabase, access, userId } = await requireManage();
+  if (visaType && !(VISA_TYPES as readonly string[]).includes(visaType)) return { error: "Unknown visa type." };
+  if (plannedArrivalDate && !/^\d{4}-\d{2}-\d{2}$/.test(plannedArrivalDate)) return { error: "Planned arrival date is not a valid date." };
   await assertNotTerminal(supabase, requestId);
 
   const { data: position, error: posErr } = await supabase
@@ -1370,15 +1379,27 @@ export async function setPositionTrack(positionId: string, requestId: string, tr
 
   const { data: templateItems, error: itemsErr } = await supabase
     .from("mobilization_checklist_items")
-    .select("id, sequence, title, description, is_parallel, due_basis, due_offset_days, due_relative_item_id, linked_document_type_id")
+    .select("id, sequence, title, description, is_parallel, due_basis, due_offset_days, due_relative_item_id, linked_document_type_id, is_active, visa_types")
     .eq("track_id", trackId)
     .order("sequence", { ascending: true });
   if (itemsErr) return { error: itemsErr.message };
 
-  const { error: assignError } = await supabase.from("mobilization_positions").update({ mobilization_track_id: trackId, updated_by: userId }).eq("id", positionId);
+  const { error: assignError } = await supabase
+    .from("mobilization_positions")
+    .update({ mobilization_track_id: trackId, visa_type: visaType, planned_arrival_date: plannedArrivalDate, updated_by: userId })
+    .eq("id", positionId);
   if (assignError) return { error: assignError.message };
 
-  if (!templateItems || templateItems.length === 0) {
+  // Steps switched off for this pathway, or restricted to other visa types,
+  // are not copied to this person.
+  const applicableItems = (templateItems ?? []).filter((item) => {
+    if (item.is_active === false) return false;
+    const visas = item.visa_types as string[] | null;
+    if (!visas || visas.length === 0) return true;
+    return visaType ? visas.includes(visaType) : false;
+  });
+
+  if (applicableItems.length === 0) {
     // Track has no steps configured yet — assigning it is still valid,
     // there's just nothing to instantiate.
     revalidateMobilization(requestId);
@@ -1396,13 +1417,14 @@ export async function setPositionTrack(positionId: string, requestId: string, tr
   // Pre-generate instance ids so due_relative_item_id can point at
   // another INSTANCE row (not the template item) within the same insert.
   const idByTemplateId = new Map<string, string>();
-  for (const item of templateItems) idByTemplateId.set(item.id as string, crypto.randomUUID());
+  for (const item of applicableItems) idByTemplateId.set(item.id as string, crypto.randomUUID());
 
-  const rows = templateItems.map((item) => {
+  const rows = applicableItems.map((item) => {
     const basis = item.due_basis as string;
     let dueDate: string | null = null;
     if (basis === "request_created") dueDate = addDays(requestCreatedDate, item.due_offset_days as number);
     else if (basis === "required_onboard_date" && requiredOnboardDate) dueDate = addDays(requiredOnboardDate, item.due_offset_days as number);
+    else if (basis === "planned_arrival_date" && plannedArrivalDate) dueDate = addDays(plannedArrivalDate, item.due_offset_days as number);
     // relative_to_item stays null until the item it depends on is marked done.
     return {
       id: idByTemplateId.get(item.id as string),
@@ -1427,6 +1449,41 @@ export async function setPositionTrack(positionId: string, requestId: string, tr
 
   revalidateMobilization(requestId);
   return { count: rows.length };
+}
+
+// Change a person's planned arrival date after their checklist exists.
+// Recomputes the due date of every not-yet-done step that counts from it.
+export async function updatePlannedArrival(positionId: string, requestId: string, plannedArrivalDate: string) {
+  const { supabase, access, userId } = await requireManage();
+  await assertNotTerminal(supabase, requestId);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(plannedArrivalDate)) return { error: "Planned arrival date is not a valid date." };
+
+  const { data: position, error: posErr } = await supabase
+    .from("mobilization_positions")
+    .select("id")
+    .eq("id", positionId)
+    .eq("mobilization_request_id", requestId)
+    .single();
+  if (posErr || !position) return { error: "Could not find that position." };
+
+  const { error } = await supabase.from("mobilization_positions").update({ planned_arrival_date: plannedArrivalDate, updated_by: userId }).eq("id", positionId);
+  if (error) return { error: error.message };
+
+  const { data: steps } = await supabase
+    .from("mobilization_position_checklist_items")
+    .select("id, due_offset_days")
+    .eq("mobilization_position_id", positionId)
+    .eq("org_id", access.orgId)
+    .eq("due_basis", "planned_arrival_date")
+    .neq("status", "done");
+  for (const step of steps ?? []) {
+    const d = new Date(plannedArrivalDate + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + (step.due_offset_days as number));
+    await supabase.from("mobilization_position_checklist_items").update({ due_date: d.toISOString().slice(0, 10), updated_by: userId }).eq("id", step.id);
+  }
+
+  revalidateMobilization(requestId);
+  return { count: (steps ?? []).length };
 }
 
 // Marking a step "done" resolves the due date of any sibling step (same

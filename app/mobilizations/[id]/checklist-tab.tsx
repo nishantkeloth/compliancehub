@@ -7,7 +7,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setPositionTrack, updateChecklistItemStatus } from "../actions";
+import { setPositionTrack, updateChecklistItemStatus, updatePlannedArrival } from "../actions";
+import { VISA_TYPES, VISA_LABEL } from "../visa-types";
 
 export type ChecklistItem = {
   id: string;
@@ -28,6 +29,9 @@ export type ChecklistPosition = {
   selected_crew_id: string | null;
   selected_crew_name: string | null;
   mobilization_track_id: string | null;
+  visa_type: string | null;
+  planned_arrival_date: string | null;
+  required_onboard_date: string | null;
 };
 
 const cardCls = "bg-white border rounded-xl";
@@ -116,6 +120,7 @@ export default function ChecklistTab({
               <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{p.job_role_name}</span>
               <span className="text-sm" style={{ color: "var(--ch-ink)" }}>{p.selected_crew_name}</span>
               {track && <span className="text-xs" style={{ color: "var(--ch-sub)" }}>· {track.name}</span>}
+              {p.visa_type && <span className="text-xs" style={{ color: "var(--ch-sub)" }}>· {VISA_LABEL[p.visa_type] ?? p.visa_type} visa</span>}
               {items.length > 0 && (
                 <span className="text-xs ml-auto" style={{ color: "var(--ch-sub)" }}>
                   {doneCount}/{items.length} done
@@ -127,14 +132,23 @@ export default function ChecklistTab({
               canManage ? (
                 <TrackPicker
                   tracks={tracks}
-                  onAssign={(trackId) => run(() => setPositionTrack(p.id, requestId, trackId))}
+                  defaultArrival={p.required_onboard_date}
+                  onAssign={(trackId, visa, arrival) => run(() => setPositionTrack(p.id, requestId, trackId, visa, arrival))}
                 />
               ) : (
                 <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No track assigned yet.</div>
               )
-            ) : items.length === 0 ? (
-              <div className="text-xs" style={{ color: "var(--ch-sub)" }}>This track has no checklist steps configured.</div>
             ) : (
+              <ArrivalDate
+                value={p.planned_arrival_date}
+                canManage={canManage}
+                onSave={(d) => run(() => updatePlannedArrival(p.id, requestId, d))}
+              />
+            )}
+            {p.mobilization_track_id && items.length === 0 && (
+              <div className="text-xs mt-2" style={{ color: "var(--ch-sub)" }}>No checklist steps apply to this person (the pathway has none, or they are switched off or for other visa types).</div>
+            )}
+            {p.mobilization_track_id && items.length > 0 && (
               <div className="space-y-1.5 mt-2">
                 {items.map((item) => (
                   <div key={item.id} className="flex items-start gap-2 flex-wrap text-sm border rounded-lg px-2.5 py-1.5" style={{ borderColor: "var(--ch-line)" }}>
@@ -179,23 +193,69 @@ export default function ChecklistTab({
   );
 }
 
-function TrackPicker({ tracks, onAssign }: { tracks: Track[]; onAssign: (trackId: string) => void }) {
+function ArrivalDate({ value, canManage, onSave }: { value: string | null; canManage: boolean; onSave: (date: string) => void }) {
+  const [date, setDate] = useState(value ?? "");
+  if (!canManage) {
+    return <div className="text-xs" style={{ color: "var(--ch-sub)" }}>Planned arrival: {value ?? "not set"}</div>;
+  }
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-xs" style={{ color: "var(--ch-sub)" }}>
+      <label className="flex items-center gap-2">
+        Planned arrival
+        <input type="date" className={`${inputCls} py-1`} style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} />
+      </label>
+      {date && date !== (value ?? "") && (
+        <button onClick={() => onSave(date)} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold">
+          {value ? "Update date" : "Set date"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TrackPicker({
+  tracks,
+  defaultArrival,
+  onAssign,
+}: {
+  tracks: Track[];
+  defaultArrival: string | null;
+  onAssign: (trackId: string, visaType: string | null, plannedArrivalDate: string | null) => void;
+}) {
   const [trackId, setTrackId] = useState("");
+  const [visa, setVisa] = useState("");
+  const [arrival, setArrival] = useState(defaultArrival ?? "");
   if (tracks.length === 0) return <div className="text-xs" style={{ color: "var(--ch-sub)" }}>No tracks available to assign.</div>;
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <select className={`${inputCls}`} style={inputStyle} value={trackId} onChange={(e) => setTrackId(e.target.value)}>
-        <option value="">Choose a track…</option>
-        {tracks.map((t) => (
-          <option key={t.id} value={t.id}>{t.name}</option>
-        ))}
-      </select>
+    <div className="flex items-end gap-2 flex-wrap">
+      <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        Pathway
+        <select className={`${inputCls} block mt-1`} style={inputStyle} value={trackId} onChange={(e) => setTrackId(e.target.value)}>
+          <option value="">Choose a pathway…</option>
+          {tracks.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        Visa type
+        <select className={`${inputCls} block mt-1`} style={inputStyle} value={visa} onChange={(e) => setVisa(e.target.value)}>
+          <option value="">Choose…</option>
+          {VISA_TYPES.map((v) => (
+            <option key={v} value={v}>{VISA_LABEL[v]}</option>
+          ))}
+        </select>
+      </label>
+      <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
+        Planned arrival date
+        <input type="date" className={`${inputCls} block mt-1`} style={inputStyle} value={arrival} onChange={(e) => setArrival(e.target.value)} />
+      </label>
       <button
-        onClick={() => trackId && onAssign(trackId)}
-        disabled={!trackId}
+        onClick={() => trackId && onAssign(trackId, visa || null, arrival || null)}
+        disabled={!trackId || !visa}
         className="ch-btn-primary rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50"
       >
-        Assign track
+        Create checklist
       </button>
     </div>
   );

@@ -11,9 +11,11 @@
 // null) as an org-wide default/fallback for a client without a
 // configured process yet.
 //
-// A checklist item's due date is computed from one of three bases:
+// A checklist item's due date is computed from one of four bases:
 //  - request_created: the mobilization's created_at + due_offset_days
 //  - required_onboard_date: the mobilization's required_onboard_date + due_offset_days
+//  - planned_arrival_date: the person's planned arrival date + due_offset_days
+//    (negative = before they arrive, positive = after)
 //  - relative_to_item: due_offset_days after another item in the same
 //    track/position is marked done — this is what reproduces "10 days
 //    after the exam step" for any client's differently-shaped rule,
@@ -26,6 +28,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { VISA_TYPES } from "./visa-types";
 
 async function requireManage() {
   const supabase = await createClient();
@@ -73,11 +76,19 @@ export type ChecklistTemplateItemRow = {
   title: string;
   description: string | null;
   is_parallel: boolean;
-  due_basis: "request_created" | "required_onboard_date" | "relative_to_item";
+  due_basis: "request_created" | "required_onboard_date" | "planned_arrival_date" | "relative_to_item";
   due_offset_days: number;
   due_relative_item_id: string | null;
   linked_document_type_id: string | null;
+  is_active: boolean;
+  visa_types: string[] | null;
 };
+
+function visaTypesFrom(formData: FormData): string[] | null {
+  const picked = formData.getAll("visaTypes").filter((v): v is string => typeof v === "string" && (VISA_TYPES as readonly string[]).includes(v));
+  // none or all ticked = applies to every visa type
+  return picked.length === 0 || picked.length === VISA_TYPES.length ? null : picked;
+}
 
 export async function getTracksConfig() {
   const { supabase, access } = await requireManage();
@@ -92,7 +103,7 @@ export async function getTracksConfig() {
       .order("name", { ascending: true }),
     supabase
       .from("mobilization_checklist_items")
-      .select("id, track_id, sequence, title, description, is_parallel, due_basis, due_offset_days, due_relative_item_id, linked_document_type_id")
+      .select("id, track_id, sequence, title, description, is_parallel, due_basis, due_offset_days, due_relative_item_id, linked_document_type_id, is_active, visa_types")
       .eq("org_id", access.orgId)
       .order("sequence", { ascending: true }),
     supabase.from("document_types").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -200,6 +211,7 @@ export async function createChecklistItem(trackId: string, formData: FormData) {
     due_offset_days: optInt(formData, "dueOffsetDays") ?? 0,
     due_relative_item_id: dueBasis === "relative_to_item" ? dueRelativeItemId : null,
     linked_document_type_id: optStr(formData, "linkedDocumentTypeId"),
+    visa_types: visaTypesFrom(formData),
     created_by: userId,
     updated_by: userId,
   });
@@ -232,6 +244,7 @@ export async function updateChecklistItem(id: string, formData: FormData) {
       due_offset_days: optInt(formData, "dueOffsetDays") ?? 0,
       due_relative_item_id: dueBasis === "relative_to_item" ? dueRelativeItemId : null,
       linked_document_type_id: optStr(formData, "linkedDocumentTypeId"),
+      visa_types: visaTypesFrom(formData),
       updated_by: userId,
     })
     .eq("id", id)
@@ -251,6 +264,20 @@ export async function deleteChecklistItem(id: string) {
     return { error: "Another step's due date is relative to this one — update or delete that step first." };
   }
   const { error } = await supabase.from("mobilization_checklist_items").delete().eq("id", id).eq("org_id", access.orgId);
+  if (error) return { error: error.message };
+  revalidateTracks();
+  return {};
+}
+
+// Switch a step on or off for this pathway. Off steps are not copied onto
+// new people's checklists; checklists already created keep their steps.
+export async function setChecklistItemActive(id: string, isActive: boolean) {
+  const { supabase, access, userId } = await requireManage();
+  const { error } = await supabase
+    .from("mobilization_checklist_items")
+    .update({ is_active: isActive, updated_by: userId })
+    .eq("id", id)
+    .eq("org_id", access.orgId);
   if (error) return { error: error.message };
   revalidateTracks();
   return {};

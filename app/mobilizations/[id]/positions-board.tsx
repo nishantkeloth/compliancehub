@@ -62,6 +62,8 @@ export type Position = {
   job_role_name: string;
   position_sequence: number;
   required_onboard_date: string | null;
+  visa_type: string | null;
+  planned_arrival_date: string | null;
   selected_crew_id: string | null;
   selected_crew_name: string | null;
   selected_crew_code: string | null;
