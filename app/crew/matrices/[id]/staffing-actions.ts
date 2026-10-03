@@ -95,11 +95,20 @@ export async function assignCandidateToMatrix(crewId: string, crewMatrixId: stri
 
   const { data: matrix, error: matrixErr } = await supabase
     .from("crew_matrices")
-    .select("id, offshore_site_id")
+    .select("id, offshore_site_id, status")
     .eq("id", crewMatrixId)
     .eq("org_id", access.orgId)
     .single();
   if (matrixErr || !matrix) return { error: "Matrix not found." };
+  // Mirrors staffing-plan.tsx's readOnlyStaffing: this direct write is
+  // only ever meant to run while the matrix is still a draft (a v2+ new
+  // version's draft goes through requestRosterChange instead — see that
+  // file). Once submitted, an approver is reviewing a specific snapshot
+  // of who's assigned, so this has to actually refuse the write server
+  // side too, not just rely on the button being hidden.
+  if (matrix.status !== "draft") {
+    return { error: "This matrix isn't a draft, so crew assignments are locked. Return it to draft to make changes." };
+  }
 
   // Phase 6 control: only one open (end_date is null) assignment per
   // crew_id, enforced by the DB (crew_assignments_one_active_idx) — check
@@ -170,11 +179,15 @@ export async function unassignCandidateFromMatrix(crewId: string, crewMatrixId: 
 
   const { data: matrix, error: matrixErr } = await supabase
     .from("crew_matrices")
-    .select("id, offshore_site_id")
+    .select("id, offshore_site_id, status")
     .eq("id", crewMatrixId)
     .eq("org_id", access.orgId)
     .single();
   if (matrixErr || !matrix) return { error: "Matrix not found." };
+  // See the matching check in assignCandidateToMatrix above.
+  if (matrix.status !== "draft") {
+    return { error: "This matrix isn't a draft, so crew assignments are locked. Return it to draft to make changes." };
+  }
 
   const { data: assignment, error: findErr } = await supabase
     .from("crew_assignments")

@@ -376,14 +376,25 @@ export default function StaffingPlanView({
   //    pending_client_approval, approved, ...) the new version is
   //    read-only too, same as Lines editing already locks post-draft —
   //    return it to draft to make further changes.
-  //  - A matrix's very first version (version 1, never yet active) keeps
-  //    today's plain instant assign/unassign in any non-active status —
-  //    nothing is live for a client yet, so there's nothing to protect.
+  //  - A matrix's very first version (version 1, never yet active) uses
+  //    today's plain instant assign/unassign the same way, but ONLY while
+  //    it's still a draft. Used to stay editable in every non-active
+  //    status on the reasoning that "nothing is live for a client yet, so
+  //    there's nothing to protect" — but that missed the approval
+  //    workflow itself: once submitted, an approver is reviewing a
+  //    specific snapshot of who's assigned, and silently changing it out
+  //    from under them (direct writes here are real crew_assignments
+  //    rows, not staged) is exactly what Lines editing's post-draft lock
+  //    (Phase 2) and the v2+ rule above already exist to prevent. So v1
+  //    locks on submit too, same as every other status-gated part of a
+  //    matrix — it just stays a plain instant write (no staging/reason
+  //    needed) for as long as it's still in draft, since nothing is live
+  //    for a client to see yet at that point.
   const isLiveMatrix = matrixStatus === "active";
   const isDraft = matrixStatus === "draft";
   const isNewVersion = (matrixVersion ?? 1) > 1;
-  const isNewVersionUnderReview = isNewVersion && !isDraft && !isLiveMatrix;
-  const readOnlyStaffing = isLiveMatrix || isNewVersionUnderReview;
+  const isUnderReview = !isDraft && !isLiveMatrix;
+  const readOnlyStaffing = isLiveMatrix || isUnderReview;
   const canEditRoster = isNewVersion && isDraft;
   // Traffic light dots (Assigned view only) — only worth showing on a new
   // version at all, since a first-ever version (v1) can never carry a
@@ -532,8 +543,10 @@ export default function StaffingPlanView({
         <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
           {isLiveMatrix ? (
             <>This matrix is live, so its Staffing Plan is read-only. To change crew, use <strong>Create new version</strong> above.</>
-          ) : (
+          ) : isNewVersion ? (
             <>This version has been submitted for approval, so its Staffing Plan is read-only for now — crew changes already made are shown below and will take effect when this version goes live. Return it to draft to make more.</>
+          ) : (
+            <>This matrix has been submitted for approval, so its Staffing Plan is locked until it&apos;s approved or returned to draft.</>
           )}
         </div>
       )}
