@@ -32,6 +32,10 @@ type Preview =
       company_name: string;
       recipient_name: string;
       expires_at: string;
+      // Added by migration 0038. Optional so this page still renders
+      // (without the notice) if the page ships before the migration is run.
+      shared_at?: string;
+      newer_version?: number | null;
       staff: StaffSnap[];
     }
   | { valid: false };
@@ -88,6 +92,13 @@ export default function ShareView({ token }: { token: string }) {
 
         {preview !== null && preview.valid && (
           <>
+            {preview.newer_version != null && (
+              <div className="text-xs font-semibold rounded-lg py-2 px-3 mt-3" style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b" }}>
+                A newer version of this crew matrix (v{preview.newer_version}) is now in effect. The crew and document status below is
+                as it stood{preview.shared_at ? ` on ${new Date(preview.shared_at).toDateString()}` : " when this was sent"} and may be out of date — please
+                ask {preview.company_name} for the current version before relying on it.
+              </div>
+            )}
             {!["approved", "active"].includes(preview.matrix_status_at_share) && (
               <div className="text-center text-xs font-bold tracking-wide rounded-lg py-2 px-3 mt-3" style={{ background: "#dc2626", color: "#fff" }}>
                 DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE
