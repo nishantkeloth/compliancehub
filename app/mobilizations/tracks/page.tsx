@@ -20,11 +20,10 @@ export default async function MobilizationTracksPage() {
   return (
     <>
       <p className="text-sm mb-6" style={{ color: "var(--ch-sub)" }}>
-        A track is one client&apos;s configured onboarding pathway — e.g. &quot;New Joiner&quot; vs &quot;Returning
-        Crew&quot; — with an ordered checklist of steps. Assign a track to a mobilization position on its Checklist
-        tab. A track with no client set is an org-wide default, used for any client without a configured process yet.
+        A track is a named set of steps &mdash; e.g. &quot;New Joiner&quot; or &quot;Returning Crew&quot;. Add the steps
+        each person needs, then assign a track to a person on a mobilization&apos;s Checklist tab.
       </p>
-      <TracksManager clients={config.clients} tracks={config.tracks} items={config.items} documentTypes={config.documentTypes} />
+      <TracksManager tracks={config.tracks} items={config.items} documentTypes={config.documentTypes} />
     </>
   );
 }

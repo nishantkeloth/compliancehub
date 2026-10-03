@@ -27,16 +27,6 @@ export default async function MobilizationDetailPage({ params }: { params: Promi
   // Mobilization Tracks are offered for its positions — plus the
   // contract's own mobilization_notice_days, which the Crew Change
   // Manifest step will read as its default lead-time warning.
-  const { data: projectRow } = await supabase
-    .from("projects")
-    .select("contract_id, contracts(client_id, mobilization_notice_days)")
-    .eq("id", request.project_id)
-    .maybeSingle();
-  const contractRow = (Array.isArray(projectRow?.contracts) ? projectRow?.contracts[0] : projectRow?.contracts) as
-    | { client_id?: string; mobilization_notice_days?: number }
-    | null
-    | undefined;
-  const clientId = contractRow?.client_id ?? null;
 
   const [{ data: positions }, { data: statusHistory }, { data: positionHistory }, { data: comments }, { data: jobRoles }, { data: profiles }, { data: tracks }] = await Promise.all([
     supabase
@@ -67,15 +57,12 @@ export default async function MobilizationDetailPage({ params }: { params: Promi
     supabase.from("mobilization_comments").select("id, user_id, body, is_system, created_at").eq("mobilization_request_id", id).order("created_at", { ascending: true }),
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).order("full_name"),
-    // Tracks offered for this mobilization's positions: this client's own
-    // configured tracks, plus any org-wide default track (client_id null)
-    // for a client without a configured process yet.
+    // Every active track is offered; a track is just a named set of steps.
     supabase
       .from("mobilization_tracks")
       .select("id, client_id, name")
       .eq("org_id", access.orgId)
       .eq("is_active", true)
-      .or(clientId ? `client_id.eq.${clientId},client_id.is.null` : "client_id.is.null")
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
   ]);

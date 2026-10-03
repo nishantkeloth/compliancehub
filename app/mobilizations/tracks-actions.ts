@@ -7,9 +7,9 @@
 // (app/mobilizations/tracks). See claude/phase12-adnoc-mobilization-
 // flow-scope.md for the design this implements.
 //
-// A track belongs to one client, or to no client at all (client_id
-// null) as an org-wide default/fallback for a client without a
-// configured process yet.
+// A track is just a named set of steps (e.g. "New Joiner", "Returning
+// Crew"). It is not tied to a client; every active track can be assigned
+// to any mobilization position.
 //
 // A checklist item's due date is computed from one of four bases:
 //  - request_created: the mobilization's created_at + due_offset_days
@@ -61,11 +61,8 @@ const revalidateTracks = () => revalidatePath("/mobilizations/tracks");
 
 export type TrackRow = {
   id: string;
-  client_id: string | null;
-  client_name: string | null;
   name: string;
   description: string | null;
-  notice_days_override: number | null;
   sort_order: number;
   is_active: boolean;
 };
@@ -93,11 +90,10 @@ function visaTypesFrom(formData: FormData): string[] | null {
 export async function getTracksConfig() {
   const { supabase, access } = await requireManage();
 
-  const [{ data: clients }, { data: tracks }, { data: items }, { data: documentTypes }] = await Promise.all([
-    supabase.from("clients").select("id, name").eq("org_id", access.orgId).order("name"),
+  const [{ data: tracks }, { data: items }, { data: documentTypes }] = await Promise.all([
     supabase
       .from("mobilization_tracks")
-      .select("id, client_id, name, description, notice_days_override, sort_order, is_active, clients(name)")
+      .select("id, name, description, sort_order, is_active")
       .eq("org_id", access.orgId)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
@@ -111,17 +107,13 @@ export async function getTracksConfig() {
 
   const trackRows: TrackRow[] = (tracks ?? []).map((t) => ({
     id: t.id as string,
-    client_id: t.client_id as string | null,
-    client_name: ((Array.isArray(t.clients) ? t.clients[0] : t.clients) as { name?: string } | null)?.name ?? null,
     name: t.name as string,
     description: t.description as string | null,
-    notice_days_override: t.notice_days_override as number | null,
     sort_order: t.sort_order as number,
     is_active: t.is_active as boolean,
   }));
 
   return {
-    clients: clients ?? [],
     tracks: trackRows,
     items: (items ?? []) as ChecklistTemplateItemRow[],
     documentTypes: documentTypes ?? [],
@@ -137,11 +129,9 @@ export async function createTrack(formData: FormData) {
     .from("mobilization_tracks")
     .insert({
       org_id: access.orgId,
-      client_id: optStr(formData, "clientId"),
+      client_id: null,
       name,
       description: optStr(formData, "description"),
-      notice_days_override: optInt(formData, "noticeDaysOverride"),
-      sort_order: optInt(formData, "sortOrder") ?? 0,
       created_by: userId,
       updated_by: userId,
     })
@@ -160,11 +150,8 @@ export async function updateTrack(id: string, formData: FormData) {
   const { error } = await supabase
     .from("mobilization_tracks")
     .update({
-      client_id: optStr(formData, "clientId"),
       name,
       description: optStr(formData, "description"),
-      notice_days_override: optInt(formData, "noticeDaysOverride"),
-      sort_order: optInt(formData, "sortOrder") ?? 0,
       is_active: formData.get("isActive") === "on",
       updated_by: userId,
     })

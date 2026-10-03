@@ -22,7 +22,6 @@ import {
 } from "../tracks-actions";
 import { VISA_TYPES, VISA_LABEL } from "../visa-types";
 
-type ClientOpt = { id: string; name: string };
 type DocTypeOpt = { id: string; name: string };
 
 const cardCls = "bg-white border rounded-xl";
@@ -31,9 +30,6 @@ const inputCls = "border rounded-lg px-3 py-2 text-sm";
 const inputStyle = { borderColor: "var(--ch-line)" };
 const lbl = "text-xs";
 const lblStyle = { color: "var(--ch-sub)" };
-
-const ORG_WIDE = "__org_wide__";
-const ALL = "__all__";
 
 const DUE_BASIS_LABEL: Record<string, string> = {
   request_created: "days after the request is created",
@@ -57,19 +53,16 @@ function dueRuleSummary(item: ChecklistTemplateItemRow, allItems: ChecklistTempl
 }
 
 export default function TracksManager({
-  clients,
   tracks,
   items,
   documentTypes,
 }: {
-  clients: ClientOpt[];
   tracks: TrackRow[];
   items: ChecklistTemplateItemRow[];
   documentTypes: DocTypeOpt[];
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [filter, setFilter] = useState<string>(ALL);
   const [creatingTrack, setCreatingTrack] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,24 +79,13 @@ export default function TracksManager({
     });
   };
 
-  const visibleTracks = tracks.filter((t) => {
-    if (filter === ALL) return true;
-    if (filter === ORG_WIDE) return t.client_id === null;
-    return t.client_id === filter;
-  });
+  const visibleTracks = tracks;
 
   return (
     <div>
       {error && <div className="text-sm mb-3 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>}
 
       <div className="flex items-center gap-2 flex-wrap mb-4">
-        <select className={inputCls} style={inputStyle} value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value={ALL}>All clients</option>
-          <option value={ORG_WIDE}>Org-wide default (no client)</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
         <button onClick={() => setCreatingTrack((v) => !v)} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">
           {creatingTrack ? "Cancel" : "+ New track"}
         </button>
@@ -112,22 +94,19 @@ export default function TracksManager({
       {creatingTrack && (
         <div className={`${cardCls} p-4 mb-4`} style={cardStyle}>
           <TrackForm
-            clients={clients}
-            defaultClientId={filter !== ALL && filter !== ORG_WIDE ? filter : ""}
             onSubmit={(fd) => run(() => createTrack(fd), () => setCreatingTrack(false))}
             onCancel={() => setCreatingTrack(false)}
           />
         </div>
       )}
 
-      {visibleTracks.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No tracks yet for this scope.</div>}
+      {visibleTracks.length === 0 && <div className="text-sm" style={{ color: "var(--ch-sub)" }}>No tracks yet. Click &ldquo;+ New track&rdquo; to add one.</div>}
 
       <div className="space-y-5">
         {visibleTracks.map((track) => (
           <TrackCard
             key={track.id}
             track={track}
-            clients={clients}
             documentTypes={documentTypes}
             items={items.filter((i) => i.track_id === track.id).sort((a, b) => a.sequence - b.sequence)}
             run={run}
@@ -140,13 +119,11 @@ export default function TracksManager({
 
 function TrackCard({
   track,
-  clients,
   documentTypes,
   items,
   run,
 }: {
   track: TrackRow;
-  clients: ClientOpt[];
   documentTypes: DocTypeOpt[];
   items: ChecklistTemplateItemRow[];
   run: (fn: () => Promise<{ error?: string } | undefined>, onOk?: () => void) => void;
@@ -159,7 +136,6 @@ function TrackCard({
     <div className={`${cardCls} p-4`} style={cardStyle}>
       {editing ? (
         <TrackForm
-          clients={clients}
           initial={track}
           onSubmit={(fd) => run(() => updateTrack(track.id, fd), () => setEditing(false))}
           onCancel={() => setEditing(false)}
@@ -167,12 +143,6 @@ function TrackCard({
       ) : (
         <div className="flex items-center gap-2 flex-wrap mb-1">
           <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{track.name}</span>
-          <span className="text-xs" style={{ color: "var(--ch-sub)" }}>{track.client_name ?? "Org-wide default"}</span>
-          {track.notice_days_override != null && (
-            <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
-              {track.notice_days_override}-day notice
-            </span>
-          )}
           {!track.is_active && (
             <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
               inactive
@@ -273,62 +243,33 @@ function TrackCard({
 }
 
 function TrackForm({
-  clients,
   initial,
-  defaultClientId,
   onSubmit,
   onCancel,
 }: {
-  clients: ClientOpt[];
   initial?: TrackRow;
-  defaultClientId?: string;
   onSubmit: (fd: FormData) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
-  const [clientId, setClientId] = useState(initial?.client_id ?? defaultClientId ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [noticeDaysOverride, setNoticeDaysOverride] = useState(initial?.notice_days_override != null ? String(initial.notice_days_override) : "");
-  const [sortOrder, setSortOrder] = useState(initial ? String(initial.sort_order) : "0");
   const [isActive, setIsActive] = useState(initial?.is_active ?? true);
 
   const submit = () => {
     if (!name.trim()) return;
     const fd = new FormData();
     fd.set("name", name.trim());
-    fd.set("clientId", clientId);
     fd.set("description", description);
-    fd.set("noticeDaysOverride", noticeDaysOverride);
-    fd.set("sortOrder", sortOrder);
     if (isActive) fd.set("isActive", "on");
     onSubmit(fd);
   };
 
   return (
     <div>
-      <div className="grid gap-3 sm:grid-cols-2 mb-3">
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Track name (required)
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "New Joiner"' />
-        </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Client
-          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-            <option value="">Org-wide default (no client)</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Notice-period override (days)
-          <input type="number" className={`${inputCls} w-full mt-1`} style={inputStyle} value={noticeDaysOverride} onChange={(e) => setNoticeDaysOverride(e.target.value)} placeholder="Falls back to the contract's own notice period if blank" />
-        </label>
-        <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
-          Sort order
-          <input type="number" className={`${inputCls} w-full mt-1`} style={inputStyle} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
-        </label>
-      </div>
+      <label className="block text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        Track name (required)
+        <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "New Joiner"' />
+      </label>
       <label className={`${lbl} block mb-3`} style={lblStyle}>
         Description
         <textarea className={`${inputCls} w-full mt-1`} style={inputStyle} rows={2} placeholder="Optional" value={description} onChange={(e) => setDescription(e.target.value)} />

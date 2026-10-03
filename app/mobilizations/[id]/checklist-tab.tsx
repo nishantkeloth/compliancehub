@@ -104,7 +104,7 @@ export default function ChecklistTab({
       {error && <div className="text-sm mb-1" style={{ color: "var(--ch-fail)" }}>{error}</div>}
       {tracks.length === 0 && canManage && (
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
-          No mobilization tracks configured for this client yet — set them up under Mobilizations → Mobilization Tracks.
+          No mobilization tracks yet — add one under Mobilization → Mobilization Tracks.
         </div>
       )}
       {staffedPositions.map((p) => {
