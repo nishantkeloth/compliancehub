@@ -1515,6 +1515,7 @@ export async function createNewVersion(sourceId: string) {
   const { data: maxVersion } = await supabase
     .from("crew_matrices")
     .select("version_number")
+    .eq("org_id", access.orgId)
     .eq("matrix_number", source.matrix_number)
     .order("version_number", { ascending: false })
     .limit(1)
@@ -1540,7 +1541,12 @@ export async function createNewVersion(sourceId: string) {
     })
     .select("id")
     .single();
-  if (error) return { error: error.message };
+  if (error) {
+    // 23505 = unique violation on (org, matrix_number, version_number):
+    // someone else created that same next version a moment ago.
+    if (error.code === "23505") return { error: "A new version of this matrix was just created by someone else — refresh to see it." };
+    return { error: error.message };
+  }
   const newId = newMatrix!.id as string;
 
   const { data: sourceLines } = await supabase.from("crew_matrix_lines").select("*").eq("crew_matrix_id", sourceId).order("sort_order");
