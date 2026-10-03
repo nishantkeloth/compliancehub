@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { can, getEffectiveAccess } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 
@@ -37,10 +38,45 @@ export async function ensureWorkflowDefinition(entityType: string, name: string)
   return { error: null };
 }
 
-async function validateApproverUser(supabase: Awaited<ReturnType<typeof requireManageWorkflows>>["supabase"], orgId: string, userId: string) {
-  const { data: profile } = await supabase.from("profiles").select("org_id").eq("id", userId).maybeSingle();
+// What a person needs to be able to open the thing they're being asked to
+// approve. A named approver acts from the entity's own detail page, and that
+// page (and every table it reads) is gated on this permission — a named
+// approver whose role lacks it just gets bounced off the page and can never
+// reach their own approve button, leaving the document stuck on their stage.
+// So naming such a person is refused up front rather than discovered later.
+const VIEW_PERMISSION_BY_ENTITY: Record<string, { permission: string; label: string }> = {
+  crew_matrix: { permission: "crew.matrix.view", label: "view crew matrices" },
+};
+
+async function validateApproverUser(
+  supabase: Awaited<ReturnType<typeof requireManageWorkflows>>["supabase"],
+  orgId: string,
+  userId: string,
+  entityType: string | null
+) {
+  const { data: profile } = await supabase.from("profiles").select("org_id, full_name, role_id").eq("id", userId).maybeSingle();
   if (!profile || profile.org_id !== orgId) return "Choose someone from your company.";
+
+  const required = entityType ? VIEW_PERMISSION_BY_ENTITY[entityType] : undefined;
+  if (required) {
+    // Service-role read: the caller (workflows.manage) has no particular
+    // right to read another role's permission rows under RLS, and a blocked
+    // read would look identical to "role has no permissions" and wrongly
+    // refuse a valid approver. The org check above already scoped this.
+    const admin = createAdminClient();
+    const { data: grant } = profile.role_id
+      ? await admin.from("role_permissions").select("permission_key").eq("role_id", profile.role_id).eq("permission_key", required.permission).maybeSingle()
+      : { data: null };
+    if (!grant) {
+      return `${profile.full_name || "That person"}'s role can't ${required.label}, so they wouldn't be able to open the item to approve it. Give their role the "${required.permission}" permission under Roles & Permissions first, or choose someone else.`;
+    }
+  }
   return null;
+}
+
+async function entityTypeForDefinition(supabase: Awaited<ReturnType<typeof requireManageWorkflows>>["supabase"], definitionId: string) {
+  const { data } = await supabase.from("workflow_definitions").select("entity_type").eq("id", definitionId).maybeSingle();
+  return (data?.entity_type as string | undefined) ?? null;
 }
 
 export async function addStage(
@@ -56,11 +92,11 @@ export async function addStage(
 
   const { supabase, access } = await requireManageWorkflows();
 
-  const { data: def } = await supabase.from("workflow_definitions").select("id").eq("id", definitionId).eq("org_id", access.orgId).maybeSingle();
+  const { data: def } = await supabase.from("workflow_definitions").select("id, entity_type").eq("id", definitionId).eq("org_id", access.orgId).maybeSingle();
   if (!def) return { error: "Could not find that workflow." };
 
   if (approverType === "user") {
-    const validationError = await validateApproverUser(supabase, access.orgId!, approverValue);
+    const validationError = await validateApproverUser(supabase, access.orgId!, approverValue, def.entity_type as string);
     if (validationError) return { error: validationError };
   }
 
@@ -89,6 +125,14 @@ export async function updateStage(
   const { supabase, access } = await requireManageWorkflows();
 
   const update: Record<string, unknown> = {};
+  let stageEntityType: string | null | undefined;
+  const entityTypeOfStage = async () => {
+    if (stageEntityType === undefined) {
+      const { data: st } = await supabase.from("workflow_stages").select("workflow_definition_id").eq("id", stageId).eq("org_id", access.orgId).maybeSingle();
+      stageEntityType = st ? await entityTypeForDefinition(supabase, st.workflow_definition_id as string) : null;
+    }
+    return stageEntityType;
+  };
   if (fields.name !== undefined) {
     const name = fields.name.trim();
     if (!name) return { error: "Stage name is required." };
@@ -106,7 +150,7 @@ export async function updateStage(
       update.approver_user_id = null;
     } else {
       if (!fields.approverUserId) return { error: "Choose who approves this stage." };
-      const validationError = await validateApproverUser(supabase, access.orgId!, fields.approverUserId);
+      const validationError = await validateApproverUser(supabase, access.orgId!, fields.approverUserId, await entityTypeOfStage());
       if (validationError) return { error: validationError };
       update.approver_type = "user";
       update.approver_user_id = fields.approverUserId;
@@ -121,7 +165,7 @@ export async function updateStage(
     }
     if (fields.approverUserId !== undefined) {
       if (!fields.approverUserId) return { error: "Choose who approves this stage." };
-      const validationError = await validateApproverUser(supabase, access.orgId!, fields.approverUserId);
+      const validationError = await validateApproverUser(supabase, access.orgId!, fields.approverUserId, await entityTypeOfStage());
       if (validationError) return { error: validationError };
       update.approver_user_id = fields.approverUserId;
     }

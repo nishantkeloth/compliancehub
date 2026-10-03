@@ -15,7 +15,29 @@ export default async function CrewMatrixDetailPage({ params }: { params: Promise
   if (!user) redirect("/login");
 
   const access = await getEffectiveAccess(supabase, user.id);
-  if (!can(access, "crew.matrix.view") || !access.orgId) redirect("/");
+  if (!access.orgId) redirect("/");
+  if (!can(access, "crew.matrix.view")) {
+    // workflow_can_act is security definer, so it answers correctly even
+    // though this user can't read the workflow tables directly. A true here
+    // means they've been named as the approver of this matrix's current
+    // stage but their role can't open the matrix — bouncing them silently to
+    // the home page looks like a broken link and leaves the matrix stuck on
+    // their stage with no clue why, so say so.
+    const { data: isNamedApprover } = await supabase.rpc("workflow_can_act", { p_entity_type: "crew_matrix", p_entity_id: id });
+    if (isNamedApprover === true) {
+      return (
+        <div className="max-w-xl mx-auto mt-16 bg-white border rounded-xl p-6" style={{ borderColor: "var(--ch-line)" }}>
+          <h1 className="text-lg font-semibold mb-2" style={{ color: "var(--ch-navy)" }}>This matrix is waiting on your approval</h1>
+          <p className="text-sm" style={{ color: "var(--ch-sub)" }}>
+            You&apos;re the named approver for the current stage, but your role doesn&apos;t include permission to view crew matrices, so
+            you can&apos;t open it to review. Ask a company admin to add the &quot;crew.matrix.view&quot; permission to your role under
+            Roles &amp; Permissions — then you&apos;ll be able to open this page and approve or reject it.
+          </p>
+        </div>
+      );
+    }
+    redirect("/");
+  }
 
   const { data: matrix } = await supabase
     .from("crew_matrices")

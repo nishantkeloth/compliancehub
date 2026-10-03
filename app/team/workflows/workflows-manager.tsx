@@ -17,7 +17,11 @@ type Stage = {
   skipCondition: string | null;
 };
 type Permission = { key: string; label: string };
-type Member = { id: string; fullName: string };
+// canViewMatrix: whether the person's role holds crew.matrix.view. A named
+// approver acts from the matrix's own page, which needs it — without it they
+// can't reach their approve button, so the picker greys them out and the
+// server refuses to save them (see validateApproverUser in actions.ts).
+type Member = { id: string; fullName: string; canViewMatrix: boolean };
 
 // v1 recognizes exactly one skip condition literal (see lib/workflow.ts's
 // evaluateSkipCondition) — this maps it to a human label for the one
@@ -103,7 +107,7 @@ function EntityWorkflowCard({
   const [newName, setNewName] = useState("");
   const [newApproverType, setNewApproverType] = useState<ApproverType>("permission");
   const [newPermission, setNewPermission] = useState(permissions[0]?.key ?? "");
-  const [newMemberId, setNewMemberId] = useState(members[0]?.id ?? "");
+  const [newMemberId, setNewMemberId] = useState(members.find((m) => m.canViewMatrix)?.id ?? "");
   const [newSkip, setNewSkip] = useState(false);
   const skipOptions = SKIP_CONDITIONS[entityType] ?? [];
 
@@ -175,8 +179,9 @@ function EntityWorkflowCard({
             <select className="border rounded-lg px-2 py-2 text-sm" style={{ borderColor: "var(--ch-line)" }} value={newMemberId} onChange={(e) => setNewMemberId(e.target.value)}>
               {members.length === 0 && <option value="">No active team members</option>}
               {members.map((m) => (
-                <option key={m.id} value={m.id}>
+                <option key={m.id} value={m.id} disabled={!m.canViewMatrix}>
                   {m.fullName}
+                  {m.canViewMatrix ? "" : " — role can't view matrices"}
                 </option>
               ))}
             </select>
@@ -255,7 +260,8 @@ function StageRow({
   // doesn't save anything until a value is actually picked below it.
   const [approverType, setApproverType] = useState<ApproverType>(stage.approverType);
 
-  const memberName = stage.approverUserId ? members.find((m) => m.id === stage.approverUserId)?.fullName ?? "Unknown person" : null;
+  const assignedMember = stage.approverUserId ? members.find((m) => m.id === stage.approverUserId) : undefined;
+  const memberName = stage.approverUserId ? assignedMember?.fullName ?? "Unknown person" : null;
   const permissionLabel = stage.requiredPermission ? permissions.find((p) => p.key === stage.requiredPermission)?.label ?? stage.requiredPermission : null;
 
   return (
@@ -329,13 +335,19 @@ function StageRow({
         >
           <option value="">Choose a person…</option>
           {members.map((m) => (
-            <option key={m.id} value={m.id}>
+            <option key={m.id} value={m.id} disabled={!m.canViewMatrix}>
               {m.fullName}
+              {m.canViewMatrix ? "" : " — role can't view matrices"}
             </option>
           ))}
         </select>
       )}
 
+      {stage.approverType === "user" && assignedMember && !assignedMember.canViewMatrix && (
+        <span className="text-[10px] font-semibold" style={{ color: "var(--ch-fail)" }}>
+          {assignedMember.fullName}&apos;s role can&apos;t view crew matrices, so they can&apos;t open this to approve it — give their role &quot;crew.matrix.view&quot; or pick someone else.
+        </span>
+      )}
       {stage.approverType === "user" && memberName && (
         <span className="text-[10px] italic" style={{ color: "var(--ch-sub)" }}>
           assigned to {memberName}

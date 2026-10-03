@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { can, getEffectiveAccess } from "@/lib/rbac";
 import WorkflowsManager from "./workflows-manager";
 
@@ -53,7 +54,19 @@ export default async function WorkflowsPage() {
   const { data: permissions } = await supabase.from("permissions").select("key, label").like("key", "crew.matrix.%").order("key");
 
   // For the "assign to a specific person" approver option.
-  const { data: members } = await supabase.from("profiles").select("id, full_name").eq("org_id", access.orgId).eq("status", "active").order("full_name");
+  const { data: members } = await supabase.from("profiles").select("id, full_name, role_id").eq("org_id", access.orgId).eq("status", "active").order("full_name");
+
+  // Which of those people can actually open a crew matrix. A named approver
+  // acts from the matrix's own page, which is gated on crew.matrix.view, so
+  // someone without it can be picked here but could never reach their
+  // approve button (see VIEW_PERMISSION_BY_ENTITY in actions.ts, which
+  // refuses to save them). Service-role read for the same reason as there:
+  // a role_permissions read blocked by RLS would look like "no permissions".
+  const memberRoleIds = Array.from(new Set((members ?? []).map((m) => m.role_id as string | null).filter((r): r is string => !!r)));
+  const { data: viewGrants } = memberRoleIds.length
+    ? await createAdminClient().from("role_permissions").select("role_id").in("role_id", memberRoleIds).eq("permission_key", "crew.matrix.view")
+    : { data: [] as { role_id: string }[] };
+  const rolesThatCanViewMatrix = new Set((viewGrants ?? []).map((g) => g.role_id as string));
 
   return (
     <>
@@ -77,7 +90,11 @@ export default async function WorkflowsPage() {
           skipCondition: s.skip_condition as string | null,
         }))}
         permissions={permissions ?? []}
-        members={(members ?? []).map((m) => ({ id: m.id as string, fullName: m.full_name as string }))}
+        members={(members ?? []).map((m) => ({
+          id: m.id as string,
+          fullName: m.full_name as string,
+          canViewMatrix: !!m.role_id && rolesThatCanViewMatrix.has(m.role_id as string),
+        }))}
       />
     </>
   );
