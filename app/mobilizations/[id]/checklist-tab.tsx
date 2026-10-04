@@ -81,6 +81,18 @@ export default function ChecklistTab({
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // People who still need a pathway start open (they need action); people
+  // with a checklist start collapsed so a long list stays scannable.
+  const [openIds, setOpenIds] = useState<Set<string>>(
+    () => new Set(positions.filter((p) => p.selected_crew_id && !p.mobilization_track_id).map((p) => p.id))
+  );
+  const toggleOpen = (id: string) =>
+    setOpenIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const run = (fn: () => Promise<{ error?: string; count?: number } | undefined>, okMessage?: (count: number) => string) => {
     setError(null);
@@ -111,13 +123,40 @@ export default function ChecklistTab({
           No mobilization tracks yet — add one under Mobilization → Mobilization Tracks.
         </div>
       )}
+      {staffedPositions.length > 1 && (
+        <div className="flex items-center gap-2 justify-end">
+          <button
+            onClick={() => setOpenIds(new Set(staffedPositions.map((p) => p.id)))}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold border"
+            style={{ borderColor: "var(--ch-line)" }}
+          >
+            Expand all
+          </button>
+          <button onClick={() => setOpenIds(new Set())} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={{ borderColor: "var(--ch-line)" }}>
+            Collapse all
+          </button>
+        </div>
+      )}
       {staffedPositions.map((p) => {
         const items = checklistItems.filter((c) => c.mobilization_position_id === p.id).sort((a, b) => a.sequence - b.sequence);
         const track = tracks.find((t) => t.id === p.mobilization_track_id) ?? null;
         const doneCount = items.filter((i) => i.status === "done").length;
+        const today = new Date().toISOString().slice(0, 10);
+        const openItems = items.filter((i) => i.status !== "done");
+        const overdueCount = openItems.filter((i) => i.due_date && i.due_date < today).length;
+        const nextDue = openItems.map((i) => i.due_date).filter((d): d is string => !!d && d >= today).sort()[0] ?? null;
+        const isOpen = openIds.has(p.id);
         return (
           <div key={p.id} className={`${cardCls} p-4`} style={cardStyle}>
-            <div className="flex items-center gap-2 flex-wrap mb-2">
+            <button
+              type="button"
+              onClick={() => toggleOpen(p.id)}
+              aria-expanded={isOpen}
+              className="flex items-center gap-2 flex-wrap w-full text-left"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="w-4 h-4 shrink-0" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", color: "var(--ch-sub)" }}>
+                <path d="M7 4l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
               <span className="text-[10px] font-mono font-bold rounded px-1.5 py-0.5" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
                 #{p.position_sequence}
               </span>
@@ -125,13 +164,27 @@ export default function ChecklistTab({
               <span className="text-sm" style={{ color: "var(--ch-ink)" }}>{p.selected_crew_name}</span>
               {track && <span className="text-xs" style={{ color: "var(--ch-sub)" }}>· {track.name}</span>}
               {p.visa_type && <span className="text-xs" style={{ color: "var(--ch-sub)" }}>· {VISA_LABEL[p.visa_type] ?? p.visa_type} visa</span>}
-              {items.length > 0 && (
-                <span className="text-xs ml-auto" style={{ color: "var(--ch-sub)" }}>
-                  {doneCount}/{items.length} done
-                </span>
-              )}
-            </div>
-
+              <span className="ml-auto flex items-center gap-2">
+                {overdueCount > 0 && (
+                  <span className="text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>
+                    {overdueCount} overdue
+                  </span>
+                )}
+                {nextDue && !isOpen && (
+                  <span className="text-xs" style={{ color: "var(--ch-sub)" }}>next due {nextDue}</span>
+                )}
+                {items.length > 0 && (
+                  <span className="text-xs" style={{ color: "var(--ch-sub)" }}>
+                    {doneCount}/{items.length} done
+                  </span>
+                )}
+                {!p.mobilization_track_id && (
+                  <span className="text-xs" style={{ color: "var(--ch-sub)" }}>no pathway yet</span>
+                )}
+              </span>
+            </button>
+            {isOpen && (
+            <div className="mt-2 space-y-2">
             {!p.mobilization_track_id ? (
               canManage ? (
                 <TrackPicker
@@ -207,6 +260,8 @@ export default function ChecklistTab({
                   </div>
                 ))}
               </div>
+            )}
+            </div>
             )}
           </div>
         );
