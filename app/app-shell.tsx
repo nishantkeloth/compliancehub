@@ -94,7 +94,6 @@ export default async function AppShell({
     // page, its data, and the contractor field on Contracts/Projects are
     // all untouched, still reachable directly at /crew/contractors, just
     // not linked from day-to-day navigation anymore.
-    crewItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
   }
   if (can(access, "crew.report.send")) {
     crewItems.push({ href: "/reports", key: "client-reports", label: "Client Reports" });
@@ -131,6 +130,11 @@ export default async function AppShell({
   }
   if (can(access, "workflows.manage")) {
     adminItems.push({ href: "/team/workflows", key: "workflows", label: "Approval Workflows" });
+  }
+  // Reference data for the crew matrix (job roles, skills, document types and
+  // templates). Rarely changed, so it lives with the other admin screens.
+  if (can(access, "crew.manage")) {
+    adminItems.push({ href: "/crew/setup", key: "crew-setup", label: "Crew Setup" });
   }
   // One-time setup of the steps each person goes through when mobilizing,
   // so it lives with the other admin screens rather than in daily Mobilization.
