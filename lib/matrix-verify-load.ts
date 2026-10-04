@@ -130,11 +130,11 @@ export async function loadReads(supabase: Supa, orgId: string, versionIds: strin
   if (versionIds.length === 0) return out;
   const { data } = await supabase
     .from("crew_document_verification_reads")
-    .select("crew_document_version_id, read_ok, read_json, read_error")
+    .select("crew_document_version_id, read_ok, read_json, read_error, file_hash")
     .eq("org_id", orgId)
     .in("crew_document_version_id", versionIds);
-  for (const r of (data ?? []) as { crew_document_version_id: string; read_ok: boolean; read_json: DocRead | null; read_error: string | null }[]) {
-    out.set(r.crew_document_version_id, { read_ok: r.read_ok, read_json: r.read_json, read_error: r.read_error });
+  for (const r of (data ?? []) as { crew_document_version_id: string; read_ok: boolean; read_json: DocRead | null; read_error: string | null; file_hash: string | null }[]) {
+    out.set(r.crew_document_version_id, { read_ok: r.read_ok, read_json: r.read_json, read_error: r.read_error, file_hash: r.file_hash });
   }
   return out;
 }

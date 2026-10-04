@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { DOCUMENT_STATUS_COLORS, type DocumentStatus } from "@/lib/document-status";
 
-type DocSnap = { name: string; category: string | null; is_mandatory: boolean; status_text: string; status_kind: "na" | "missing" | "empty" | "value"; status: DocumentStatus | null; verification?: "verified" | "verified_note" | "excluded" | null };
+type DocSnap = { name: string; category: string | null; is_mandatory: boolean; status_text: string; status_kind: "na" | "missing" | "empty" | "value"; status: DocumentStatus | null; verification?: "verified" | "verified_note" | "excluded" | null; version_id?: string | null };
 type StaffSnap = { share_staff_id: string; staff: { full_name: string; nationality: string | null; job_role_name: string }; documents: DocSnap[] };
 
 type Preview =
@@ -131,7 +131,7 @@ export default function ShareView({ token }: { token: string }) {
                         </div>
                         <div className="mt-2 space-y-1">
                           {p.documents.map((doc) => (
-                            <DocRow key={doc.name} doc={doc} />
+                            <DocRow key={doc.name} doc={doc} token={token} />
                           ))}
                         </div>
                       </div>
@@ -154,7 +154,7 @@ export default function ShareView({ token }: { token: string }) {
   );
 }
 
-function DocRow({ doc }: { doc: DocSnap }) {
+function DocRow({ doc, token }: { doc: DocSnap; token: string }) {
   const colors =
     doc.status_kind === "missing"
       ? DOCUMENT_STATUS_COLORS.expired
@@ -171,6 +171,16 @@ function DocRow({ doc }: { doc: DocSnap }) {
         {doc.is_mandatory && <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }}>*</span>}
         {(doc.verification === "verified" || doc.verification === "verified_note") && (
           <span className="ml-1.5 text-[10px] font-semibold" style={{ color: "#15803d" }} title="This document file was checked against the crew record before sending">✓ Verified</span>
+        )}
+        {doc.version_id && (
+          <a
+            href={`/api/crew-matrix-share/${token}/file/${doc.version_id}`}
+            className="ml-2 text-[10px] font-semibold no-print underline"
+            style={{ color: "var(--ch-navy)" }}
+            rel="noopener noreferrer"
+          >
+            Download file
+          </a>
         )}
         {doc.verification === "excluded" && (
           <span className="ml-1.5 text-[10px] font-semibold" style={{ color: "#92400e" }} title="Not included in this package while it is re-checked">Being re-checked</span>

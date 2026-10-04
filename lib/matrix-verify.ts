@@ -266,7 +266,7 @@ export function overallLabel(o: Overall) {
   }
 }
 
-export type ReadRow = { read_ok: boolean; read_json: DocRead | null; read_error: string | null };
+export type ReadRow = { read_ok: boolean; read_json: DocRead | null; read_error: string | null; file_hash?: string | null };
 
 // Turns a cached reading (or the lack of one) plus the record into the
 // outcome shown in the wizard and enforced at send.

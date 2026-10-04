@@ -214,6 +214,54 @@ export async function sendMatrixSharePackage(input: {
     })),
   };
 
+  // ---- Gather the document files that go out: every included document
+  // that has a stored file, downloaded now and checked against the hash
+  // recorded when it was read, so what is attached is exactly what was
+  // verified. Files are attached to the email up to a size cap (mail
+  // providers limit a message to ~40 MB); every included file is also
+  // downloadable from the secure link, whatever its size.
+  const ATTACH_CAP_BYTES = 25 * 1024 * 1024;
+  const fileByKey = new Map<string, { available: boolean; attached: boolean; filename: string; base64: string | null; contentType: string }>();
+  {
+    const toFetch = verifyRows.filter((r) => r.inclusion.include && r.item.versionId && r.item.filePath);
+    let attachedBytes = 0;
+    const safe = (t: string) => t.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+    for (let i = 0; i < toFetch.length; i += 6) {
+      const batch = toFetch.slice(i, i + 6);
+      const downloaded = await Promise.all(
+        batch.map(async (r) => {
+          const { data: blob } = await supabase.storage.from("crew-documents").download(r.item.filePath!);
+          if (!blob) return { r, bytes: null as Buffer | null };
+          return { r, bytes: Buffer.from(await blob.arrayBuffer()) };
+        })
+      );
+      for (const { r, bytes } of downloaded) {
+        const ext = (r.item.fileName ?? "").match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? ".pdf";
+        const filename = `${safe(r.item.crewName)}_${safe(r.item.docTypeName)}${ext}`;
+        const expectedHash = verifyReads.get(r.item.versionId!)?.file_hash;
+        const intact = !!bytes && (!expectedHash || crypto.createHash("sha256").update(bytes).digest("hex") === expectedHash);
+        if (!bytes || !intact) {
+          // Missing or changed since it was read — never send an unverified file.
+          fileByKey.set(r.item.key, { available: false, attached: false, filename, base64: null, contentType: "application/octet-stream" });
+          continue;
+        }
+        const canAttach = attachedBytes + bytes.length <= ATTACH_CAP_BYTES;
+        if (canAttach) attachedBytes += bytes.length;
+        fileByKey.set(r.item.key, { available: true, attached: canAttach, filename, base64: canAttach ? bytes.toString("base64") : null, contentType: r.item.contentType ?? "application/pdf" });
+      }
+    }
+  }
+  const documentAttachments = Array.from(fileByKey.values())
+    .filter((f) => f.attached && f.base64)
+    .map((f) => ({ filename: f.filename, content: f.base64 as string, contentType: f.contentType }));
+  const filesAvailable = Array.from(fileByKey.values()).filter((f) => f.available).length;
+  // A file that was missing or changed since it was read is not sent, even
+  // if the check itself passed — record that on the verification summary.
+  verificationSummary.items = verificationSummary.items.map((it, i) => {
+    const f = fileByKey.get(verifyRows[i].item.key);
+    return { ...it, fileAttached: !!f?.attached, fileAvailable: !!f?.available, included: it.included && (!verifyRows[i].item.versionId || !!f?.available) };
+  });
+
   const { data: lines } = await supabase
     .from("crew_matrix_lines")
     .select("id, line_number, job_role_id, job_roles(name), required_headcount, crew_matrix_line_documents(document_type_id, is_mandatory)")
@@ -387,6 +435,10 @@ export async function sendMatrixSharePackage(input: {
       verifyRows.length > 0
         ? `Verified ${new Date(verifiedAt).toUTCString().replace(" GMT", " UTC")}: ${verificationSummary.totals.verified + verificationSummary.totals.overridden} of ${verificationSummary.totals.checked} documents checked against crew records${verificationSummary.totals.leftOut > 0 ? `; ${verificationSummary.totals.leftOut} not included while they are re-checked` : ""}.`
         : null,
+    filesLine:
+      filesAvailable > 0
+        ? `${documentAttachments.length > 0 ? `${documentAttachments.length} document file${documentAttachments.length === 1 ? " is" : "s are"} attached. ` : ""}All ${filesAvailable} verified document file${filesAvailable === 1 ? " is" : "s are"} also available to download from the secure link until ${new Date(Date.now() + LINK_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toDateString()}.`
+        : null,
   });
 
   const { data: pkg, error: pkgErr } = await supabase
@@ -465,6 +517,16 @@ export async function sendMatrixSharePackage(input: {
             status_text: info.text,
             status_kind: info.kind,
             status: info.status ?? null,
+            // The secure page links the file through this id (see
+            // app/api/crew-matrix-share/[token]/file/[versionId]/route.ts).
+            version_id: (() => {
+              const r = verifyByKey.get(`${person.crew_id}:${col.id}`);
+              return r && fileByKey.get(r.item.key)?.available ? r.item.versionId : null;
+            })(),
+            file_attached: (() => {
+              const r = verifyByKey.get(`${person.crew_id}:${col.id}`);
+              return !!(r && fileByKey.get(r.item.key)?.attached);
+            })(),
             // Shown on the secure page as a small "Verified" tick.
             verification: (() => {
               const r = verifyByKey.get(`${person.crew_id}:${col.id}`);
@@ -520,7 +582,10 @@ export async function sendMatrixSharePackage(input: {
       html,
       text,
       replyTo: userEmail ?? undefined,
-      attachments: excelBase64 && excelFileName ? [{ filename: excelFileName, content: excelBase64, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }] : undefined,
+      attachments: [
+        ...(excelBase64 && excelFileName ? [{ filename: excelFileName, content: excelBase64, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }] : []),
+        ...documentAttachments,
+      ],
     });
 
     if (sendResult.error) {
@@ -555,6 +620,7 @@ function renderEmailHtml(opts: {
   shareReference: string;
   isDraftShare: boolean;
   verificationLine: string | null;
+  filesLine: string | null;
 }) {
   const escaped = opts.bodyText
     .split("\n")
@@ -575,6 +641,7 @@ function renderEmailHtml(opts: {
         ${opts.siteName ? `<tr><td style="color:#64748b; font-size:12px; padding-bottom:4px;">Vessel / site</td><td style="padding-left:16px;">${opts.siteName}</td></tr>` : ""}
       </table>
       ${opts.verificationLine ? `<p style="background:#ecfdf3; border:1px solid #b7ebc8; color:#15803d; border-radius:6px; padding:8px 12px; font-size:13px;">${opts.verificationLine}</p>` : ""}
+      ${opts.filesLine ? `<p style="font-size:13px;">${opts.filesLine}</p>` : ""}
       <p><a href="{{SECURE_LINK}}" style="display:inline-block; background:#0f2c4c; color:#fff; text-decoration:none; padding:10px 18px; border-radius:6px; font-weight:600;">View secure crew matrix</a></p>
       <p style="font-size:12px; color:#64748b;">This link is intended only for the recipient it was sent to and will expire — please do not forward it. Sharing reference ${opts.shareReference}.</p>
       <p style="font-size:12px; color:#94a3b8; margin-top:24px; border-top:1px solid #e5e7eb; padding-top:12px;">Confidential — this message and its attachments are intended solely for the named recipient and may contain personal data. ${opts.companyName}.</p>
