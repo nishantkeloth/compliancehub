@@ -106,10 +106,6 @@ export default async function AppShell({
     mobilizationItems.push({ href: "/readiness", key: "readiness", label: "Compliance Dashboard" });
     mobilizationItems.push({ href: "/rotations", key: "rotations", label: "Rotations" });
   }
-  if (can(access, "mobilization.manage")) {
-    mobilizationItems.push({ href: "/mobilizations/tracks", key: "mobilization-tracks", label: "Mobilization Tracks" });
-  }
-
   const materialsItems: NavItem[] = [];
   if (can(access, "containers.view")) {
     materialsItems.push({ href: "/containers", key: "containers", label: "Containers" });
@@ -135,6 +131,11 @@ export default async function AppShell({
   }
   if (can(access, "workflows.manage")) {
     adminItems.push({ href: "/team/workflows", key: "workflows", label: "Approval Workflows" });
+  }
+  // One-time setup of the steps each person goes through when mobilizing,
+  // so it lives with the other admin screens rather than in daily Mobilization.
+  if (can(access, "mobilization.manage")) {
+    adminItems.push({ href: "/mobilizations/tracks", key: "mobilization-tracks", label: "Mobilization Tracks" });
   }
   if (can(access, "crew.bulk_intake.manage")) {
     adminItems.push({ href: "/team/bulk-intake", key: "bulk-intake", label: "Bulk Data Migration" });

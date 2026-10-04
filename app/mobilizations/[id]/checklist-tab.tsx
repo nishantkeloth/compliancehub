@@ -120,7 +120,7 @@ export default function ChecklistTab({
       {notice && <div className="text-sm mb-1" style={{ color: "var(--ch-pass)" }}>{notice}</div>}
       {tracks.length === 0 && canManage && (
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
-          No mobilization tracks yet — add one under Mobilization → Mobilization Tracks.
+          No mobilization tracks yet — add one under Administration → Mobilization Tracks.
         </div>
       )}
       {staffedPositions.length > 1 && (
