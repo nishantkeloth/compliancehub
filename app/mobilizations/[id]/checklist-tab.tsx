@@ -349,38 +349,67 @@ const ROAD_COLORS: Record<string, { fill: string; border: string; text: string }
 };
 const ROAD_LABEL: Record<string, string> = { done: "Done", in_progress: "In progress", blocked: "Blocked", pending: "Pending" };
 
-// A compact step-by-step road map for one person, shown in the collapsed
-// header: one numbered dot per checklist step, coloured by status and
-// joined by a line that turns green as steps complete. A red outer ring
-// marks a step that is past due; the first step not yet done is the
-// current one and gets a heavier outline. Hover a dot for its name and
-// due date.
+// Short label for a step: the title cut at the first qualifier
+// ("... in home country", "... (OPITO)") and trimmed to fit two short lines
+// under its dot. The full title stays in the hover text.
+function shortLabel(title: string) {
+  let t = title.split(/ \(| in | for | once | on | after | before | within /i)[0].trim();
+  if (t.length > 28) {
+    const cut = t.slice(0, 28);
+    t = cut.slice(0, Math.max(cut.lastIndexOf(" "), 12)).trim();
+  }
+  return t;
+}
+
+// A step-by-step road map for one person, shown on its own line in the
+// collapsed header: one numbered dot per checklist step, coloured by
+// status, with a short label under each so you can read what is done and
+// what is pending without opening the checklist. The line joining the dots
+// turns green as steps complete; a red ring marks a step that is past due;
+// the first step not yet done is the current one (heavier outline, bold
+// label). Hover a step for its full name, status and due date.
 function Roadmap({ items, today }: { items: { id: string; title: string; status: string; due_date: string | null }[]; today: string }) {
   const currentIdx = items.findIndex((i) => i.status !== "done");
   const done = items.filter((i) => i.status === "done").length;
   const label = currentIdx === -1 ? `All ${items.length} steps done` : `${done} of ${items.length} steps done, step ${currentIdx + 1} is next: ${items[currentIdx].title}`;
   return (
-    <span role="img" aria-label={label} className="flex items-center mx-3 flex-1 overflow-x-auto" style={{ minWidth: 200 }}>
+    <span role="img" aria-label={label} className="flex overflow-x-auto pb-1 mt-1" style={{ flexBasis: "100%", order: 99 }}>
       {items.map((it, idx) => {
         const c = ROAD_COLORS[it.status] ?? ROAD_COLORS.pending;
         const late = it.status !== "done" && !!it.due_date && it.due_date < today;
         const current = idx === currentIdx;
+        const leftOn = idx > 0 && items[idx - 1].status === "done";
+        const rightOn = it.status === "done";
+        const labelColor = it.status === "done" ? "#15803d" : late || it.status === "blocked" ? "#b91c1c" : it.status === "in_progress" ? "#92400e" : "var(--ch-sub)";
         return (
-          <span key={it.id} className="flex items-center shrink-0">
-            {idx > 0 && <span aria-hidden="true" style={{ width: 10, height: 2, background: items[idx - 1].status === "done" ? "#16a34a" : "var(--ch-line)" }} />}
+          <span
+            key={it.id}
+            className="flex flex-col items-center shrink-0"
+            style={{ width: 78 }}
+            title={`${idx + 1}. ${it.title} — ${ROAD_LABEL[it.status] ?? it.status}${it.due_date ? `, due ${it.due_date}` : ""}${late ? " (overdue)" : ""}`}
+          >
+            <span className="flex items-center w-full">
+              <span aria-hidden="true" style={{ flex: 1, height: 2, background: idx === 0 ? "transparent" : leftOn ? "#16a34a" : "var(--ch-line)" }} />
+              <span
+                className="inline-flex items-center justify-center rounded-full text-[9px] font-bold tabular-nums shrink-0"
+                style={{
+                  width: 18,
+                  height: 18,
+                  background: c.fill,
+                  color: c.text,
+                  border: `${current ? 2 : 1}px solid ${c.border}`,
+                  boxShadow: late ? "0 0 0 2px #fbc5c5" : undefined,
+                }}
+              >
+                {it.status === "done" ? "✓" : idx + 1}
+              </span>
+              <span aria-hidden="true" style={{ flex: 1, height: 2, background: idx === items.length - 1 ? "transparent" : rightOn ? "#16a34a" : "var(--ch-line)" }} />
+            </span>
             <span
-              title={`${idx + 1}. ${it.title} — ${ROAD_LABEL[it.status] ?? it.status}${it.due_date ? `, due ${it.due_date}` : ""}${late ? " (overdue)" : ""}`}
-              className="inline-flex items-center justify-center rounded-full text-[9px] font-bold tabular-nums"
-              style={{
-                width: 18,
-                height: 18,
-                background: c.fill,
-                color: c.text,
-                border: `${current ? 2 : 1}px solid ${c.border}`,
-                boxShadow: late ? "0 0 0 2px #fbc5c5" : undefined,
-              }}
+              className="text-[10px] leading-tight text-center mt-1 px-0.5"
+              style={{ color: labelColor, fontWeight: current ? 700 : 500, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
             >
-              {it.status === "done" ? "✓" : idx + 1}
+              {shortLabel(it.title)}
             </span>
           </span>
         );
