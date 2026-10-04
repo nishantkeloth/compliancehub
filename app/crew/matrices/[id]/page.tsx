@@ -1,3 +1,5 @@
+export const maxDuration = 120;
+
 import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import { getEffectiveAccess, can } from "@/lib/rbac";

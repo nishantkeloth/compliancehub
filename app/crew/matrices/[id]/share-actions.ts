@@ -27,6 +27,8 @@ import {
   type StaffingCrew,
   type FieldDef,
 } from "@/lib/staffing-plan-shared";
+import { loadVerifyItems, loadReads } from "@/lib/matrix-verify-load";
+import { outcomeFor, resolveInclusion, type Decision, type Policy, type VerifyOutcome } from "@/lib/matrix-verify";
 
 const LINK_EXPIRY_DAYS = 30;
 // A matrix can be sent to a client at any status, including draft — but
@@ -138,6 +140,11 @@ export async function sendMatrixSharePackage(input: {
   subject: string;
   bodyText: string;
   includeExcel: boolean;
+  // What the sender decided in the "Verify documents" step. Results are
+  // NOT taken from the browser — they are re-derived here from the cached
+  // file readings and the current records; only the sender's decisions
+  // (leave out / send anyway, with a reason) come from the wizard.
+  verification?: { policy: Policy; decisions: Decision[] };
 }) {
   const { supabase, access, userId, userEmail } = await requireShare();
   const recipients = input.recipients.filter((r) => r.name.trim() && r.email.trim());
@@ -162,6 +169,50 @@ export async function sendMatrixSharePackage(input: {
   if (matrixErr || !matrix) return { error: "Matrix not found." };
 
   const isDraftShare = !FINAL_STATUSES.has(matrix.status as string);
+
+  // ---- Document verification gate. Re-derive every document's outcome
+  // from the cached readings and today's records, then apply the sender's
+  // decisions and the chosen policy.
+  const policy: Policy = input.verification?.policy ?? "auto_exclude";
+  const decisionByKey = new Map<string, Decision>((input.verification?.decisions ?? []).map((d) => [d.key, d]));
+  const loadedVerify = await loadVerifyItems(supabase, access.orgId!, input.crewMatrixId);
+  if ("error" in loadedVerify) return { error: loadedVerify.error };
+  const verifyReads = await loadReads(supabase, access.orgId!, loadedVerify.items.map((i) => i.versionId).filter((v): v is string => !!v));
+  const verifyRows = loadedVerify.items.map((item) => {
+    const outcome: VerifyOutcome = outcomeFor(item, item.versionId ? verifyReads.get(item.versionId) : null);
+    const decision = decisionByKey.get(item.key);
+    const inclusion = resolveInclusion(outcome, decision);
+    return { item, outcome, decision, inclusion };
+  });
+  const undecided = verifyRows.filter((r) => r.inclusion.needsDecision && policy === "require_decision");
+  if (undecided.length > 0) {
+    return { error: `${undecided.length} document${undecided.length === 1 ? "" : "s"} failed verification and still need a decision — go back to the Verify documents step to leave each out or send it anyway.` };
+  }
+  const verifyByKey = new Map(verifyRows.map((r) => [r.item.key, r]));
+  const verifiedAt = new Date().toISOString();
+  const verificationSummary = {
+    policy,
+    verifiedAt,
+    totals: {
+      checked: verifyRows.filter((r) => r.outcome.overall !== "no_file").length,
+      verified: verifyRows.filter((r) => r.inclusion.include && !r.inclusion.overridden).length,
+      overridden: verifyRows.filter((r) => r.inclusion.overridden).length,
+      leftOut: verifyRows.filter((r) => !r.inclusion.include && r.outcome.overall !== "no_file").length,
+      noFile: verifyRows.filter((r) => r.outcome.overall === "no_file").length,
+    },
+    items: verifyRows.map((r) => ({
+      crewName: r.item.crewName,
+      role: r.item.roleName,
+      document: r.item.docTypeName,
+      fileName: r.item.fileName,
+      result: r.outcome.overall,
+      included: r.inclusion.include,
+      overridden: r.inclusion.overridden,
+      reason: r.decision?.reason?.trim() || null,
+      notes: r.outcome.checks.filter((c) => c.state === "warn" || c.state === "fail").map((c) => `${c.label}: ${c.note ?? ""} (record ${c.recorded ?? "—"}, file ${c.found ?? "—"})`),
+      error: r.outcome.error,
+    })),
+  };
 
   const { data: lines } = await supabase
     .from("crew_matrix_lines")
@@ -279,6 +330,25 @@ export async function sendMatrixSharePackage(input: {
   if (input.includeExcel) {
     const ExcelJS = (await import("exceljs")).default;
     const wb = await buildStaffingPlanWorkbook(ExcelJS, orderedLines, staffingCrew, documentTypes, customFieldDefinitions, isDraftShare ? DRAFT_WATERMARK_TEXT : undefined);
+    // Client-facing record of what was checked: plain results, no internal
+    // mismatch detail (that stays in the package's verification record).
+    if (verifyRows.length > 0) {
+      const ws = wb.addWorksheet("Document verification");
+      ws.addRow(["Crew member", "Rank", "Document", "Result"]);
+      ws.getRow(1).font = { bold: true };
+      for (const r of verifyRows) {
+        let result: string;
+        if (r.outcome.overall === "no_file") result = "Record only — no file held";
+        else if (!r.inclusion.include) result = "Not included — being re-checked";
+        else if (r.inclusion.overridden) result = "Included — confirmed by sender";
+        else if (r.outcome.overall === "warn") result = `Verified — ${r.outcome.checks.filter((c) => c.state === "warn").map((c) => c.note).filter(Boolean).join(" ")}`;
+        else result = "Verified";
+        ws.addRow([r.item.crewName, r.item.roleName, r.item.docTypeName, result]);
+      }
+      ws.columns = [{ width: 28 }, { width: 22 }, { width: 32 }, { width: 60 }];
+      ws.addRow([]);
+      ws.addRow([`Verified ${new Date(verifiedAt).toUTCString()}. Each document file was read and its holder name, number, expiry date and type compared with the crew record. This confirms the file agrees with the record; it is not an issuer check.`]);
+    }
     const buffer = await wb.xlsx.writeBuffer();
     excelBase64 = Buffer.from(buffer).toString("base64");
     const safeMatrixNumber = (matrix.matrix_number ?? matrix.id).replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -313,6 +383,10 @@ export async function sendMatrixSharePackage(input: {
     siteName: site?.name ?? null,
     shareReference: shareReference as string,
     isDraftShare,
+    verificationLine:
+      verifyRows.length > 0
+        ? `Verified ${new Date(verifiedAt).toUTCString().replace(" GMT", " UTC")}: ${verificationSummary.totals.verified + verificationSummary.totals.overridden} of ${verificationSummary.totals.checked} documents checked against crew records${verificationSummary.totals.leftOut > 0 ? `; ${verificationSummary.totals.leftOut} not included while they are re-checked` : ""}.`
+        : null,
   });
 
   const { data: pkg, error: pkgErr } = await supabase
@@ -338,6 +412,9 @@ export async function sendMatrixSharePackage(input: {
       email_body_html_snapshot: bodyHtml,
       email_body_text_snapshot: bodyTextTrimmed,
       excel_attached: input.includeExcel,
+      verification_json: verificationSummary,
+      verification_policy: policy,
+      verified_at: verifiedAt,
       staff_count: staffingCrew.length,
       document_count: 0, // updated below once the snapshot rows are written
       created_by: userId,
@@ -388,6 +465,12 @@ export async function sendMatrixSharePackage(input: {
             status_text: info.text,
             status_kind: info.kind,
             status: info.status ?? null,
+            // Shown on the secure page as a small "Verified" tick.
+            verification: (() => {
+              const r = verifyByKey.get(`${person.crew_id}:${col.id}`);
+              if (!r || r.outcome.overall === "no_file") return null;
+              return r.inclusion.include ? (r.outcome.overall === "pass" || r.inclusion.overridden ? "verified" : "verified_note") : "excluded";
+            })(),
           },
         };
       });
@@ -428,7 +511,7 @@ export async function sendMatrixSharePackage(input: {
 
     const shareUrl = `${origin}/crew-matrix-share/${token}`;
     const html = bodyHtml.replace("{{SECURE_LINK}}", shareUrl);
-    const text = `${isDraftShare ? "DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE\n\n" : ""}${bodyTextTrimmed}\n\nView the secure crew matrix: ${shareUrl}\n(This link is intended only for ${r.email.trim()} and expires ${new Date(expiresAt).toDateString()}.)`;
+    const text = `${isDraftShare ? "DRAFT — NOT YET APPROVED — SUBJECT TO CHANGE\n\n" : ""}${bodyTextTrimmed}\n\n${verifyRows.length > 0 ? `${verificationSummary.totals.verified + verificationSummary.totals.overridden} of ${verificationSummary.totals.checked} documents verified against crew records.\n\n` : ""}View the secure crew matrix: ${shareUrl}\n(This link is intended only for ${r.email.trim()} and expires ${new Date(expiresAt).toDateString()}.)`;
 
     const sendResult = await sendEmail({
       from: fromHeader,
@@ -471,6 +554,7 @@ function renderEmailHtml(opts: {
   siteName: string | null;
   shareReference: string;
   isDraftShare: boolean;
+  verificationLine: string | null;
 }) {
   const escaped = opts.bodyText
     .split("\n")
@@ -490,6 +574,7 @@ function renderEmailHtml(opts: {
         ${opts.projectName ? `<tr><td style="color:#64748b; font-size:12px; padding-bottom:4px;">Project</td><td style="padding-left:16px;">${opts.projectName}</td></tr>` : ""}
         ${opts.siteName ? `<tr><td style="color:#64748b; font-size:12px; padding-bottom:4px;">Vessel / site</td><td style="padding-left:16px;">${opts.siteName}</td></tr>` : ""}
       </table>
+      ${opts.verificationLine ? `<p style="background:#ecfdf3; border:1px solid #b7ebc8; color:#15803d; border-radius:6px; padding:8px 12px; font-size:13px;">${opts.verificationLine}</p>` : ""}
       <p><a href="{{SECURE_LINK}}" style="display:inline-block; background:#0f2c4c; color:#fff; text-decoration:none; padding:10px 18px; border-radius:6px; font-weight:600;">View secure crew matrix</a></p>
       <p style="font-size:12px; color:#64748b;">This link is intended only for the recipient it was sent to and will expire — please do not forward it. Sharing reference ${opts.shareReference}.</p>
       <p style="font-size:12px; color:#94a3b8; margin-top:24px; border-top:1px solid #e5e7eb; padding-top:12px;">Confidential — this message and its attachments are intended solely for the named recipient and may contain personal data. ${opts.companyName}.</p>
@@ -535,7 +620,7 @@ export async function getSharingHistory(crewMatrixId: string | string[]) {
   let query = supabase
     .from("crew_matrix_share_packages")
     .select(
-      "id, share_reference, status, matrix_version_snapshot, excel_attached, staff_count, document_count, created_at, revoked_at, revocation_reason, crew_matrix_share_recipients(id, recipient_name, recipient_email, delivery_status, view_count, first_opened_at, last_opened_at, revoked_at, token_expires_at)"
+      "id, share_reference, status, matrix_version_snapshot, excel_attached, staff_count, document_count, verification_json, created_at, revoked_at, revocation_reason, crew_matrix_share_recipients(id, recipient_name, recipient_email, delivery_status, view_count, first_opened_at, last_opened_at, revoked_at, token_expires_at)"
     )
     .eq("org_id", access.orgId);
   // Phase 17 (timeline continuity) — a single matrix "number" is really a
@@ -558,6 +643,10 @@ export async function getSharingHistory(crewMatrixId: string | string[]) {
       excelAttached: p.excel_attached as boolean,
       staffCount: p.staff_count as number,
       documentCount: p.document_count as number,
+      verification: (() => {
+        const v = p.verification_json as { totals?: { checked: number; verified: number; overridden: number; leftOut: number; noFile: number } } | null;
+        return v?.totals ?? null;
+      })(),
       createdAt: p.created_at as string,
       revokedAt: p.revoked_at as string | null,
       revocationReason: p.revocation_reason as string | null,

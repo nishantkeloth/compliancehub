@@ -1,8 +1,8 @@
 "use client";
 
-// "Send Matrix to Client" — Increment 1 wizard. Three steps: readiness
-// summary, recipients (existing client contacts + inline "add contact"),
-// and an editable email. Sending re-validates and re-fetches everything
+// "Send Matrix to Client" — wizard. Steps: readiness summary, recipients
+// (existing client contacts + inline "add contact"), verify documents (each
+// file read and compared with the crew record), and an editable email. Sending re-validates and re-fetches everything
 // server-side (see share-actions.ts) — this wizard's own summary is a
 // preview, not the source of truth for what gets sent.
 
@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { LineLike, StaffingCrew, DocTypeRef, FieldDef } from "@/lib/staffing-plan-shared";
 import { cellInfo, orderDocumentColumns } from "@/lib/staffing-plan-shared";
 import { getMatrixShareContext, createClientContact, sendMatrixSharePackage } from "./share-actions";
+import VerifyStep, { type VerifyStepState } from "./verify-step";
 
 const cardCls = "bg-white border rounded-xl";
 const cardStyle = { borderColor: "var(--ch-line)" };
@@ -50,7 +51,10 @@ export default function SendMatrixWizard({
   customFieldDefinitions: FieldDef[];
   onClose: () => void;
 }) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  // Step 3 is "Verify documents"; the sender's decisions live here so they
+  // survive going Back and forward again.
+  const [verifyState, setVerifyState] = useState<VerifyStepState>({ policy: "auto_exclude", decisions: [] });
   const [loadingContext, setLoadingContext] = useState(true);
   const [contextError, setContextError] = useState<string | null>(null);
   const [clientName, setClientName] = useState<string | null>(null);
@@ -115,7 +119,7 @@ export default function SendMatrixWizard({
   }, [lines, assignedCrew, documentTypes, customFieldDefinitions]);
 
   useEffect(() => {
-    if (step !== 3 || subject) return;
+    if (step !== 4 || subject) return;
     setSubject(`Crew Matrix – ${matrixTitle ?? "Staffing Plan"}${matrixNumber ? ` – ${matrixNumber}` : ""}${matrixVersion ? ` – Version ${matrixVersion}` : ""}`);
     setBodyText(
       `Please find attached the crew matrix for ${matrixTitle ?? "this vessel/site"}${clientName ? ` under ${clientName}` : ""}.\n\n` +
@@ -159,6 +163,7 @@ export default function SendMatrixWizard({
       subject,
       bodyText,
       includeExcel,
+      verification: verifyState,
     });
     setSending(false);
     if (res?.error) {
@@ -167,7 +172,7 @@ export default function SendMatrixWizard({
     }
     setShareReference(res?.shareReference ?? null);
     setSendResults(res?.results ?? []);
-    setStep(4);
+    setStep(5);
   };
 
   return (
@@ -253,13 +258,17 @@ export default function SendMatrixWizard({
             <div className="flex justify-between mt-2">
               <button onClick={() => setStep(1)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Back</button>
               <button onClick={() => setStep(3)} disabled={selected.length === 0} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-                Next: Compose email ({selected.length} recipient{selected.length === 1 ? "" : "s"})
+                Next: Verify documents ({selected.length} recipient{selected.length === 1 ? "" : "s"})
               </button>
             </div>
           </div>
         )}
 
         {step === 3 && (
+          <VerifyStep crewMatrixId={crewMatrixId} initial={verifyState} onChange={setVerifyState} onBack={() => setStep(2)} onContinue={() => setStep(4)} />
+        )}
+
+        {step === 4 && (
           <div>
             <div className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Compose email</div>
             <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
@@ -281,7 +290,7 @@ export default function SendMatrixWizard({
             </label>
             {sendError && <div className="text-sm mb-3" style={{ color: "var(--ch-fail)" }}>{sendError}</div>}
             <div className="flex justify-between">
-              <button onClick={() => setStep(2)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Back</button>
+              <button onClick={() => setStep(3)} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Back</button>
               <button onClick={send} disabled={sending || !subject.trim() || !bodyText.trim()} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
                 {sending ? "Sending…" : "Send to Client"}
               </button>
@@ -289,7 +298,7 @@ export default function SendMatrixWizard({
           </div>
         )}
 
-        {step === 4 && sendResults && (
+        {step === 5 && sendResults && (
           <div>
             <div className="text-sm font-semibold mb-3" style={{ color: "var(--ch-pass)" }}>
               Sent — sharing reference {shareReference}

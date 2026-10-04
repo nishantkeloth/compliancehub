@@ -29,6 +29,7 @@ type Package = {
   excelAttached: boolean;
   staffCount: number;
   documentCount: number;
+  verification?: { checked: number; verified: number; overridden: number; leftOut: number; noFile: number } | null;
   createdAt: string;
   revokedAt: string | null;
   revocationReason: string | null;
@@ -108,6 +109,7 @@ export default function SharingHistoryPanel({ crewMatrixId, onClose }: { crewMat
               </div>
               <div className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>
                 {pkg.staffCount} staff · {pkg.documentCount} document rows · {pkg.excelAttached ? "Excel attached" : "No attachment"}
+                {pkg.verification && ` · Documents verified: ${pkg.verification.verified + pkg.verification.overridden} of ${pkg.verification.checked}${pkg.verification.leftOut ? `, ${pkg.verification.leftOut} left out` : ""}${pkg.verification.overridden ? `, ${pkg.verification.overridden} sent anyway` : ""}`}
                 {pkg.revokedAt && ` · Revoked ${new Date(pkg.revokedAt).toLocaleString()}${pkg.revocationReason ? ` (${pkg.revocationReason})` : ""}`}
               </div>
               <div className="space-y-1">

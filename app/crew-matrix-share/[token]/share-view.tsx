@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { DOCUMENT_STATUS_COLORS, type DocumentStatus } from "@/lib/document-status";
 
-type DocSnap = { name: string; category: string | null; is_mandatory: boolean; status_text: string; status_kind: "na" | "missing" | "empty" | "value"; status: DocumentStatus | null };
+type DocSnap = { name: string; category: string | null; is_mandatory: boolean; status_text: string; status_kind: "na" | "missing" | "empty" | "value"; status: DocumentStatus | null; verification?: "verified" | "verified_note" | "excluded" | null };
 type StaffSnap = { share_staff_id: string; staff: { full_name: string; nationality: string | null; job_role_name: string }; documents: DocSnap[] };
 
 type Preview =
@@ -169,6 +169,12 @@ function DocRow({ doc }: { doc: DocSnap }) {
       <span style={{ color: "var(--ch-ink)" }}>
         {doc.name}
         {doc.is_mandatory && <span className="ml-0.5 font-semibold" style={{ color: "var(--ch-fail)" }}>*</span>}
+        {(doc.verification === "verified" || doc.verification === "verified_note") && (
+          <span className="ml-1.5 text-[10px] font-semibold" style={{ color: "#15803d" }} title="This document file was checked against the crew record before sending">✓ Verified</span>
+        )}
+        {doc.verification === "excluded" && (
+          <span className="ml-1.5 text-[10px] font-semibold" style={{ color: "#92400e" }} title="Not included in this package while it is re-checked">Being re-checked</span>
+        )}
       </span>
       <span
         className={colors ? "rounded px-1.5 py-0.5 font-semibold" : "font-semibold"}
