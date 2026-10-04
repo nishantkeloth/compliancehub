@@ -226,7 +226,8 @@ export default function ChecklistTab({
             {p.mobilization_track_id && items.length > 0 && (
               <div className="space-y-1.5 mt-2">
                 {items.map((item) => (
-                  <div key={item.id} className="flex items-start gap-2 flex-wrap text-sm border rounded-lg px-2.5 py-1.5" style={{ borderColor: "var(--ch-line)" }}>
+                  <div key={item.id} data-s={item.status} className="ch-st-row flex items-start gap-2 flex-wrap text-sm rounded-lg px-2.5 py-1.5">
+                    <span className="ch-st-dot shrink-0 rounded-full mt-1.5" style={{ width: 9, height: 9 }} />
                     <span className="text-[10px] font-mono rounded px-1 py-0.5 mt-0.5" style={{ background: "var(--ch-paper)", color: "var(--ch-sub)" }}>
                       {item.sequence}
                     </span>
@@ -240,8 +241,8 @@ export default function ChecklistTab({
                     {dueBadge(item.due_date, item.status)}
                     {canManage ? (
                       <select
-                        className={`${inputCls} text-xs py-1`}
-                        style={{ ...inputStyle, ...STATUS_COLORS[item.status] }}
+                        className={`ch-st-select ${inputCls} text-xs py-1`}
+                        data-s={item.status}
                         value={item.status}
                         onChange={(e) => run(() => updateChecklistItemStatus(item.id, requestId, e.target.value as "pending" | "in_progress" | "done" | "blocked"))}
                       >

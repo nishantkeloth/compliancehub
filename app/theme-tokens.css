@@ -52,3 +52,22 @@ input, textarea, select {
 .ch-link-navy:hover {
   color: var(--ch-navy-dark);
 }
+
+/* Checklist step status colours (mobilization checklist). Rows and their
+   status dropdown take the colour of the step's status. The select rule
+   needs !important because of the global select reset above. */
+.ch-st-row { border: 1px solid #e5e7eb; background: #ffffff; }
+.ch-st-row[data-s="in_progress"] { border-color: #fbd9a0; background: #fff6e5; }
+.ch-st-row[data-s="done"] { border-color: #b7ebc8; background: #ecfdf3; }
+.ch-st-row[data-s="blocked"] { border-color: #fbc5c5; background: #fef2f2; }
+
+.ch-st-dot { background: #9ca3af; }
+[data-s="in_progress"] > .ch-st-dot { background: #d97706; }
+[data-s="done"] > .ch-st-dot { background: #16a34a; }
+[data-s="blocked"] > .ch-st-dot { background: #dc2626; }
+
+.ch-st-select { border: 1px solid #e5e7eb; font-weight: 600; }
+.ch-st-select[data-s="pending"] { color: #4b5563 !important; background-color: #ffffff !important; }
+.ch-st-select[data-s="in_progress"] { color: #92400e !important; background-color: #fff6e5 !important; border-color: #fbd9a0; }
+.ch-st-select[data-s="done"] { color: #15803d !important; background-color: #ecfdf3 !important; border-color: #b7ebc8; }
+.ch-st-select[data-s="blocked"] { color: #b91c1c !important; background-color: #fef2f2 !important; border-color: #fbc5c5; }
