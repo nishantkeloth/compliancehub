@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { applyApprovedRosterChanges } from "./[id]/roster-change-actions";
 import { startWorkflowInstance, getCurrentStage, actOnCurrentStage, cancelCurrentInstance, canActOnStage } from "@/lib/workflow";
+import { freezeChangeSummary } from "@/lib/matrix-diff-load";
 
 type Supa = Awaited<ReturnType<typeof createClient>>;
 
@@ -1142,6 +1143,9 @@ export async function submitForApproval(id: string) {
   }
   const { error } = await supabase.from("crew_matrices").update(update).eq("id", id);
   if (error) return { error: error.message };
+  // Freeze the list of changes against the previous version as it stands
+  // right now, so approvers review exactly this and it cannot drift later.
+  await freezeChangeSummary(supabase, access.orgId!, id);
   revalidateMatrix(id);
   return {};
 }
@@ -1472,6 +1476,9 @@ export async function activateCrewMatrix(id: string) {
     // best-effort — activation itself already succeeded
   }
 
+  // Refresh the frozen change list one last time at go-live.
+  await freezeChangeSummary(supabase, access.orgId!, id);
+
   revalidateMatrix(id);
   return {};
 }
@@ -1504,8 +1511,10 @@ export async function cancelCrewMatrix(id: string) {
 
 /* ================= Versioning ================= */
 
-export async function createNewVersion(sourceId: string) {
+export async function createNewVersion(sourceId: string, reason: string) {
   const { supabase, access, userId } = await requireManage();
+  const versionReason = (reason ?? "").trim();
+  if (versionReason.length < 5) return { error: "Say why this new version is needed (a short sentence is enough) — it is shown to approvers and on the version history." };
   const { data: source, error: sourceError } = await supabase.from("crew_matrices").select("*").eq("id", sourceId).single();
   if (sourceError || !source) return { error: "Could not find that crew matrix." };
   if (!["approved", "active", "superseded", "rejected"].includes(source.status)) {
@@ -1538,6 +1547,8 @@ export async function createNewVersion(sourceId: string) {
       prepared_by: userId,
       created_by: userId,
       updated_by: userId,
+      version_reason: versionReason,
+      compared_to_matrix_id: sourceId,
     })
     .select("id")
     .single();

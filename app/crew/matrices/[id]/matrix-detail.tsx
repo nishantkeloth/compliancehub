@@ -26,6 +26,7 @@ import LinesEditor, { type Line, type Ref, type DocTypeRef, type DocTemplate } f
 import StaffingPlanView, { type StaffingCrew, type FieldDef } from "./staffing-plan";
 import SendMatrixWizard from "./send-matrix-wizard";
 import SharingHistoryPanel from "./sharing-history-panel";
+import { VersionsPanel, ChangeSummaryPanel } from "./version-changes";
 import SiteTab, { type SiteInfo, type ManningReq, type Contractor, type ClientRef, type ProjectRef } from "./site-tab";
 
 type Matrix = {
@@ -146,6 +147,8 @@ export default function MatrixDetail({
     router.replace(`/crew/matrices/${matrix.id}${qs ? `?${qs}` : ""}`, { scroll: false });
   };
   const [editing, setEditing] = useState(false);
+  const [newVersionOpen, setNewVersionOpen] = useState(false);
+  const [versionReason, setVersionReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Also reachable from the Staffing Plan tab (same wizard/history panel,
@@ -298,12 +301,14 @@ export default function MatrixDetail({
     setError(null);
     setBusy(true);
     startTransition(async () => {
-      const res = await createNewVersion(matrix.id);
+      const res = await createNewVersion(matrix.id, versionReason);
       setBusy(false);
       if (res?.error) {
         setError(res.error);
         return;
       }
+      setNewVersionOpen(false);
+      setVersionReason("");
       if (res?.id) router.push(`/crew/matrices/${res.id}`);
     });
   };
@@ -394,6 +399,15 @@ export default function MatrixDetail({
         <div className="text-sm mb-4 rounded-lg px-3 py-2" style={{ background: "var(--ch-fail-bg)", color: "var(--ch-fail)" }}>{error}</div>
       )}
 
+      {matrix.version_number > 1 && matrix.status !== "cancelled" && (
+        <ChangeSummaryPanel
+          matrixId={matrix.id}
+          versionNumber={matrix.version_number}
+          openByDefault={matrix.status === "pending_approval" || matrix.status === "pending_internal_approval" || matrix.status === "pending_client_approval"}
+          onOpenComparison={() => setTab("versions")}
+        />
+      )}
+
       <WorkflowActions
         status={matrix.status}
         canManage={canManage}
@@ -415,7 +429,7 @@ export default function MatrixDetail({
         onReturnStage={(comment) => run(() => returnCurrentStageForCorrection(matrix.id, comment))}
         onActivate={() => run(() => activateCrewMatrix(matrix.id))}
         onCancel={() => run(() => cancelCrewMatrix(matrix.id))}
-        onNewVersion={submitNewVersion}
+        onNewVersion={() => { setError(null); setNewVersionOpen(true); }}
       />
 
       <div className="flex gap-1.5 flex-wrap mb-4 mt-4 border-b pb-2" style={{ borderColor: "var(--ch-line)" }}>
@@ -570,22 +584,37 @@ export default function MatrixDetail({
         </div>
       )}
 
-      {tab === "versions" && (
-        <div className="space-y-2">
-          {versions.map((v) => (
-            <div
-              key={v.id}
-              className={`${cardCls} p-3 flex items-center gap-3 flex-wrap`}
-              style={v.id === matrix.id ? { ...cardStyle, background: "var(--ch-navy-soft)" } : cardStyle}
-            >
-              {v.id === matrix.id ? (
-                <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>v{v.version_number} (this version)</span>
-              ) : (
-                <Link href={`/crew/matrices/${v.id}`} className="text-sm font-semibold ch-link-navy">v{v.version_number}</Link>
-              )}
-              <StatusPill status={v.status} />
+      {tab === "versions" && <VersionsPanel matrixId={matrix.id} />}
+
+      {newVersionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.4)" }}>
+          <div className={`${cardCls} w-full max-w-md p-5`} style={{ ...cardStyle, background: "var(--ch-card, #fff)" }}>
+            <h2 className="text-base font-semibold mb-1" style={{ color: "var(--ch-ink)" }}>Create new version</h2>
+            <p className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+              This copies v{matrix.version_number} into a new draft. Say why — it is saved with the version, shown to approvers and kept in the version history.
+            </p>
+            <label className={lbl} style={lblStyle}>
+              Reason for this version *
+              <textarea
+                className={`${inputCls} w-full mt-1`}
+                style={inputStyle}
+                rows={3}
+                autoFocus
+                value={versionReason}
+                onChange={(e) => setVersionReason(e.target.value)}
+                placeholder="For example: client asked for a second Baker on night shift and dropped the Storekeeper role."
+              />
+            </label>
+            {error && <div className="text-sm mt-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button type="button" onClick={() => { setNewVersionOpen(false); setError(null); }} disabled={busy} className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "var(--ch-line)", color: "var(--ch-sub)" }}>
+                Cancel
+              </button>
+              <button type="button" onClick={submitNewVersion} disabled={busy || versionReason.trim().length < 5} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+                {busy ? "Creating…" : "Create version"}
+              </button>
             </div>
-          ))}
+          </div>
         </div>
       )}
 
