@@ -629,6 +629,47 @@ function diffVisa(before: VisaSnapshot, after: VisaSnapshot, typeLabel: Record<s
 const VISA_SNAPSHOT_COLUMNS =
   "document_type_id, document_number, issue_date, expiry_date, entry_date, extension_date, visa_country, visa_type_id, visa_application_date, visa_status";
 
+// The Visas tab needs a document type of category "visa". If the company has
+// none yet, reuse one already named like a visa (setting its category), or
+// create a plain "Visa" type, so "+ Add visa" works the first time.
+export async function ensureVisaDocumentType() {
+  const { supabase, access, userId } = await requireCrewManage();
+  const { data: existing } = await supabase
+    .from("document_types")
+    .select("id")
+    .eq("org_id", access.orgId)
+    .eq("category", "visa")
+    .eq("is_active", true)
+    .limit(1);
+  if (existing && existing.length > 0) return {};
+
+  const { data: named } = await supabase
+    .from("document_types")
+    .select("id")
+    .eq("org_id", access.orgId)
+    .eq("is_active", true)
+    .ilike("name", "%visa%")
+    .order("name")
+    .limit(1);
+  if (named && named.length > 0) {
+    const { error } = await supabase.from("document_types").update({ category: "visa" }).eq("id", named[0].id);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase.from("document_types").insert({
+      org_id: access.orgId,
+      name: "Visa",
+      category: "visa",
+      tracks_number: true,
+      warning_threshold_days: 30,
+      created_by: userId,
+    });
+    if (error) return { error: error.message };
+  }
+  revalidateDetail("");
+  revalidateMatrix();
+  return {};
+}
+
 export async function createCrewDocument(crewId: string, formData: FormData) {
   const { supabase, access, userId } = await requireDocumentsManage();
   const documentTypeId = str(formData, "documentTypeId");

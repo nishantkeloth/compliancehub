@@ -149,7 +149,7 @@ export default function VisasTab({
       {adding && <div className="mb-3">{addForm()}</div>}
       {canManage && !hasVisaTypes && !adding && (
         <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
-          No visa document type exists yet. Add one in Crew Setup → Document Types (category: visa).
+          A “Visa” document type is set up automatically the first time you add a visa.
         </div>
       )}
 

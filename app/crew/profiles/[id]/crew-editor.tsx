@@ -19,6 +19,7 @@ import {
   deleteCrewAssignment,
   releaseCrewReservation,
   createCrewDocument,
+  ensureVisaDocumentType,
   updateCrewDocument,
   deactivateCrewDocument,
   uploadCrewDocumentVersion,
@@ -1673,6 +1674,18 @@ function VisasSection({
           setEditingId(null);
           setUploadingId(null);
           setAdding(true);
+          if (visaDocTypes.length === 0) {
+            setError(null);
+            startTransition(async () => {
+              const res = await ensureVisaDocumentType();
+              if (res?.error) {
+                setError(res.error);
+                setAdding(false);
+                return;
+              }
+              onChanged();
+            });
+          }
         }}
         onEdit={(id) => {
           setAdding(false);
@@ -1685,7 +1698,9 @@ function VisasSection({
           setUploadingId(id);
         }}
         addForm={() =>
-          visaDocTypes.length === 0 ? null : (
+          visaDocTypes.length === 0 ? (
+            <div className="text-sm italic" style={{ color: "var(--ch-sub)" }}>Setting up the Visa document type…</div>
+          ) : (
             <DocumentForm
               crewId={crewId}
               visaTypes={visaTypes}
