@@ -488,6 +488,20 @@ function parseCustomFields(formData: FormData): Record<string, unknown> {
   }
 }
 
+const VISA_STATUS_VALUES = ["applied", "approved", "awaiting_entry", "entered", "cancelled"];
+
+// The four optional visa fields on a document. Left empty for any document
+// that is not a visa (the form sends them blank).
+function visaFields(formData: FormData) {
+  const status = str(formData, "visaStatus");
+  return {
+    visa_country: optStr(formData, "visaCountry"),
+    visa_type_id: optStr(formData, "visaTypeId"),
+    visa_application_date: optStr(formData, "visaApplicationDate"),
+    visa_status: VISA_STATUS_VALUES.includes(status) ? status : null,
+  };
+}
+
 export async function createCrewDocument(crewId: string, formData: FormData) {
   const { supabase, access, userId } = await requireDocumentsManage();
   const documentTypeId = str(formData, "documentTypeId");
@@ -507,6 +521,7 @@ export async function createCrewDocument(crewId: string, formData: FormData) {
     reliever_crew_id: optStr(formData, "relieverCrewId"),
     notes: optStr(formData, "notes"),
     custom_fields: parseCustomFields(formData),
+    ...visaFields(formData),
     created_by: userId,
     updated_by: userId,
   });
@@ -535,6 +550,7 @@ export async function updateCrewDocument(id: string, crewId: string, formData: F
       reliever_crew_id: optStr(formData, "relieverCrewId"),
       notes: optStr(formData, "notes"),
       custom_fields: parseCustomFields(formData),
+      ...visaFields(formData),
       updated_by: userId,
     })
     .eq("id", id);

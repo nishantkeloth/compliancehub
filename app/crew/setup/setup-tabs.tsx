@@ -30,6 +30,7 @@ import {
 } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import DocumentTypesImportPanel from "./document-types-import-panel";
+import VisaTypesPanel, { type VisaType } from "./visa-panel";
 
 type JobRole = { id: string; name: string; category: string | null; is_active: boolean; is_key_officer?: boolean };
 type Skill = { id: string; name: string };
@@ -81,7 +82,7 @@ export type DocTemplateItem = {
   sort_order: number;
 };
 
-const TABS = ["Job Roles", "Skills", "Rotation Templates", "Document Types", "Document Requirements", "Document Templates", "Custom Fields"] as const;
+const TABS = ["Job Roles", "Skills", "Rotation Templates", "Document Types", "Visa Types", "Document Requirements", "Document Templates", "Custom Fields"] as const;
 type Tab = (typeof TABS)[number];
 
 const inputCls = "border rounded-lg px-3 py-2 text-sm";
@@ -144,6 +145,7 @@ export default function SetupTabs({
   documentRequirements,
   documentTemplates,
   documentTemplateItems,
+  visaTypes,
 }: {
   jobRoles: JobRole[];
   skills: Skill[];
@@ -154,6 +156,7 @@ export default function SetupTabs({
   documentRequirements: DocRequirement[];
   documentTemplates: DocTemplate[];
   documentTemplateItems: DocTemplateItem[];
+  visaTypes: VisaType[];
 }) {
   const [tab, setTab] = useState<Tab>("Job Roles");
 
@@ -180,6 +183,7 @@ export default function SetupTabs({
       {tab === "Skills" && <SkillsPanel skills={skills} />}
       {tab === "Rotation Templates" && <RotationTemplatesPanel templates={rotationTemplates} />}
       {tab === "Document Types" && <DocumentTypesPanel documentTypes={documentTypes} />}
+      {tab === "Visa Types" && <VisaTypesPanel visaTypes={visaTypes} />}
       {tab === "Document Requirements" && (
         <DocumentRequirementsPanel jobRoles={jobRoles} documentTypes={documentTypes} clients={clients} documentRequirements={documentRequirements} />
       )}

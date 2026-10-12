@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import CrewEditor, { type EmergencyContactRow } from "./crew-editor";
+import CrewEditor, { type EmergencyContactRow, type VisaTypeRef } from "./crew-editor";
 
 const BASE_FIELDS =
   "id, org_id, crew_code, employee_code, full_name, photo_url, employment_status, nationality, date_of_birth, gender, phone, email, home_country, current_location, nearest_airport, primary_job_role_id, employment_type, joining_date, notice_period_days, availability_date, default_rotation_template_id, emergency_contact_name, emergency_contact_phone, notes, linked_profile_id, job_roles(name), rotation_templates(name)";
@@ -62,6 +62,7 @@ export default async function CrewProfileDetailPage({
     documentVersionCountsRes,
     reservationsRes,
     emergencyContactsRes,
+    visaTypesRes,
   ] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -91,7 +92,7 @@ export default async function CrewProfileDetailPage({
       ? supabase
           .from("crew_documents")
           .select(
-            "id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields"
+            "id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date, extension_date, dose_number, reliever_crew_id, notes, custom_fields, visa_country, visa_type_id, visa_application_date, visa_status"
           )
           .eq("crew_id", id)
           .eq("is_active", true)
@@ -131,6 +132,15 @@ export default async function CrewProfileDetailPage({
       .select("id, full_name, relationship, phone, email, address, is_primary, sort_order")
       .eq("crew_id", id)
       .order("sort_order"),
+    canViewDocuments
+      ? supabase
+          .from("visa_types")
+          .select("id, country, name, entry_valid_days, stay_basis, stay_days, entry_type")
+          .eq("org_id", access.orgId)
+          .eq("is_active", true)
+          .order("country")
+          .order("sort_order")
+      : Promise.resolve({ data: [] }),
   ]);
 
   const documentVersionCounts: Record<string, number> = {};
@@ -215,6 +225,7 @@ export default async function CrewProfileDetailPage({
         documentVersionCounts={documentVersionCounts}
         reservations={reservations}
         emergencyContacts={(emergencyContactsRes.data ?? []) as EmergencyContactRow[]}
+        visaTypes={(visaTypesRes.data ?? []) as VisaTypeRef[]}
       />
     </>
   );

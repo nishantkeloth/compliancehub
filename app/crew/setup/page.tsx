@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import SetupTabs from "./setup-tabs";
+import type { VisaType } from "./visa-panel";
 
 export default async function CrewSetupPage() {
   const supabase = await createClient();
@@ -24,6 +25,7 @@ export default async function CrewSetupPage() {
     documentRequirementsRes,
     documentTemplatesRes,
     documentTemplateItemsRes,
+    visaTypesRes,
   ] = await Promise.all([
     supabase.from("job_roles").select("id, name, category, is_active, is_key_officer").eq("org_id", access.orgId).order("name"),
     supabase.from("skills").select("id, name").eq("org_id", access.orgId).order("name"),
@@ -54,6 +56,12 @@ export default async function CrewSetupPage() {
       .select("id, template_id, document_type_id, is_mandatory, minimum_remaining_validity_days, sort_order")
       .eq("org_id", access.orgId)
       .order("sort_order", { ascending: true }),
+    supabase
+      .from("visa_types")
+      .select("id, country, name, mobilization_code, entry_valid_days, stay_basis, stay_days, entry_type, expiry_reminder_days, entry_reminder_days, notes, is_active, sort_order")
+      .eq("org_id", access.orgId)
+      .order("country")
+      .order("sort_order"),
   ]);
 
   return (
@@ -77,6 +85,7 @@ export default async function CrewSetupPage() {
         documentRequirements={documentRequirementsRes.data ?? []}
         documentTemplates={documentTemplatesRes.data ?? []}
         documentTemplateItems={documentTemplateItemsRes.data ?? []}
+        visaTypes={(visaTypesRes.data ?? []) as VisaType[]}
       />
     </>
   );

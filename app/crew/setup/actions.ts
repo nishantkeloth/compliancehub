@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectiveAccess, can } from "@/lib/rbac";
+import { parseDayList } from "@/lib/visa";
 
 async function requireCrewManage() {
   const supabase = await createClient();
@@ -673,6 +674,91 @@ export async function updateDocumentRequirementTemplateItem(id: string, formData
 export async function deleteDocumentRequirementTemplateItem(id: string) {
   const { supabase } = await requireCrewManage();
   const { error } = await supabase.from("document_requirement_template_items").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidateSetup();
+  return {};
+}
+
+/* ---------------- Visa types (per country) ---------------- */
+
+const MOBILIZATION_CODES = ["mission", "resident", "seaman", "visit"];
+
+function visaTypeFields(formData: FormData): { error: string } | { values: Record<string, unknown> } {
+  const country = str(formData, "country");
+  const name = str(formData, "name");
+  if (!country) return { error: "Choose the country." };
+  if (!name) return { error: "Give the visa type a name." };
+
+  const mobilizationCode = str(formData, "mobilizationCode");
+  if (mobilizationCode && !MOBILIZATION_CODES.includes(mobilizationCode)) return { error: "That mobilization visa choice is not recognised." };
+
+  const entryValidRaw = str(formData, "entryValidDays");
+  const entryValidDays = entryValidRaw ? Number(entryValidRaw) : null;
+  if (entryValidDays != null && (!Number.isInteger(entryValidDays) || entryValidDays < 1)) return { error: "Entry must be a whole number of days, 1 or more." };
+
+  const stayBasis = str(formData, "stayBasis") === "days_from_entry" ? "days_from_entry" : "until_expiry";
+  const stayRaw = str(formData, "stayDays");
+  const stayDays = stayRaw ? Number(stayRaw) : null;
+  if (stayBasis === "days_from_entry" && (stayDays == null || !Number.isInteger(stayDays) || stayDays < 1)) {
+    return { error: "Enter how many days the person may stay after entering." };
+  }
+
+  const entryType = str(formData, "entryType");
+  if (entryType && entryType !== "single" && entryType !== "multiple") return { error: "Entry type must be single or multiple." };
+
+  return {
+    values: {
+      country,
+      name,
+      mobilization_code: mobilizationCode || null,
+      entry_valid_days: entryValidDays,
+      stay_basis: stayBasis,
+      stay_days: stayBasis === "days_from_entry" ? stayDays : null,
+      entry_type: entryType || null,
+      expiry_reminder_days: parseDayList(str(formData, "expiryReminderDays")),
+      entry_reminder_days: parseDayList(str(formData, "entryReminderDays")),
+      notes: optStr(formData, "notes"),
+      is_active: formData.get("isActive") === "on",
+    },
+  };
+}
+
+export async function createVisaType(formData: FormData) {
+  const { supabase, access, userId } = await requireCrewManage();
+  const parsed = visaTypeFields(formData);
+  if ("error" in parsed) return { error: parsed.error };
+  const { error } = await supabase.from("visa_types").insert({ ...parsed.values, org_id: access.orgId, created_by: userId });
+  if (error) {
+    if (error.code === "23505") return { error: "That country already has a visa type with this name." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  return {};
+}
+
+export async function updateVisaType(id: string, formData: FormData) {
+  const { supabase, access } = await requireCrewManage();
+  const parsed = visaTypeFields(formData);
+  if ("error" in parsed) return { error: parsed.error };
+  const { error } = await supabase
+    .from("visa_types")
+    .update({ ...parsed.values, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("org_id", access.orgId);
+  if (error) {
+    if (error.code === "23505") return { error: "That country already has a visa type with this name." };
+    return { error: error.message };
+  }
+  revalidateSetup();
+  revalidatePath("/crew/profiles");
+  return {};
+}
+
+// Visas already recorded against this type keep their dates; they just lose
+// the link (the column is set to null on delete).
+export async function deleteVisaType(id: string) {
+  const { supabase, access } = await requireCrewManage();
+  const { error } = await supabase.from("visa_types").delete().eq("id", id).eq("org_id", access.orgId);
   if (error) return { error: error.message };
   revalidateSetup();
   return {};

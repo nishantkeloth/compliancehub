@@ -34,6 +34,7 @@ import {
   extractCrewDocumentVersionFields,
 } from "../upload-link-actions";
 import { DocumentReadModal } from "@/components/document-read-modal";
+import { computeVisaDates, VISA_STATUSES, VISA_STATUS_LABEL, daysBetween, type VisaTypeRule } from "@/lib/visa";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { REGIONS } from "@/lib/regions";
@@ -128,6 +129,19 @@ type CrewDocument = {
   reliever_crew_id: string | null;
   notes: string | null;
   custom_fields: Record<string, unknown> | null;
+  visa_country?: string | null;
+  visa_type_id?: string | null;
+  visa_application_date?: string | null;
+  visa_status?: string | null;
+};
+export type VisaTypeRef = {
+  id: string;
+  country: string;
+  name: string;
+  entry_valid_days: number | null;
+  stay_basis: "until_expiry" | "days_from_entry";
+  stay_days: number | null;
+  entry_type: "single" | "multiple" | null;
 };
 type CustomFieldDefinition = {
   id: string;
@@ -262,6 +276,7 @@ export default function CrewEditor({
   documentVersionCounts,
   reservations,
   emergencyContacts,
+  visaTypes,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -285,6 +300,7 @@ export default function CrewEditor({
   documentVersionCounts: Record<string, number>;
   reservations: Reservation[];
   emergencyContacts: EmergencyContactRow[];
+  visaTypes: VisaTypeRef[];
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -369,6 +385,7 @@ export default function CrewEditor({
           crewList={crewList}
           customFieldDefinitions={customFieldDefinitions}
           documentVersionCounts={documentVersionCounts}
+          visaTypes={visaTypes}
           canManage={canManageDocuments}
           onChanged={refresh}
         />
@@ -1332,10 +1349,12 @@ function DocumentsSection({
   crewList,
   customFieldDefinitions,
   documentVersionCounts,
+  visaTypes,
   canManage,
   onChanged,
 }: {
   crewId: string;
+  visaTypes: VisaTypeRef[];
   documentTypes: DocumentType[];
   crewDocuments: CrewDocument[];
   crewList: Ref[];
@@ -1428,6 +1447,7 @@ function DocumentsSection({
                 key={d.id}
                 crewId={crewId}
                 crewDocument={d}
+                visaTypes={visaTypes}
                 documentTypes={documentTypes}
                 crewList={crewList}
                 customFieldDefinitions={customFieldDefinitions}
@@ -1468,6 +1488,7 @@ function DocumentsSection({
                 <div className="flex-1 min-w-[160px]">
                   <span className="text-sm font-semibold" style={{ color: "var(--ch-ink)" }}>{type?.name ?? "Unknown type"}</span>
                   {d.document_number && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>#{d.document_number}</span>}
+                  <VisaRowInfo doc={d} visaTypes={visaTypes} />
                   {d.expiry_date && (
                     <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>
                       expires {d.expiry_date}{daysRemaining != null ? ` (${daysRemaining}d)` : ""}
@@ -1509,6 +1530,7 @@ function DocumentsSection({
         adding ? (
           <DocumentForm
             crewId={crewId}
+            visaTypes={visaTypes}
             documentTypes={documentTypes}
             crewList={crewList}
             customFieldDefinitions={customFieldDefinitions}
@@ -1526,6 +1548,10 @@ function DocumentsSection({
                 reliever_crew_id: patch.reliever_crew_id ?? null,
                 notes: patch.notes ?? null,
                 custom_fields: patch.custom_fields ?? {},
+                visa_country: patch.visa_country ?? null,
+                visa_type_id: patch.visa_type_id ?? null,
+                visa_application_date: patch.visa_application_date ?? null,
+                visa_status: patch.visa_status ?? null,
               })
             }
             onCancel={() => setAdding(false)}
@@ -2269,6 +2295,7 @@ function UploadLinkPanel({
 function DocumentForm({
   crewId,
   crewDocument,
+  visaTypes,
   documentTypes,
   crewList,
   customFieldDefinitions,
@@ -2276,6 +2303,7 @@ function DocumentForm({
   onCancel,
 }: {
   crewId: string;
+  visaTypes: VisaTypeRef[];
   crewDocument?: CrewDocument;
   documentTypes: DocumentType[];
   crewList: Ref[];
@@ -2291,6 +2319,10 @@ function DocumentForm({
   const [entryDate, setEntryDate] = useState(crewDocument?.entry_date ?? "");
   const [extensionDate, setExtensionDate] = useState(crewDocument?.extension_date ?? "");
   const [doseNumber, setDoseNumber] = useState(crewDocument?.dose_number ?? "");
+  const [visaCountry, setVisaCountry] = useState(crewDocument?.visa_country ?? "");
+  const [visaTypeId, setVisaTypeId] = useState(crewDocument?.visa_type_id ?? "");
+  const [visaApplicationDate, setVisaApplicationDate] = useState(crewDocument?.visa_application_date ?? "");
+  const [visaStatus, setVisaStatus] = useState(crewDocument?.visa_status ?? "");
   const [relieverCrewId, setRelieverCrewId] = useState(crewDocument?.reliever_crew_id ?? "");
   const [notes, setNotes] = useState(crewDocument?.notes ?? "");
   const [customValues, setCustomValues] = useState<Record<string, string>>(() => {
@@ -2321,6 +2353,10 @@ function DocumentForm({
     fd.set("entryDate", entryDate);
     fd.set("extensionDate", extensionDate);
     fd.set("doseNumber", doseNumber.trim());
+    fd.set("visaCountry", isVisa ? visaCountry : "");
+    fd.set("visaTypeId", isVisa ? visaTypeId : "");
+    fd.set("visaApplicationDate", isVisa ? visaApplicationDate : "");
+    fd.set("visaStatus", isVisa ? visaStatus : "");
     fd.set("relieverCrewId", relieverCrewId);
     fd.set("notes", notes.trim());
     const customFieldsPayload: Record<string, string | number> = {};
@@ -2343,6 +2379,10 @@ function DocumentForm({
       reliever_crew_id: relieverCrewId || null,
       notes: notes.trim() || null,
       custom_fields: customFieldsPayload,
+      visa_country: isVisa && visaCountry ? visaCountry : null,
+      visa_type_id: isVisa && visaTypeId ? visaTypeId : null,
+      visa_application_date: isVisa && visaApplicationDate ? visaApplicationDate : null,
+      visa_status: isVisa && visaStatus ? visaStatus : null,
     });
   };
 
@@ -2390,6 +2430,22 @@ function DocumentForm({
           </label>
         )}
       </div>
+      {isVisa && (
+        <VisaFields
+          visaTypes={visaTypes}
+          country={visaCountry}
+          setCountry={setVisaCountry}
+          typeId={visaTypeId}
+          setTypeId={setVisaTypeId}
+          applicationDate={visaApplicationDate}
+          setApplicationDate={setVisaApplicationDate}
+          status={visaStatus}
+          setStatus={setVisaStatus}
+          issueDate={issueDate}
+          expiryDate={expiryDate}
+          entryDate={entryDate}
+        />
+      )}
       {isVisa && (
         <div className="grid gap-3 sm:grid-cols-3 mb-3">
           <label className={lbl} style={lblStyle}>
@@ -2439,6 +2495,155 @@ function DocumentForm({
         <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-semibold border" style={{ borderColor: "var(--ch-line)" }}>Cancel</button>
       </div>
     </div>
+  );
+}
+
+/* ================= Visa fields ================= */
+
+function fmtDay(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function VisaFields({
+  visaTypes,
+  country,
+  setCountry,
+  typeId,
+  setTypeId,
+  applicationDate,
+  setApplicationDate,
+  status,
+  setStatus,
+  issueDate,
+  expiryDate,
+  entryDate,
+}: {
+  visaTypes: VisaTypeRef[];
+  country: string;
+  setCountry: (v: string) => void;
+  typeId: string;
+  setTypeId: (v: string) => void;
+  applicationDate: string;
+  setApplicationDate: (v: string) => void;
+  status: string;
+  setStatus: (v: string) => void;
+  issueDate: string;
+  expiryDate: string;
+  entryDate: string;
+}) {
+  const typesForCountry = visaTypes.filter((t) => t.country === country);
+  const chosen = visaTypes.find((t) => t.id === typeId) ?? null;
+  const rule: VisaTypeRule | null = chosen
+    ? { entry_valid_days: chosen.entry_valid_days, stay_basis: chosen.stay_basis, stay_days: chosen.stay_days, entry_type: chosen.entry_type }
+    : null;
+  const { entryDeadline, stayUntil } = computeVisaDates(rule, { issueDate: issueDate || null, expiryDate: expiryDate || null, entryDate: entryDate || null });
+  const today = todayISO();
+  const toDeadline = entryDeadline && !entryDate ? daysBetween(today, entryDeadline) : null;
+
+  return (
+    <div className="rounded-lg p-3 mb-3" style={{ background: "var(--ch-navy-soft)" }}>
+      <div className="text-xs font-semibold mb-2" style={{ color: "var(--ch-navy)" }}>Visa details</div>
+      <div className="grid gap-3 sm:grid-cols-4 mb-3">
+        <label className={lbl} style={lblStyle}>
+          Country
+          <select
+            className={`${inputCls} w-full mt-1`}
+            style={inputStyle}
+            value={country}
+            onChange={(e) => {
+              setCountry(e.target.value);
+              // A visa type belongs to one country — drop it if it no longer fits.
+              if (chosen && chosen.country !== e.target.value) setTypeId("");
+            }}
+          >
+            <option value="">Select…</option>
+            {country && !COUNTRIES.includes(country as never) && <option value={country}>{country}</option>}
+            {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Visa type
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!country}>
+            <option value="">{country ? "Select…" : "Choose a country first"}</option>
+            {typesForCountry.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Application date
+          <input type="date" className={`${inputCls} w-full mt-1`} style={inputStyle} value={applicationDate} onChange={(e) => setApplicationDate(e.target.value)} />
+        </label>
+        <label className={lbl} style={lblStyle}>
+          Visa status
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">Not set</option>
+            {VISA_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </label>
+      </div>
+      {country && typesForCountry.length === 0 && (
+        <div className="text-xs mb-2" style={{ color: "var(--ch-sub)" }}>
+          No visa types are set up for {country} yet. Add them under Crew Setup → Visa Types.
+        </div>
+      )}
+      {chosen && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Entry deadline (calculated)
+            <div className="text-sm font-semibold mt-1" style={{ color: toDeadline != null && toDeadline < 0 ? "var(--ch-fail)" : "var(--ch-ink)" }}>
+              {chosen.entry_valid_days == null
+                ? "No entry deadline for this visa type"
+                : !issueDate
+                ? "Enter the issue date to calculate"
+                : `${fmtDay(entryDeadline)}${toDeadline != null ? (toDeadline < 0 ? ` — passed ${-toDeadline} days ago` : ` — in ${toDeadline} days`) : ""}`}
+            </div>
+          </div>
+          <div className="text-xs" style={{ color: "var(--ch-sub)" }}>
+            Stay until (calculated)
+            <div className="text-sm font-semibold mt-1" style={{ color: "var(--ch-ink)" }}>
+              {chosen.stay_basis === "until_expiry"
+                ? expiryDate ? `${fmtDay(stayUntil)} (visa expiry)` : "Enter the expiry date"
+                : !entryDate ? `${chosen.stay_days} days after entry — enter the entry date` : fmtDay(stayUntil)}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One line under a visa's name in the documents list: country · type, the
+// visa status, and — while the person has not entered yet — how long is left
+// to use the visa.
+function VisaRowInfo({ doc, visaTypes }: { doc: CrewDocument; visaTypes: VisaTypeRef[] }) {
+  if (!doc.visa_type_id && !doc.visa_status && !doc.visa_country) return null;
+  const t = visaTypes.find((v) => v.id === doc.visa_type_id) ?? null;
+  const label = [doc.visa_country ?? t?.country, t?.name].filter(Boolean).join(" · ");
+  const rule: VisaTypeRule | null = t
+    ? { entry_valid_days: t.entry_valid_days, stay_basis: t.stay_basis, stay_days: t.stay_days, entry_type: t.entry_type }
+    : null;
+  const { entryDeadline } = computeVisaDates(rule, { issueDate: doc.issue_date, expiryDate: doc.expiry_date, entryDate: doc.entry_date });
+  const left = entryDeadline && !doc.entry_date && doc.visa_status !== "cancelled" ? daysBetween(todayISO(), entryDeadline) : null;
+  return (
+    <>
+      {label && <span className="text-xs ml-2" style={{ color: "var(--ch-sub)" }}>· {label}</span>}
+      {doc.visa_status && (
+        <span className="text-xs ml-2 rounded-full px-2 py-0.5 font-semibold" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+          {VISA_STATUS_LABEL[doc.visa_status] ?? doc.visa_status}
+        </span>
+      )}
+      {left != null && (
+        <span className="text-xs ml-2 font-semibold" style={{ color: left < 0 ? "var(--ch-fail)" : left <= 14 ? "#c2410c" : "var(--ch-sub)" }}>
+          {left < 0 ? `entry deadline passed ${-left}d ago` : `enter within ${left}d`}
+        </span>
+      )}
+    </>
   );
 }
 
