@@ -230,7 +230,7 @@ export function arrivalWarnings(input: ArrivalCheckInput): string[] {
   if (v.status === "cancelled") out.push("The visa on file is marked cancelled.");
 
   if (input.positionVisaCode && v.typeMobilizationCode && input.positionVisaCode !== v.typeMobilizationCode) {
-    out.push(`This position expects a ${input.positionVisaCode} visa, but the visa on the profile is a ${v.typeName ?? v.typeMobilizationCode} visa.`);
+    out.push(`This position expects a ${input.positionVisaCode} visa, but the visa on the profile is "${v.typeName ?? v.typeMobilizationCode}".`);
   }
 
   const arrival = input.plannedArrival;
@@ -247,4 +247,43 @@ export function arrivalWarnings(input: ArrivalCheckInput): string[] {
     out.push(`Planned arrival (${niceDate(arrival)}) is before the visa issue date (${niceDate(v.issueDate)}).`);
   }
   return out;
+}
+
+/* ---------------- Next reminder ---------------- */
+
+export type NextReminder = {
+  /** The day the reminder is (or will be) raised. */
+  date: string;
+  kind: "expiry" | "entry";
+  /** How many days before the expiry / entry deadline it falls. */
+  daysBefore: number;
+  /** The date it counts down to. */
+  target: string;
+};
+
+/**
+ * The next reminder still to come: for each configured step (for example 90,
+ * 60, 30 days before expiry) the day it falls on, keeping those not already
+ * past. Entry-deadline steps only count while the person has not entered.
+ */
+export function nextReminder(
+  input: { expiryDate: string | null; entryDeadline: string | null; entered: boolean; cancelled: boolean; expiryReminderDays: number[]; entryReminderDays: number[] },
+  today: string
+): NextReminder | null {
+  if (input.cancelled) return null;
+  const found: NextReminder[] = [];
+  if (input.expiryDate) {
+    for (const d of input.expiryReminderDays) {
+      const date = addDaysISO(input.expiryDate, -d);
+      if (date && date >= today) found.push({ date, kind: "expiry", daysBefore: d, target: input.expiryDate });
+    }
+  }
+  if (!input.entered && input.entryDeadline) {
+    for (const d of input.entryReminderDays) {
+      const date = addDaysISO(input.entryDeadline, -d);
+      if (date && date >= today) found.push({ date, kind: "entry", daysBefore: d, target: input.entryDeadline });
+    }
+  }
+  found.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return found[0] ?? null;
 }

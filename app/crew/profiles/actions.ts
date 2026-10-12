@@ -502,12 +502,139 @@ function visaFields(formData: FormData) {
   };
 }
 
+/* ---------------- Visa change log (migration 0045) ---------------- */
+
+type VisaEventInput = { type: string; summary: string; oldValue?: string | null; newValue?: string | null };
+
+function niceDay(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(String(iso).slice(0, 10) + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+// Best effort: the log must never make a save fail, so every error is
+// swallowed. The visa itself has already been saved by the time this runs.
+async function writeVisaEvents(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ctx: { orgId: string; crewId: string; documentId: string; userId: string },
+  events: VisaEventInput[]
+) {
+  if (events.length === 0) return;
+  try {
+    await supabase.from("crew_visa_events").insert(
+      events.map((e) => ({
+        org_id: ctx.orgId,
+        crew_id: ctx.crewId,
+        crew_document_id: ctx.documentId,
+        event_type: e.type,
+        summary: e.summary,
+        old_value: e.oldValue ?? null,
+        new_value: e.newValue ?? null,
+        created_by: ctx.userId,
+      }))
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+async function isVisaDocumentType(supabase: Awaited<ReturnType<typeof createClient>>, documentTypeId: string): Promise<boolean> {
+  try {
+    const { data } = await supabase.from("document_types").select("category").eq("id", documentTypeId).maybeSingle();
+    return data?.category === "visa";
+  } catch {
+    return false;
+  }
+}
+
+async function visaTypeLabels(supabase: Awaited<ReturnType<typeof createClient>>, ids: (string | null)[]): Promise<Record<string, string>> {
+  const real = ids.filter((v): v is string => !!v);
+  if (real.length === 0) return {};
+  try {
+    const { data } = await supabase.from("visa_types").select("id, country, name").in("id", real);
+    const out: Record<string, string> = {};
+    for (const t of data ?? []) out[t.id as string] = `${t.country} · ${t.name}`;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+type VisaSnapshot = {
+  document_number: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  entry_date: string | null;
+  extension_date: string | null;
+  visa_country: string | null;
+  visa_type_id: string | null;
+  visa_application_date: string | null;
+  visa_status: string | null;
+};
+
+const VISA_STATUS_TEXT: Record<string, string> = {
+  applied: "Applied",
+  approved: "Approved",
+  awaiting_entry: "Awaiting entry",
+  entered: "Entered",
+  cancelled: "Cancelled",
+};
+
+function diffVisa(before: VisaSnapshot, after: VisaSnapshot, typeLabel: Record<string, string>): VisaEventInput[] {
+  const out: VisaEventInput[] = [];
+  const statusName = (v: string | null) => (v ? VISA_STATUS_TEXT[v] ?? v : "none");
+  if ((before.visa_status ?? null) !== (after.visa_status ?? null)) {
+    out.push({
+      type: "status",
+      summary: `Status changed from ${statusName(before.visa_status)} to ${statusName(after.visa_status)}`,
+      oldValue: before.visa_status,
+      newValue: after.visa_status,
+    });
+  }
+  const bt = before.visa_type_id ? typeLabel[before.visa_type_id] ?? "unknown" : null;
+  const at = after.visa_type_id ? typeLabel[after.visa_type_id] ?? "unknown" : null;
+  if ((before.visa_type_id ?? null) !== (after.visa_type_id ?? null) || (before.visa_country ?? null) !== (after.visa_country ?? null)) {
+    const from = bt ?? before.visa_country ?? "not set";
+    const to = at ?? after.visa_country ?? "not set";
+    if (from !== to) out.push({ type: "type", summary: `Visa type changed from ${from} to ${to}`, oldValue: from, newValue: to });
+  }
+  const dateChange = (key: keyof VisaSnapshot, label: string, type: string, recordedWord?: string) => {
+    const o = before[key] ?? null;
+    const n = after[key] ?? null;
+    if (o === n) return;
+    let summary: string;
+    if (!o && n && recordedWord) summary = `${recordedWord} — ${niceDay(n)}`;
+    else if (o && !n) summary = `${label} cleared (was ${niceDay(o)})`;
+    else if (!o && n) summary = `${label} set to ${niceDay(n)}`;
+    else summary = `${label} changed from ${niceDay(o)} to ${niceDay(n)}`;
+    out.push({ type, summary, oldValue: o, newValue: n });
+  };
+  dateChange("visa_application_date", "Application date", "application_date");
+  dateChange("issue_date", "Issue date", "issue_date");
+  dateChange("expiry_date", "Expiry date", "expiry_date");
+  dateChange("entry_date", "Entry date", "entry_date", "Entry date recorded");
+  dateChange("extension_date", "Extension date", "extension_date");
+  if ((before.document_number ?? null) !== (after.document_number ?? null)) {
+    out.push({
+      type: "number",
+      summary: `Visa number changed from ${before.document_number ?? "—"} to ${after.document_number ?? "—"}`,
+      oldValue: before.document_number,
+      newValue: after.document_number,
+    });
+  }
+  return out;
+}
+
+const VISA_SNAPSHOT_COLUMNS =
+  "document_type_id, document_number, issue_date, expiry_date, entry_date, extension_date, visa_country, visa_type_id, visa_application_date, visa_status";
+
 export async function createCrewDocument(crewId: string, formData: FormData) {
   const { supabase, access, userId } = await requireDocumentsManage();
   const documentTypeId = str(formData, "documentTypeId");
   if (!documentTypeId) return { error: "Select a document type." };
 
-  const { error } = await supabase.from("crew_documents").insert({
+  const { data: created, error } = await supabase.from("crew_documents").insert({
     org_id: access.orgId,
     crew_id: crewId,
     document_type_id: documentTypeId,
@@ -524,17 +651,40 @@ export async function createCrewDocument(crewId: string, formData: FormData) {
     ...visaFields(formData),
     created_by: userId,
     updated_by: userId,
-  });
+  }).select("id").single();
   if (error) return { error: error.message };
+  if (created?.id && (await isVisaDocumentType(supabase, documentTypeId))) {
+    const vf = visaFields(formData);
+    const labels = await visaTypeLabels(supabase, [vf.visa_type_id]);
+    const bits = [
+      vf.visa_status ? `status ${VISA_STATUS_TEXT[vf.visa_status] ?? vf.visa_status}` : null,
+      vf.visa_application_date ? `application date ${niceDay(vf.visa_application_date)}` : null,
+      vf.visa_type_id && labels[vf.visa_type_id] ? labels[vf.visa_type_id] : vf.visa_country,
+    ].filter(Boolean);
+    await writeVisaEvents(
+      supabase,
+      { orgId: access.orgId as string, crewId, documentId: created.id as string, userId },
+      [{ type: "recorded", summary: `Visa recorded${bits.length ? " — " + bits.join(", ") : ""}`, newValue: vf.visa_status }]
+    );
+  }
   revalidateDetail(crewId);
   revalidateMatrix();
   return {};
 }
 
 export async function updateCrewDocument(id: string, crewId: string, formData: FormData) {
-  const { supabase, userId } = await requireDocumentsManage();
+  const { supabase, access, userId } = await requireDocumentsManage();
   const documentTypeId = str(formData, "documentTypeId");
   if (!documentTypeId) return { error: "Select a document type." };
+
+  // For the visa change log: what the row looked like before this save.
+  let visaBefore: (VisaSnapshot & { document_type_id: string }) | null = null;
+  try {
+    const { data } = await supabase.from("crew_documents").select(VISA_SNAPSHOT_COLUMNS).eq("id", id).maybeSingle();
+    visaBefore = (data as (VisaSnapshot & { document_type_id: string }) | null) ?? null;
+  } catch {
+    visaBefore = null;
+  }
 
   const { error } = await supabase
     .from("crew_documents")
@@ -555,6 +705,23 @@ export async function updateCrewDocument(id: string, crewId: string, formData: F
     })
     .eq("id", id);
   if (error) return { error: error.message };
+  if (visaBefore && ((await isVisaDocumentType(supabase, documentTypeId)) || (await isVisaDocumentType(supabase, visaBefore.document_type_id)))) {
+    const vf = visaFields(formData);
+    const after: VisaSnapshot = {
+      document_number: optStr(formData, "documentNumber"),
+      issue_date: optStr(formData, "issueDate"),
+      expiry_date: optStr(formData, "expiryDate"),
+      entry_date: optStr(formData, "entryDate"),
+      extension_date: optStr(formData, "extensionDate"),
+      ...vf,
+    };
+    const labels = await visaTypeLabels(supabase, [visaBefore.visa_type_id, after.visa_type_id]);
+    await writeVisaEvents(
+      supabase,
+      { orgId: access.orgId as string, crewId, documentId: id, userId },
+      diffVisa(visaBefore, after, labels)
+    );
+  }
   revalidateDetail(crewId);
   revalidateMatrix();
   return {};

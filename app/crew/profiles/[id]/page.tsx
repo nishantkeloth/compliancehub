@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import CrewEditor, { type EmergencyContactRow, type VisaTypeRef } from "./crew-editor";
+import { buildVisaCards, type CardType, type CardDoc, type CardVersion, type CardEvent, type PlannedArrival } from "@/lib/visa-card";
 
 const BASE_FIELDS =
   "id, org_id, crew_code, employee_code, full_name, photo_url, employment_status, nationality, date_of_birth, gender, phone, email, home_country, current_location, nearest_airport, primary_job_role_id, employment_type, joining_date, notice_period_days, availability_date, default_rotation_template_id, emergency_contact_name, emergency_contact_phone, notes, linked_profile_id, job_roles(name), rotation_templates(name)";
@@ -135,13 +136,78 @@ export default async function CrewProfileDetailPage({
     canViewDocuments
       ? supabase
           .from("visa_types")
-          .select("id, country, name, entry_valid_days, stay_basis, stay_days, entry_type")
+          .select("id, country, name, mobilization_code, entry_valid_days, stay_basis, stay_days, entry_type, expiry_reminder_days, entry_reminder_days")
           .eq("org_id", access.orgId)
           .eq("is_active", true)
           .order("country")
           .order("sort_order")
       : Promise.resolve({ data: [] }),
   ]);
+
+  // ---- Visas tab: build one card per visa document ----
+  const today = new Date().toISOString().slice(0, 10);
+  const visaDocTypeIds = new Set(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase rows, same pattern as the rest of this file
+    (documentTypesRes.data ?? []).filter((t: any) => t.category === "visa").map((t: any) => t.id as string)
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase rows
+  const visaDocs = (crewDocumentsRes.data ?? []).filter((d: any) => visaDocTypeIds.has(d.document_type_id)) as unknown as CardDoc[];
+  let visaCards: ReturnType<typeof buildVisaCards> = [];
+  if (canViewDocuments && visaDocs.length > 0) {
+    const visaDocIds = visaDocs.map((d) => d.id);
+    const [versionsRes, eventsRes, plannedRes] = await Promise.all([
+      supabase
+        .from("crew_document_versions")
+        .select("id, crew_document_id, version_number, document_number, issue_date, expiry_date, created_at, uploaded_by")
+        .in("crew_document_id", visaDocIds),
+      supabase
+        .from("crew_visa_events")
+        .select("crew_document_id, summary, created_by, created_at")
+        .eq("crew_id", id)
+        .in("crew_document_id", visaDocIds),
+      supabase
+        .from("mobilization_positions")
+        .select("planned_arrival_date, visa_type, mobilization_requests(mobilization_number)")
+        .eq("selected_crew_id", id)
+        .eq("final_status", "pending")
+        .gte("planned_arrival_date", today)
+        .order("planned_arrival_date", { ascending: true })
+        .limit(1),
+    ]);
+    const versions = (versionsRes.data ?? []) as unknown as CardVersion[];
+    const events = (eventsRes.data ?? []) as unknown as CardEvent[];
+    const personIds = Array.from(
+      new Set([...versions.map((v) => v.uploaded_by), ...events.map((e) => e.created_by)].filter((v): v is string => !!v))
+    );
+    const nameById: Record<string, string> = {};
+    if (personIds.length > 0) {
+      const { data: people } = await supabase.from("profiles").select("id, full_name").in("id", personIds);
+      for (const p of people ?? []) nameById[(p as { id: string }).id] = (p as { full_name: string }).full_name;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase row
+    const pr = (plannedRes.data ?? [])[0] as any;
+    let planned: PlannedArrival | null = null;
+    if (pr?.planned_arrival_date) {
+      const mr = Array.isArray(pr.mobilization_requests) ? pr.mobilization_requests[0] : pr.mobilization_requests;
+      planned = {
+        date: pr.planned_arrival_date as string,
+        positionVisaCode: (pr.visa_type as string | null) ?? null,
+        label: mr?.mobilization_number ? `From mobilization ${mr.mobilization_number}` : "From a mobilization",
+      };
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase rows
+    const docTypeName: Record<string, string> = Object.fromEntries((documentTypesRes.data ?? []).map((t: any) => [t.id, t.name]));
+    visaCards = buildVisaCards({
+      docs: visaDocs,
+      docTypeName,
+      types: (visaTypesRes.data ?? []) as unknown as CardType[],
+      versions,
+      events,
+      planned,
+      nameById,
+      today,
+    });
+  }
 
   const documentVersionCounts: Record<string, number> = {};
   for (const row of documentVersionCountsRes.data ?? []) {
@@ -226,6 +292,7 @@ export default async function CrewProfileDetailPage({
         reservations={reservations}
         emergencyContacts={(emergencyContactsRes.data ?? []) as EmergencyContactRow[]}
         visaTypes={(visaTypesRes.data ?? []) as VisaTypeRef[]}
+        visaCards={visaCards}
       />
     </>
   );

@@ -34,6 +34,8 @@ import {
   extractCrewDocumentVersionFields,
 } from "../upload-link-actions";
 import { DocumentReadModal } from "@/components/document-read-modal";
+import VisasTab from "./visas-tab";
+import type { VisaCard } from "@/lib/visa-card";
 import { computeVisaDates, VISA_STATUSES, VISA_STATUS_LABEL, daysBetween, type VisaTypeRule } from "@/lib/visa";
 import { computeDocumentStatus, DOCUMENT_STATUS_COLORS, DOCUMENT_STATUS_LABELS } from "@/lib/document-status";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
@@ -277,6 +279,7 @@ export default function CrewEditor({
   reservations,
   emergencyContacts,
   visaTypes,
+  visaCards,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -301,6 +304,7 @@ export default function CrewEditor({
   reservations: Reservation[];
   emergencyContacts: EmergencyContactRow[];
   visaTypes: VisaTypeRef[];
+  visaCards: VisaCard[];
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -317,6 +321,9 @@ export default function CrewEditor({
     { key: "skills", label: "Skills & Roles" },
     { key: "assignment", label: "Assignment" },
     ...(canViewDocuments ? [{ key: "documents", label: "Documents" }] : []),
+    ...(canViewDocuments
+      ? [{ key: "visas", label: `Visas${visaCards.filter((c) => c.active).length ? ` (${visaCards.filter((c) => c.active).length})` : ""}` }]
+      : []),
     ...(canViewCost || canViewSensitive ? [{ key: "restricted", label: "Cost & Sensitive" }] : []),
     ...(canManage ? [{ key: "account", label: "Account" }] : []),
   ];
@@ -385,6 +392,20 @@ export default function CrewEditor({
           crewList={crewList}
           customFieldDefinitions={customFieldDefinitions}
           documentVersionCounts={documentVersionCounts}
+          visaTypes={visaTypes}
+          canManage={canManageDocuments}
+          onChanged={refresh}
+        />
+      )}
+
+      {activeTab === "visas" && canViewDocuments && (
+        <VisasSection
+          crewId={crew.id}
+          visaCards={visaCards}
+          documentTypes={documentTypes}
+          crewDocuments={crewDocuments}
+          crewList={crewList}
+          customFieldDefinitions={customFieldDefinitions}
           visaTypes={visaTypes}
           canManage={canManageDocuments}
           onChanged={refresh}
@@ -1584,6 +1605,128 @@ function DocumentsSection({
       {linkPanelOpen && (
         <UploadLinkPanel crewId={crewId} documentTypes={documentTypes} onClose={() => setLinkPanelOpen(false)} />
       )}
+    </div>
+  );
+}
+
+/* ================= Visas tab ================= */
+
+// Wires the Visas tab to the same forms and actions as the Documents tab
+// (DocumentForm / UploadPanel -> createCrewDocument / updateCrewDocument),
+// restricted to document types of category "visa".
+function VisasSection({
+  crewId,
+  visaCards,
+  documentTypes,
+  crewDocuments,
+  crewList,
+  customFieldDefinitions,
+  visaTypes,
+  canManage,
+  onChanged,
+}: {
+  crewId: string;
+  visaCards: VisaCard[];
+  documentTypes: DocumentType[];
+  crewDocuments: CrewDocument[];
+  crewList: Ref[];
+  customFieldDefinitions: CustomFieldDefinition[];
+  visaTypes: VisaTypeRef[];
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const visaDocTypes = documentTypes.filter((t) => t.category === "visa");
+  const docById = (id: string) => crewDocuments.find((d) => d.id === id);
+
+  const save = (documentId: string | null, fd: FormData) => {
+    setError(null);
+    startTransition(async () => {
+      const res = documentId ? await updateCrewDocument(documentId, crewId, fd) : await createCrewDocument(crewId, fd);
+      if (res?.error) {
+        setError(res.error);
+        return;
+      }
+      setAdding(false);
+      setEditingId(null);
+      onChanged();
+    });
+  };
+
+  return (
+    <div>
+      <BgErrorBanner error={error} />
+      {pending && <div className="text-xs italic mb-2" style={{ color: "var(--ch-sub)" }}>Saving…</div>}
+      <VisasTab
+        cards={visaCards}
+        canManage={canManage}
+        hasVisaTypes={visaDocTypes.length > 0}
+        adding={adding}
+        editingId={editingId}
+        uploadingId={uploadingId}
+        onAdd={() => {
+          setEditingId(null);
+          setUploadingId(null);
+          setAdding(true);
+        }}
+        onEdit={(id) => {
+          setAdding(false);
+          setUploadingId(null);
+          setEditingId(id);
+        }}
+        onUpload={(id) => {
+          setAdding(false);
+          setEditingId(null);
+          setUploadingId(id);
+        }}
+        addForm={() =>
+          visaDocTypes.length === 0 ? null : (
+            <DocumentForm
+              crewId={crewId}
+              visaTypes={visaTypes}
+              documentTypes={visaDocTypes}
+              crewList={crewList}
+              customFieldDefinitions={customFieldDefinitions}
+              onSubmit={(fd) => save(null, fd)}
+              onCancel={() => setAdding(false)}
+            />
+          )
+        }
+        editForm={(id) => {
+          const d = docById(id);
+          if (!d) return null;
+          return (
+            <DocumentForm
+              crewId={crewId}
+              crewDocument={d}
+              visaTypes={visaTypes}
+              documentTypes={visaDocTypes}
+              crewList={crewList}
+              customFieldDefinitions={customFieldDefinitions}
+              onSubmit={(fd) => save(id, fd)}
+              onCancel={() => setEditingId(null)}
+            />
+          );
+        }}
+        uploadPanel={(id) => {
+          const d = docById(id);
+          if (!d) return null;
+          return (
+            <UploadPanel
+              crewId={crewId}
+              crewDocument={d}
+              typeName={visaDocTypes.find((t) => t.id === d.document_type_id)?.name ?? "visa"}
+              onDone={onChanged}
+              onCancel={() => setUploadingId(null)}
+            />
+          );
+        }}
+      />
     </div>
   );
 }
