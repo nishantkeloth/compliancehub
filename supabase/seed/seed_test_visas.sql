@@ -30,39 +30,35 @@ select
   (select count(*) from companies where name ilike '%AHM%') as matching_companies,
   (select count(*) from crew_profiles where org_id = (select id from companies where name ilike '%AHM%' limit 1)) as crew_in_company;
 
-begin;
-
-create temp table _seed_ctx on commit drop as
-select
-  (select id from companies where name ilike '%AHM%' limit 1) as org_id,
-  (select id from profiles
-    where org_id = (select id from companies where name ilike '%AHM%' limit 1) and status = 'active'
-    order by full_name limit 1) as user_id,
-  null::uuid as visa_doc_type_id;
+-- Everything below is ONE statement, so it works in the Supabase SQL Editor
+-- (which can run separate statements on separate connections).
+do $seed$
+declare
+  v_org  uuid := (select id from companies where name ilike '%AHM%' limit 1);
+  v_user uuid := (select id from profiles
+                  where org_id = (select id from companies where name ilike '%AHM%' limit 1) and status = 'active'
+                  order by full_name limit 1);
+  v_doc  uuid;
+begin
 
 -- 1. Remove test visas from an earlier run.
 delete from crew_documents
-where org_id = (select org_id from _seed_ctx) and notes like 'TEST DATA - visa seed%';
+where org_id = v_org and notes like 'TEST DATA - visa seed%';
 
 -- 2. Make sure there is a document type in the Visa category.
-do $$
-declare v_org uuid := (select org_id from _seed_ctx);
-begin
   if not exists (select 1 from document_types where org_id = v_org and category = 'visa' and is_active) then
     if exists (select 1 from document_types where org_id = v_org and is_active and name ilike '%visa%') then
       update document_types set category = 'visa'
       where id = (select id from document_types where org_id = v_org and is_active and name ilike '%visa%' order by name limit 1);
     else
       insert into document_types (org_id, name, category, tracks_number, warning_threshold_days, created_by)
-      values (v_org, 'Visa', 'visa', true, 30, (select user_id from _seed_ctx));
+      values (v_org, 'Visa', 'visa', true, 30, v_user);
     end if;
   end if;
-end $$;
 
-update _seed_ctx set visa_doc_type_id =
-  (select id from document_types
-   where org_id = (select org_id from _seed_ctx) and category = 'visa' and is_active
-   order by name limit 1);
+v_doc := (select id from document_types
+          where org_id = v_org and category = 'visa' and is_active
+          order by name limit 1);
 
 -- 3. Make sure the six visa types used below exist (existing ones are left
 --    exactly as they are - the dates below follow whatever rules they hold).
@@ -70,7 +66,7 @@ insert into visa_types (org_id, country, name, mobilization_code, entry_valid_da
                         expiry_reminder_days, entry_reminder_days, notes, sort_order)
 select c.org_id, v.country, v.name, v.code, v.entry_valid_days, v.stay_basis, v.stay_days, v.entry_type,
        v.expiry_reminder_days, v.entry_reminder_days, v.notes, v.sort_order
-from _seed_ctx c
+from (select v_org as org_id) c
 cross join (values
   ('United Arab Emirates', 'Mission visa',  'mission', 60,        'days_from_entry', 60,        'single',   '{30,14,7}'::int[],       '{14,7,3}'::int[], 'Test values - confirm with your PRO.', 10),
   ('United Arab Emirates', 'Resident visa', 'resident', null::int, 'until_expiry',   null::int, 'multiple', '{90,60,30,14,7}'::int[], '{}'::int[],       'Test values - confirm with your PRO.', 20),
@@ -82,12 +78,13 @@ cross join (values
 on conflict (org_id, country, name) do nothing;
 
 -- 4. The visas. One current visa per person, plus older ones for some.
-create temp table _seed_visas on commit drop as
+drop table if exists _seed_visas;
+create temp table _seed_visas as
 with plan as (
   select cp.id as crew_id,
          row_number() over (order by cp.crew_code, cp.id)::int as rn
   from crew_profiles cp
-  where cp.org_id = (select org_id from _seed_ctx)
+  where cp.org_id = v_org
 ),
 base as (
   select p.crew_id, p.rn,
@@ -111,7 +108,7 @@ joined as (
          coalesce(vt.stay_days, 60) as sd
   from typed t
   join visa_types vt
-    on vt.org_id = (select org_id from _seed_ctx) and vt.country = t.country and vt.name = t.type_name
+    on vt.org_id = v_org and vt.country = t.country and vt.name = t.type_name
 ),
 dated as (
   select j.*,
@@ -179,7 +176,7 @@ select b.crew_id, b.rn, b.cc, b.country, b.sponsor, vt.id, 'entered',
        'TEST DATA - visa seed (older visa)'
 from base b
 join visa_types vt
-  on vt.org_id = (select org_id from _seed_ctx) and vt.country = b.country and vt.name = b.win_name
+  on vt.org_id = v_org and vt.country = b.country and vt.name = b.win_name
 where b.rn % 3 = 0
 
 union all
@@ -193,21 +190,18 @@ select b.crew_id, b.rn, b.cc, b.country, b.sponsor, vt.id, 'entered',
        'TEST DATA - visa seed (older visa)'
 from base b
 join visa_types vt
-  on vt.org_id = (select org_id from _seed_ctx) and vt.country = b.country and vt.name = b.long_name
+  on vt.org_id = v_org and vt.country = b.country and vt.name = b.long_name
 where b.rn % 7 = 0;
 
 insert into crew_documents (
   org_id, crew_id, document_type_id, document_number, sponsor, issue_date, expiry_date, entry_date,
   notes, custom_fields, visa_country, visa_type_id, visa_application_date, visa_status, created_by, updated_by
 )
-select c.org_id, s.crew_id, c.visa_doc_type_id, s.document_number, s.sponsor, s.issue_date, s.expiry_date, s.entry_date,
-       s.notes, '{}'::jsonb, s.country, s.visa_type_id, s.application_date, s.visa_status, c.user_id, c.user_id
-from _seed_visas s
-cross join _seed_ctx c;
+select v_org, s.crew_id, v_doc, s.document_number, s.sponsor, s.issue_date, s.expiry_date, s.entry_date,
+       s.notes, '{}'::jsonb, s.country, s.visa_type_id, s.application_date, s.visa_status, v_user, v_user
+from _seed_visas s;
 
 -- 5. A short change log for each test visa (only when the 0045 log table exists).
-do $$
-begin
   if to_regclass('public.crew_visa_events') is not null then
     insert into crew_visa_events (org_id, crew_id, crew_document_id, event_type, summary, new_value, created_by, created_at)
     select d.org_id, d.crew_id, d.id, 'recorded',
@@ -216,18 +210,19 @@ begin
            d.visa_status, d.created_by,
            coalesce(d.visa_application_date, d.issue_date, current_date)::timestamp + time '09:00'
     from crew_documents d
-    where d.org_id = (select org_id from _seed_ctx) and d.notes like 'TEST DATA - visa seed%';
+    where d.org_id = v_org and d.notes like 'TEST DATA - visa seed%';
 
     insert into crew_visa_events (org_id, crew_id, crew_document_id, event_type, summary, new_value, created_by, created_at)
     select d.org_id, d.crew_id, d.id, 'entry_date',
            'Entry date recorded - ' || to_char(d.entry_date, 'DD Mon YYYY'),
            d.entry_date::text, d.created_by, d.entry_date::timestamp + time '14:00'
     from crew_documents d
-    where d.org_id = (select org_id from _seed_ctx) and d.notes like 'TEST DATA - visa seed%' and d.entry_date is not null;
+    where d.org_id = v_org and d.notes like 'TEST DATA - visa seed%' and d.entry_date is not null;
   end if;
-end $$;
 
-commit;
+drop table if exists _seed_visas;
+end
+$seed$;
 
 -- Check: how the test visas came out, by country and by what the Visas tab will show.
 select d.visa_country,
