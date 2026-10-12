@@ -4,6 +4,8 @@ import { sendEmail, companyFromAddress } from "@/lib/email";
 import { computeDocumentStatus } from "@/lib/document-status";
 import { severityFromStatus, SEVERITY_RANK } from "@/lib/document-notifications";
 import { loadAiContext, runAgent } from "@/lib/ai/router";
+import { addBellNotifications, pruneOldNotifications, usersWithPermission, type BellInput } from "@/lib/notify";
+import { runVisaReminders, type VisaReminderResult } from "@/lib/visa-reminders";
 
 // Vercel's default serverless timeout is short; this run now also makes an
 // AI call per org that needs a digest, so give it real headroom. (Hobby
@@ -224,6 +226,21 @@ export async function GET(req: NextRequest) {
       : a.reminder_due_soon_sent_for === a.due_date;
 
     if (!alreadySentIndividual && a.owner_id) {
+      // Bell item for the owner (once per due date), whether or not the email goes through.
+      const bellRes = await addBellNotifications(admin, [
+        {
+          orgId: a.org_id,
+          userId: a.owner_id,
+          kind: "action",
+          severity: isOverdue ? "critical" : "warning",
+          title: isOverdue ? `Corrective action overdue: ${a.title}` : `Corrective action due soon: ${a.title}`,
+          body: `${site?.name ?? "Site"} · due ${a.due_date}`,
+          link: "/actions",
+          dedupeKey: `action:${a.id}:${a.due_date}:${isOverdue ? "overdue" : "soon"}`,
+        },
+      ]);
+      if (bellRes.error) errors.push(`action bell ${a.id}: ${bellRes.error}`);
+
       const { data: userResult } = await admin.auth.admin.getUserById(a.owner_id);
       const email = userResult?.user?.email;
       if (email) {
@@ -283,6 +300,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /* ---------------- Visa reminders: bell items + one daily email ---------------- */
+
+  let visa: VisaReminderResult | null = null;
+  try {
+    visa = await runVisaReminders(admin, today);
+    errors.push(...visa.errors);
+  } catch (e) {
+    errors.push(`visa reminders: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   /* ---------------- Document expiry: sweep + digest (Phase 14) ---------------- */
 
   let docNotifCreated = 0;
@@ -333,6 +360,8 @@ export async function GET(req: NextRequest) {
 
   const seenDocIds = new Set<string>();
   const digestItemsByOrg = new Map<string, DigestItem[]>();
+  // Documents that became critical or expired in this run, per company, for one bell item.
+  const docBellByOrg = new Map<string, { critical: number; expired: number }>();
 
   for (const d of crewDocs ?? []) {
     seenDocIds.add(d.id);
@@ -350,6 +379,13 @@ export async function GET(req: NextRequest) {
         docNotifResolved++;
       }
       continue;
+    }
+
+    if ((severity === "critical" || severity === "expired") && (!existing || existing.severity !== severity)) {
+      const tally = docBellByOrg.get(d.org_id) ?? { critical: 0, expired: 0 };
+      if (severity === "expired") tally.expired++;
+      else tally.critical++;
+      docBellByOrg.set(d.org_id, tally);
     }
 
     const settings = notifSettingsByOrg.get(d.org_id);
@@ -414,6 +450,29 @@ export async function GET(req: NextRequest) {
         .update({ status: "resolved", resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq("id", n.id);
       docNotifResolved++;
+    }
+  }
+
+  // One bell item per company per day for documents that just became critical or expired.
+  for (const [bellOrgId, tally] of docBellByOrg) {
+    try {
+      const userIds = await usersWithPermission(admin, bellOrgId, "crew.documents.manage");
+      const total = tally.critical + tally.expired;
+      const parts = [tally.expired ? `${tally.expired} expired` : "", tally.critical ? `${tally.critical} critical` : ""].filter(Boolean).join(", ");
+      const rows: BellInput[] = userIds.map((userId) => ({
+        orgId: bellOrgId,
+        userId,
+        kind: "document",
+        severity: tally.expired ? "critical" : "warning",
+        title: `${total} crew document${total === 1 ? "" : "s"} newly critical or expired`,
+        body: `${parts}. Open the Operations Dashboard to review.`,
+        link: "/ops-dashboard",
+        dedupeKey: `docs:${today}`,
+      }));
+      const { error } = await addBellNotifications(admin, rows);
+      if (error) errors.push(`document bell ${bellOrgId}: ${error}`);
+    } catch (e) {
+      errors.push(`document bell ${bellOrgId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -485,7 +544,15 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Bell items older than 30 days are removed.
+  try {
+    await pruneOldNotifications(admin);
+  } catch {
+    /* housekeeping only */
+  }
+
   return NextResponse.json({
+    visa,
     schedulesChecked: (schedules ?? []).length,
     scheduleSent,
     actionsChecked: (actions ?? []).length,

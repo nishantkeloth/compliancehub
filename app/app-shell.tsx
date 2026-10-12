@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import SignOutButton from "./signout-button";
 import { can, getEffectiveAccess } from "@/lib/rbac";
 import ShellChrome, { type NavSection, type NavItem } from "./shell-chrome";
+import NotificationBell from "@/components/notification-bell";
 
 // Server half of the app chrome: auth gate, RBAC-driven nav sections,
 // company name. Cheap to call more than once per request now that
@@ -160,6 +161,14 @@ export default async function AppShell({
     { title: "Administration", items: adminItems },
   ].filter((section) => section.items.length > 0);
 
+  // Unread count for the bell. If the notifications table is not there yet the count is
+  // simply 0, so a missing migration never breaks a page.
+  const { count: unreadCount } = await supabase
+    .from("app_notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .is("read_at", null);
+
   const initials =
     (access.fullName || user.email || "?").trim()[0]?.toUpperCase() || "?";
 
@@ -174,6 +183,7 @@ export default async function AppShell({
       active={active}
       title={title}
       headerRight={headerRight}
+      bell={<NotificationBell initialUnread={unreadCount ?? 0} />}
       signOutButton={<SignOutButton />}
     >
       {children}

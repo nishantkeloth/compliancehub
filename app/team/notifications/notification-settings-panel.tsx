@@ -24,6 +24,8 @@ type Settings = {
   escalateAfterDays: number;
   digestEnabled: boolean;
   lastDigestSentFor: string | null;
+  visaRemindersEnabled: boolean;
+  lastVisaDigestSentFor: string | null;
 };
 
 export default function NotificationSettingsPanel({
@@ -125,6 +127,18 @@ export default function NotificationSettingsPanel({
                 : "No digest has been sent yet."}
             </p>
           </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="visaRemindersEnabled" defaultChecked={settings.visaRemindersEnabled} />
+            Send the daily visa reminder email
+          </label>
+          <p className={hint} style={hintStyle}>
+            Lists visas that have expired, missed their entry deadline or reached a reminder step set on the visa type
+            (Crew Setup → Visa Types). Goes to the same addresses.{" "}
+            {settings.lastVisaDigestSentFor ? `Last sent for ${settings.lastVisaDigestSentFor}.` : "None sent yet."}
+          </p>
         </div>
 
         <button

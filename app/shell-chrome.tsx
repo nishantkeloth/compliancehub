@@ -106,6 +106,7 @@ export default function ShellChrome({
   active,
   title,
   headerRight,
+  bell,
   signOutButton,
   children,
 }: {
@@ -124,6 +125,8 @@ export default function ShellChrome({
   active?: string;
   title?: string;
   headerRight?: React.ReactNode;
+  // The notification bell (server-rendered with the unread count), shown at the right of the header.
+  bell?: React.ReactNode;
   signOutButton: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -232,7 +235,10 @@ export default function ShellChrome({
           <h1 className="text-[22px] font-extrabold m-0" style={{ color: "var(--ch-navy)" }}>
             {resolvedTitle}
           </h1>
-          {headerRight}
+          <div className="flex items-center gap-3">
+            {headerRight}
+            {bell}
+          </div>
         </div>
         <div className="px-8 py-6 pb-16">{children}</div>
       </main>

@@ -17,7 +17,7 @@ export default async function NotificationSettingsPage() {
   const [settingsRes, modulesRes] = await Promise.all([
     supabase
       .from("notification_settings")
-      .select("recipient_emails, escalate_after_days, digest_enabled, last_digest_sent_for")
+      .select("recipient_emails, escalate_after_days, digest_enabled, last_digest_sent_for, visa_reminders_enabled, last_visa_digest_sent_for")
       .eq("org_id", orgId)
       .maybeSingle(),
     supabase.from("dashboard_module_settings").select("module_key, enabled").eq("org_id", orgId),
@@ -46,6 +46,8 @@ export default async function NotificationSettingsPage() {
           escalateAfterDays: settingsRes.data?.escalate_after_days ?? 3,
           digestEnabled: settingsRes.data?.digest_enabled ?? true,
           lastDigestSentFor: settingsRes.data?.last_digest_sent_for ?? null,
+          visaRemindersEnabled: settingsRes.data?.visa_reminders_enabled ?? true,
+          lastVisaDigestSentFor: settingsRes.data?.last_visa_digest_sent_for ?? null,
         }}
         moduleEnabled={moduleEnabled}
       />

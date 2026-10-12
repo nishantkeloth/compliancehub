@@ -46,6 +46,7 @@ export async function saveNotificationSettings(formData: FormData) {
       recipient_emails: emails,
       escalate_after_days: escalateAfterDays,
       digest_enabled: formData.get("digestEnabled") === "on",
+      visa_reminders_enabled: formData.get("visaRemindersEnabled") === "on",
       updated_by: userId,
       updated_at: new Date().toISOString(),
     },

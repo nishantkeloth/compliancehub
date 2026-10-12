@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { alertFailedBulkJob } from "@/lib/bulk-intake-alerts";
 
 // Phase 16d — the backstop for the self-chaining worker at
 // app/api/bulk-intake/process-job/route.ts. The normal recovery path is
@@ -39,6 +40,7 @@ function kickWorker(jobId: string) {
   }).catch(() => {});
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- failed-job rows are passed to the alert helper as-is
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest) {
     if (age > GIVE_UP_STALE_MS) {
       await admin
         .from("bulk_intake_jobs")
-        .update({ status: "failed", error: "This job stopped making progress and wasn't picked back up — try re-uploading this folder." })
+        .update({ status: "failed", error: "This job stopped making progress and wasn't picked back up — try re-uploading this folder.", updated_at: new Date().toISOString() })
         .eq("id", job.id);
       gaveUp++;
     } else if (age > RECHECK_STALE_MS) {
@@ -66,5 +68,32 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, checked: (stuckJobs ?? []).length, rekicked, gaveUp });
+  // Tell people about failed uploads — once each. This covers the jobs just given up on
+  // above and any the worker itself marked as failed, within the last week.
+  const alertErrors: string[] = [];
+  let alerted = 0;
+  const weekAgo = new Date(now - 7 * 86_400_000).toISOString();
+  const { data: failedJobs, error: failedErr } = await admin
+    .from("bulk_intake_jobs")
+    .select("id, org_id, folder_name, total_files, processed_files, last_heartbeat_at, created_by, created_at, error")
+    .eq("status", "failed")
+    .is("failure_alerted_at", null)
+    .gte("created_at", weekAgo);
+  if (failedErr) alertErrors.push(`failed jobs query: ${failedErr.message}`);
+  for (const job of failedJobs ?? []) {
+    try {
+      const err = await alertFailedBulkJob(admin, job as any);
+      if (err) {
+        // Left unmarked so the next run tries again.
+        alertErrors.push(`job ${job.id}: ${err}`);
+        continue;
+      }
+      await admin.from("bulk_intake_jobs").update({ failure_alerted_at: new Date().toISOString() }).eq("id", job.id);
+      alerted++;
+    } catch (e) {
+      alertErrors.push(`job ${job.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  return NextResponse.json({ ok: true, checked: (stuckJobs ?? []).length, rekicked, gaveUp, alerted, alertErrors });
 }
