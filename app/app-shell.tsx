@@ -87,6 +87,7 @@ export default async function AppShell({
   }
   if (can(access, "crew.documents.view")) {
     crewItems.push({ href: "/crew/documents", key: "crew-documents", label: "Crew Documents" });
+    crewItems.push({ href: "/crew/visas", key: "crew-visas", label: "Visa Tracker" });
   }
   if (can(access, "crew.manage")) {
     crewItems.push({ href: "/crew/clients", key: "crew-clients", label: "Clients" });

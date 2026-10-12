@@ -32,6 +32,16 @@ export type ChecklistPosition = {
   visa_type: string | null;
   planned_arrival_date: string | null;
   required_onboard_date: string | null;
+  visa_info?: VisaInfo | null;
+};
+export type VisaInfo = {
+  crewId: string;
+  /** e.g. "United Arab Emirates · Mission visa — Approved"; null when no visa is recorded. */
+  summary: string | null;
+  label: string | null;
+  severity: "ok" | "warning" | "critical" | "expired" | "none" | null;
+  detail: string | null;
+  warnings: string[];
 };
 
 const cardCls = "bg-white border rounded-xl";
@@ -203,6 +213,7 @@ export default function ChecklistTab({
                 onSave={(d) => run(() => updatePlannedArrival(p.id, requestId, d))}
               />
             )}
+            {p.visa_info && <VisaLine info={p.visa_info} />}
             {p.mobilization_track_id && canManage && (
               <div className="flex items-center gap-2 flex-wrap mt-2">
                 {items.length === 0 && (
@@ -415,5 +426,43 @@ function Roadmap({ items, today }: { items: { id: string; title: string; status:
         );
       })}
     </span>
+  );
+}
+
+// The visa on the person's profile, set against this position's planned
+// arrival. Warnings are the things worth fixing before they travel.
+const VISA_PILL: Record<string, { bg: string; fg: string }> = {
+  ok: { bg: "#e6f6ec", fg: "#1a7d3d" },
+  warning: { bg: "#fff6e0", fg: "#9a6b00" },
+  critical: { bg: "#ffe4d6", fg: "#c2410c" },
+  expired: { bg: "#fbe0e0", fg: "#b3261e" },
+  none: { bg: "#eef1f6", fg: "#6b7686" },
+};
+
+function VisaLine({ info }: { info: VisaInfo }) {
+  const pill = info.severity ? VISA_PILL[info.severity] : null;
+  return (
+    <div className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: info.warnings.length ? "#fbd9a0" : "var(--ch-line)", background: info.warnings.length ? "#fffaf0" : undefined }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--ch-sub)" }}>Visa on profile</span>
+        {info.summary ? (
+          <>
+            <span style={{ color: "var(--ch-ink)" }}>{info.summary}</span>
+            {info.label && pill && (
+              <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ background: pill.bg, color: pill.fg }}>{info.label}</span>
+            )}
+          </>
+        ) : (
+          <span style={{ color: "var(--ch-sub)" }}>None recorded</span>
+        )}
+        <a href={`/crew/profiles/${info.crewId}?tab=documents`} className="ml-auto text-xs font-semibold ch-link-navy">
+          {info.summary ? "Open profile documents" : "Record the visa"}
+        </a>
+      </div>
+      {info.detail && <div className="text-xs mt-1" style={{ color: "var(--ch-sub)" }}>{info.detail}</div>}
+      {info.warnings.map((w) => (
+        <div key={w} className="text-xs mt-1 font-medium" style={{ color: "#9a6b00" }}>⚠ {w}</div>
+      ))}
+    </div>
   );
 }

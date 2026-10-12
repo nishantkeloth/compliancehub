@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import MobilizationDetail from "./mobilization-detail";
+import { assessVisa, arrivalWarnings, VISA_STATUS_LABEL, type VisaTypeRule } from "@/lib/visa";
 
 export default async function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -76,6 +77,40 @@ export default async function MobilizationDetailPage({ params }: { params: Promi
         .order("sequence", { ascending: true })
     : { data: [] };
 
+  // Visa check per person (only for viewers who may see crew documents):
+  // the visa on the person's profile, set against the position's planned
+  // arrival date and visa choice.
+  /* eslint-disable @typescript-eslint/no-explicit-any -- untyped supabase rows, same pattern as the rest of this page */
+  const visaByCrew = new Map<string, any>();
+  const visaTypeById = new Map<string, any>();
+  if (can(access, "crew.documents.view")) {
+    const selectedCrewIds = Array.from(new Set((positions ?? []).map((p) => p.selected_crew_id as string | null).filter((v): v is string => !!v)));
+    if (selectedCrewIds.length) {
+      const { data: visaDocTypes } = await supabase.from("document_types").select("id").eq("org_id", access.orgId).eq("category", "visa");
+      const visaDocTypeIds = (visaDocTypes ?? []).map((t) => t.id as string);
+      if (visaDocTypeIds.length) {
+        const [{ data: visaDocs }, { data: visaTypeRows }] = await Promise.all([
+          supabase
+            .from("crew_documents")
+            .select("crew_id, issue_date, expiry_date, entry_date, visa_country, visa_type_id, visa_status, created_at")
+            .eq("org_id", access.orgId)
+            .eq("is_active", true)
+            .in("crew_id", selectedCrewIds)
+            .in("document_type_id", visaDocTypeIds)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("visa_types")
+            .select("id, country, name, mobilization_code, entry_valid_days, stay_basis, stay_days, entry_type, expiry_reminder_days, entry_reminder_days")
+            .eq("org_id", access.orgId),
+        ]);
+        for (const t of visaTypeRows ?? []) visaTypeById.set((t as any).id, t);
+        // Newest visa document per person.
+        for (const d of visaDocs ?? []) if (!visaByCrew.has((d as any).crew_id)) visaByCrew.set((d as any).crew_id, d);
+      }
+    }
+  }
+  const todayIso = new Date().toISOString().slice(0, 10);
+
   const project = (Array.isArray(request.projects) ? request.projects[0] : request.projects) as { project_name?: string } | null;
   const site = (Array.isArray(request.offshore_sites) ? request.offshore_sites[0] : request.offshore_sites) as { name?: string } | null;
   const matrix = (Array.isArray(request.crew_matrices) ? request.crew_matrices[0] : request.crew_matrices) as { matrix_number?: string; title?: string } | null;
@@ -105,6 +140,55 @@ export default async function MobilizationDetailPage({ params }: { params: Promi
       mobilization_track_id: p.mobilization_track_id as string | null,
       visa_type: p.visa_type as string | null,
       planned_arrival_date: p.planned_arrival_date as string | null,
+      visa_info: (() => {
+        if (!can(access, "crew.documents.view") || !selected?.id) return null;
+        const d = visaByCrew.get(selected.id);
+        const t = d?.visa_type_id ? visaTypeById.get(d.visa_type_id) : null;
+        const rule: VisaTypeRule | null = t
+          ? { entry_valid_days: t.entry_valid_days ?? null, stay_basis: t.stay_basis, stay_days: t.stay_days ?? null, entry_type: t.entry_type ?? null }
+          : null;
+        const assessment = d
+          ? assessVisa(
+              {
+                status: d.visa_status ?? null,
+                issueDate: d.issue_date ?? null,
+                expiryDate: d.expiry_date ?? null,
+                entryDate: d.entry_date ?? null,
+                rule,
+                expiryReminderDays: (t?.expiry_reminder_days as number[] | undefined) ?? [],
+                entryReminderDays: (t?.entry_reminder_days as number[] | undefined) ?? [],
+              },
+              todayIso
+            )
+          : null;
+        const warnings = arrivalWarnings({
+          plannedArrival: p.planned_arrival_date as string | null,
+          positionVisaCode: p.visa_type as string | null,
+          visa: d
+            ? {
+                status: d.visa_status ?? null,
+                issueDate: d.issue_date ?? null,
+                expiryDate: d.expiry_date ?? null,
+                entryDate: d.entry_date ?? null,
+                typeName: t?.name ?? null,
+                typeMobilizationCode: t?.mobilization_code ?? null,
+                rule,
+              }
+            : null,
+        });
+        return {
+          crewId: selected.id,
+          summary: d
+            ? [[d.visa_country ?? t?.country, t?.name].filter(Boolean).join(" · ") || "Visa", d.visa_status ? VISA_STATUS_LABEL[d.visa_status] ?? d.visa_status : null]
+                .filter(Boolean)
+                .join(" — ")
+            : null,
+          label: assessment?.label ?? null,
+          severity: assessment?.severity ?? null,
+          detail: assessment?.detail ?? null,
+          warnings,
+        };
+      })(),
     };
   });
 

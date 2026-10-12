@@ -89,3 +89,162 @@ export function parseDayList(text: string): number[] {
 export function formatDayList(days: number[] | null | undefined): string {
   return (days ?? []).join(", ");
 }
+
+/* ---------------- Assessing a visa as of today ---------------- */
+
+export type VisaState =
+  | "cancelled"
+  | "expired"
+  | "entry_missed"
+  | "stay_ended"
+  | "enter_soon"
+  | "awaiting_entry"
+  | "pending"
+  | "expiring"
+  | "valid"
+  | "unknown";
+export type VisaSeverity = "ok" | "warning" | "critical" | "expired" | "none";
+
+export type VisaAssessInput = {
+  status: string | null;
+  issueDate: string | null;
+  expiryDate: string | null;
+  entryDate: string | null;
+  rule: VisaTypeRule | null;
+  expiryReminderDays: number[];
+  entryReminderDays: number[];
+};
+
+export type VisaAssessment = {
+  state: VisaState;
+  severity: VisaSeverity;
+  /** Short label for a status pill. */
+  label: string;
+  /** One sentence for people, e.g. "Enter within 12 days (by 04 Dec 2026)". */
+  detail: string;
+  entryDeadline: string | null;
+  stayUntil: string | null;
+  daysToEntryDeadline: number | null;
+  daysToExpiry: number | null;
+  daysToStayEnd: number | null;
+};
+
+const CRITICAL_DAYS = 14;
+
+function niceDate(iso: string | null): string {
+  if (!iso) return "—";
+  const t = parse(iso);
+  if (t == null) return iso;
+  return new Date(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+}
+function band(days: number, warnWithin: number): VisaSeverity {
+  if (days < 0) return "expired";
+  if (days <= CRITICAL_DAYS) return "critical";
+  if (days <= warnWithin) return "warning";
+  return "ok";
+}
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+export function assessVisa(input: VisaAssessInput, today: string): VisaAssessment {
+  const { entryDeadline, stayUntil } = computeVisaDates(input.rule, {
+    issueDate: input.issueDate,
+    expiryDate: input.expiryDate,
+    entryDate: input.entryDate,
+  });
+  const daysToEntryDeadline = entryDeadline ? daysBetween(today, entryDeadline) : null;
+  const daysToExpiry = input.expiryDate ? daysBetween(today, input.expiryDate) : null;
+  const daysToStayEnd = stayUntil ? daysBetween(today, stayUntil) : null;
+  const base = { entryDeadline, stayUntil, daysToEntryDeadline, daysToExpiry, daysToStayEnd };
+  const make = (state: VisaState, severity: VisaSeverity, label: string, detail: string): VisaAssessment => ({ state, severity, label, detail, ...base });
+
+  if (input.status === "cancelled") return make("cancelled", "none", "Cancelled", "This visa has been cancelled.");
+
+  const entered = !!input.entryDate || input.status === "entered";
+  const daysBased = input.rule?.stay_basis === "days_from_entry";
+  const warnWithin = Math.max(30, ...input.expiryReminderDays);
+
+  // Once inside the country on a visa whose stay is counted from entry, the
+  // stay clock — not the visa's own expiry date — is what matters.
+  if (entered && daysBased) {
+    if (!input.entryDate) return make("unknown", "warning", "Enter the entry date", "Marked as entered, but no entry date is recorded, so the stay cannot be worked out.");
+    if (daysToStayEnd == null) return make("unknown", "none", "Stay unknown", "The stay length is not set for this visa type.");
+    const sev = band(daysToStayEnd, warnWithin);
+    if (sev === "expired") return make("stay_ended", "expired", "Stay ended", `Permitted stay ended ${plural(-daysToStayEnd, "day")} ago (${niceDate(stayUntil)}).`);
+    return make(sev === "ok" ? "valid" : "expiring", sev, sev === "ok" ? "Valid" : "Stay ending", `Stay allowed until ${niceDate(stayUntil)} (${plural(daysToStayEnd, "day")} left).`);
+  }
+
+  // Not yet entered, with an entry deadline to meet.
+  if (!entered && entryDeadline && daysToEntryDeadline != null) {
+    if (daysToEntryDeadline < 0) {
+      return make("entry_missed", "expired", "Entry deadline passed", `Had to enter by ${niceDate(entryDeadline)} — ${plural(-daysToEntryDeadline, "day")} ago. A new visa is likely needed.`);
+    }
+    const warnEntry = Math.max(CRITICAL_DAYS, ...input.entryReminderDays);
+    const sev = band(daysToEntryDeadline, warnEntry);
+    return make(
+      sev === "ok" ? "awaiting_entry" : "enter_soon",
+      sev,
+      sev === "ok" ? "Awaiting entry" : "Enter soon",
+      `Must enter by ${niceDate(entryDeadline)} (${plural(daysToEntryDeadline, "day")} left).`
+    );
+  }
+
+  // Everything else is judged by the visa's own expiry date.
+  if (daysToExpiry != null) {
+    const sev = band(daysToExpiry, warnWithin);
+    if (sev === "expired") return make("expired", "expired", "Expired", `Expired ${plural(-daysToExpiry, "day")} ago (${niceDate(input.expiryDate)}).`);
+    return make(sev === "ok" ? "valid" : "expiring", sev, sev === "ok" ? "Valid" : "Expiring", `Valid until ${niceDate(input.expiryDate)} (${plural(daysToExpiry, "day")} left).`);
+  }
+
+  if (input.status === "applied") return make("pending", "none", "Applied", "Application made; no issue or expiry dates yet.");
+  if (input.status === "approved") return make("pending", "none", "Approved", "Approved; no issue or expiry dates yet.");
+  return make("unknown", "none", "No dates", "No expiry date is recorded for this visa.");
+}
+
+/* ---------------- Planned arrival against the visa ---------------- */
+
+export type ArrivalCheckInput = {
+  plannedArrival: string | null;
+  /** The mobilization position's visa choice: mission / resident / seaman / visit. */
+  positionVisaCode: string | null;
+  visa: {
+    status: string | null;
+    issueDate: string | null;
+    expiryDate: string | null;
+    entryDate: string | null;
+    typeName: string | null;
+    typeMobilizationCode: string | null;
+    rule: VisaTypeRule | null;
+  } | null;
+};
+
+/** Plain-language problems between a person's planned arrival and the visa on their profile. */
+export function arrivalWarnings(input: ArrivalCheckInput): string[] {
+  const out: string[] = [];
+  const v = input.visa;
+  if (!v) {
+    out.push("No visa is recorded on this person's profile yet.");
+    return out;
+  }
+  if (v.status === "cancelled") out.push("The visa on file is marked cancelled.");
+
+  if (input.positionVisaCode && v.typeMobilizationCode && input.positionVisaCode !== v.typeMobilizationCode) {
+    out.push(`This position expects a ${input.positionVisaCode} visa, but the visa on the profile is a ${v.typeName ?? v.typeMobilizationCode} visa.`);
+  }
+
+  const arrival = input.plannedArrival;
+  if (!arrival) return out;
+  const { entryDeadline } = computeVisaDates(v.rule, { issueDate: v.issueDate, expiryDate: v.expiryDate, entryDate: v.entryDate });
+  const alreadyEntered = !!v.entryDate || v.status === "entered";
+  if (!alreadyEntered && entryDeadline && arrival > entryDeadline) {
+    out.push(`Planned arrival (${niceDate(arrival)}) is after the visa's entry deadline (${niceDate(entryDeadline)}).`);
+  }
+  if (!alreadyEntered && v.expiryDate && arrival > v.expiryDate) {
+    out.push(`Planned arrival (${niceDate(arrival)}) is after the visa expires (${niceDate(v.expiryDate)}).`);
+  }
+  if (v.issueDate && arrival < v.issueDate) {
+    out.push(`Planned arrival (${niceDate(arrival)}) is before the visa issue date (${niceDate(v.issueDate)}).`);
+  }
+  return out;
+}
