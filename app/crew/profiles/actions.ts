@@ -121,14 +121,105 @@ export async function updateCrewProfile(id: string, formData: FormData) {
       notice_period_days: optNum(formData, "noticePeriodDays"),
       availability_date: optStr(formData, "availabilityDate"),
       default_rotation_template_id: optStr(formData, "defaultRotationTemplateId"),
-      emergency_contact_name: optStr(formData, "emergencyContactName"),
-      emergency_contact_phone: optStr(formData, "emergencyContactPhone"),
+      // emergency_contact_name / _phone are deliberately not written here:
+      // they are set from the primary contact by saveEmergencyContacts.
       notes: optStr(formData, "notes"),
       updated_by: userId,
     })
     .eq("id", id);
   if (error) return { error: error.message };
   revalidateDetail(id);
+  revalidateList();
+  return {};
+}
+
+/* ---------------- Emergency contacts / next of kin ---------------- */
+
+export type EmergencyContactInput = {
+  fullName: string;
+  relationship: string;
+  phone: string;
+  email: string;
+  address: string;
+  isPrimary: boolean;
+};
+
+const MAX_EMERGENCY_CONTACTS = 3;
+
+// Replaces the person's whole contact list with what the form holds. The
+// list is tiny (max 3) and edited as one unit, so replace-all is simpler and
+// safer than tracking per-row changes. The primary contact's name and phone
+// are copied to crew_profiles.emergency_contact_name/phone so older screens,
+// reports and imports that read those two columns stay correct.
+export async function saveEmergencyContacts(crewId: string, contacts: EmergencyContactInput[]) {
+  const { supabase, access, userId } = await requireCrewManage();
+  if (contacts.length > MAX_EMERGENCY_CONTACTS) {
+    return { error: `You can record up to ${MAX_EMERGENCY_CONTACTS} emergency contacts.` };
+  }
+  const cleaned = contacts.map((c) => ({
+    fullName: (c.fullName ?? "").trim(),
+    relationship: (c.relationship ?? "").trim(),
+    phone: (c.phone ?? "").trim(),
+    email: (c.email ?? "").trim(),
+    address: (c.address ?? "").trim(),
+    isPrimary: !!c.isPrimary,
+  }));
+  for (let i = 0; i < cleaned.length; i++) {
+    const c = cleaned[i];
+    const label = `Contact ${i + 1}`;
+    if (!c.fullName) return { error: `${label}: enter the person's name.` };
+    if (!c.relationship) return { error: `${label} (${c.fullName}): enter the relationship, for example Spouse or Father.` };
+    if (!c.phone) return { error: `${label} (${c.fullName}): enter a phone number.` };
+    if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) {
+      return { error: `${label} (${c.fullName}): that email address does not look right.` };
+    }
+  }
+  // Exactly one primary when there is anyone at all: keep the first one the
+  // user ticked, otherwise the first contact.
+  const primaryIdx = Math.max(0, cleaned.findIndex((c) => c.isPrimary));
+
+  const { data: crew } = await supabase.from("crew_profiles").select("id, org_id").eq("id", crewId).single();
+  if (!crew || (crew as { org_id: string }).org_id !== access.orgId) return { error: "Crew member not found." };
+
+  // Keep the old rows so a failed insert can put them back rather than
+  // leaving the person with no contacts at all.
+  const { data: oldRows } = await supabase.from("crew_emergency_contacts").select("*").eq("crew_id", crewId);
+  const { error: delErr } = await supabase.from("crew_emergency_contacts").delete().eq("crew_id", crewId);
+  if (delErr) return { error: delErr.message };
+
+  if (cleaned.length) {
+    const { error: insErr } = await supabase.from("crew_emergency_contacts").insert(
+      cleaned.map((c, i) => ({
+        org_id: access.orgId,
+        crew_id: crewId,
+        full_name: c.fullName,
+        relationship: c.relationship,
+        phone: c.phone,
+        email: c.email || null,
+        address: c.address || null,
+        is_primary: i === primaryIdx,
+        sort_order: i,
+        created_by: userId,
+      }))
+    );
+    if (insErr) {
+      if (oldRows?.length) await supabase.from("crew_emergency_contacts").insert(oldRows);
+      return { error: insErr.message };
+    }
+  }
+
+  const primary = cleaned.length ? cleaned[primaryIdx] : null;
+  const { error: syncErr } = await supabase
+    .from("crew_profiles")
+    .update({
+      emergency_contact_name: primary ? primary.fullName : null,
+      emergency_contact_phone: primary ? primary.phone : null,
+      updated_by: userId,
+    })
+    .eq("id", crewId);
+  if (syncErr) return { error: syncErr.message };
+
+  revalidateDetail(crewId);
   revalidateList();
   return {};
 }

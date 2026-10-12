@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   updateCrewProfile,
+  saveEmergencyContacts,
   updateCrewCost,
   updateCrewSensitive,
   linkCrewToUser,
@@ -69,6 +70,16 @@ type Crew = {
   dietary_medical_notes?: string | null;
 };
 type Ref = { id: string; name: string };
+export type EmergencyContactRow = {
+  id: string;
+  full_name: string;
+  relationship: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  is_primary: boolean;
+  sort_order: number;
+};
 type CrewSkill = { id: string; skill_id: string; years_experience: number | null; competency_grade: string | null; skills: { name: string } | { name: string }[] | null };
 type SecondaryRole = { id: string; job_role_id: string; job_roles: { name: string } | { name: string }[] | null };
 type Assignment = {
@@ -250,6 +261,7 @@ export default function CrewEditor({
   customFieldDefinitions,
   documentVersionCounts,
   reservations,
+  emergencyContacts,
 }: {
   crew: Crew;
   canManage: boolean;
@@ -272,6 +284,7 @@ export default function CrewEditor({
   customFieldDefinitions: CustomFieldDefinition[];
   documentVersionCounts: Record<string, number>;
   reservations: Reservation[];
+  emergencyContacts: EmergencyContactRow[];
 }) {
   const router = useRouter();
   const refresh = () => router.refresh();
@@ -323,7 +336,10 @@ export default function CrewEditor({
         </div>
 
       {activeTab === "general" && (
-        <GeneralForm crew={crew} canManage={canManage} jobRoles={jobRoles} rotationTemplates={rotationTemplates} onSaved={refresh} />
+        <>
+          <GeneralForm crew={crew} canManage={canManage} jobRoles={jobRoles} rotationTemplates={rotationTemplates} onSaved={refresh} />
+          <EmergencyContactsSection crewId={crew.id} contacts={emergencyContacts} canManage={canManage} onSaved={refresh} />
+        </>
       )}
 
       {activeTab === "skills" && (
@@ -409,8 +425,6 @@ function GeneralForm({
   const [noticePeriodDays, setNoticePeriodDays] = useState(crew.notice_period_days != null ? String(crew.notice_period_days) : "");
   const [availabilityDate, setAvailabilityDate] = useState(crew.availability_date ?? "");
   const [defaultRotationTemplateId, setDefaultRotationTemplateId] = useState(crew.default_rotation_template_id ?? "");
-  const [emergencyContactName, setEmergencyContactName] = useState(crew.emergency_contact_name ?? "");
-  const [emergencyContactPhone, setEmergencyContactPhone] = useState(crew.emergency_contact_phone ?? "");
   const [notes, setNotes] = useState(crew.notes ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -438,8 +452,6 @@ function GeneralForm({
     fd.set("noticePeriodDays", noticePeriodDays);
     fd.set("availabilityDate", availabilityDate);
     fd.set("defaultRotationTemplateId", defaultRotationTemplateId);
-    fd.set("emergencyContactName", emergencyContactName.trim());
-    fd.set("emergencyContactPhone", emergencyContactPhone.trim());
     fd.set("notes", notes.trim());
     // Optimistic: the fields already show what was typed, so treat the
     // save as done immediately and let the write happen in the
@@ -642,18 +654,6 @@ function GeneralForm({
         </label>
       </div>
 
-      <div className={labelCls} style={labelStyle}>Emergency Contact</div>
-      <div className="grid gap-3 sm:grid-cols-2 mb-4">
-        <label className={lbl} style={lblStyle}>
-          Name
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={emergencyContactName} onChange={(e) => { setEmergencyContactName(e.target.value); setSaved(false); }} disabled={disabled} />
-        </label>
-        <label className={lbl} style={lblStyle}>
-          Phone
-          <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={emergencyContactPhone} onChange={(e) => { setEmergencyContactPhone(e.target.value); setSaved(false); }} disabled={disabled} />
-        </label>
-      </div>
-
       <div className={labelCls} style={labelStyle}>Notes</div>
       <textarea className={`${inputCls} w-full`} style={inputStyle} rows={2} value={notes} onChange={(e) => { setNotes(e.target.value); setSaved(false); }} disabled={disabled} />
 
@@ -775,6 +775,177 @@ function SkillsSection({
             <input className={`${inputCls} w-32 mt-1`} style={inputStyle} value={grade} onChange={(e) => setGrade(e.target.value)} />
           </label>
           <button onClick={add} disabled={!skillId} className="ch-btn-primary rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50">Add</button>
+        </div>
+      )}
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
+/* ================= Emergency contacts / next of kin ================= */
+
+const MAX_CONTACTS = 3;
+const RELATIONSHIPS = ["Spouse", "Father", "Mother", "Son", "Daughter", "Brother", "Sister", "Friend", "Other"];
+type ContactDraft = { key: string; fullName: string; relationship: string; phone: string; email: string; address: string; isPrimary: boolean };
+
+function toDrafts(rows: EmergencyContactRow[]): ContactDraft[] {
+  return rows.map((r) => ({
+    key: r.id,
+    fullName: r.full_name,
+    relationship: r.relationship ?? "",
+    phone: r.phone ?? "",
+    email: r.email ?? "",
+    address: r.address ?? "",
+    isPrimary: r.is_primary,
+  }));
+}
+
+function EmergencyContactsSection({
+  crewId,
+  contacts,
+  canManage,
+  onSaved,
+}: {
+  crewId: string;
+  contacts: EmergencyContactRow[];
+  canManage: boolean;
+  onSaved: () => void;
+}) {
+  const [drafts, setDrafts] = useState<ContactDraft[]>(() => toDrafts(contacts));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const update = (key: string, patch: Partial<ContactDraft>) => {
+    setDrafts((d) => d.map((c) => (c.key === key ? { ...c, ...patch } : c)));
+    setSaved(false);
+  };
+  const add = () => {
+    setDrafts((d) => [
+      ...d,
+      { key: tempId(), fullName: "", relationship: "", phone: "", email: "", address: "", isPrimary: d.length === 0 },
+    ]);
+    setSaved(false);
+  };
+  const remove = (key: string) => {
+    setDrafts((d) => {
+      const next = d.filter((c) => c.key !== key);
+      if (next.length && !next.some((c) => c.isPrimary)) next[0] = { ...next[0], isPrimary: true };
+      return next;
+    });
+    setSaved(false);
+  };
+  const makePrimary = (key: string) => {
+    setDrafts((d) => d.map((c) => ({ ...c, isPrimary: c.key === key })));
+    setSaved(false);
+  };
+
+  const save = async () => {
+    setError(null);
+    setSaving(true);
+    const res = await saveEmergencyContacts(
+      crewId,
+      drafts.map((c) => ({
+        fullName: c.fullName,
+        relationship: c.relationship,
+        phone: c.phone,
+        email: c.email,
+        address: c.address,
+        isPrimary: c.isPrimary,
+      }))
+    );
+    setSaving(false);
+    if (res?.error) {
+      setError(res.error);
+      return;
+    }
+    setSaved(true);
+    onSaved();
+  };
+
+  return (
+    <div className={cardCls} style={cardStyle}>
+      <div className={labelCls} style={labelStyle}>Emergency Contacts / Next of Kin</div>
+      <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        Up to {MAX_CONTACTS} people we can call if something happens. The primary contact is the first one called and is the one shown on older screens and reports.
+      </div>
+
+      {drafts.length === 0 && (
+        <div className="text-sm mb-3" style={{ color: "var(--ch-warn, #92400e)" }}>
+          No emergency contact recorded yet.
+        </div>
+      )}
+
+      {drafts.map((c, i) => (
+        <div key={c.key} className="rounded-lg border p-3 mb-3" style={{ borderColor: "var(--ch-line)" }}>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-xs font-semibold" style={{ color: "var(--ch-ink)" }}>
+              Contact {i + 1}
+              {c.isPrimary && (
+                <span className="ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+                  Primary
+                </span>
+              )}
+            </div>
+            {canManage && (
+              <div className="flex items-center gap-3">
+                {!c.isPrimary && (
+                  <button type="button" onClick={() => makePrimary(c.key)} className="text-xs font-semibold" style={{ color: "var(--ch-navy)" }}>
+                    Make primary
+                  </button>
+                )}
+                <button type="button" onClick={() => remove(c.key)} className="text-xs" style={{ color: "var(--ch-fail)" }}>
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className={lbl} style={lblStyle}>
+              Full name *
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={c.fullName} onChange={(e) => update(c.key, { fullName: e.target.value })} disabled={!canManage} />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Relationship *
+              <input
+                className={`${inputCls} w-full mt-1`}
+                style={inputStyle}
+                list="emergency-relationships"
+                value={c.relationship}
+                onChange={(e) => update(c.key, { relationship: e.target.value })}
+                disabled={!canManage}
+              />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Phone * (with country code)
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={c.phone} onChange={(e) => update(c.key, { phone: e.target.value })} disabled={!canManage} />
+            </label>
+            <label className={lbl} style={lblStyle}>
+              Email
+              <input type="email" className={`${inputCls} w-full mt-1`} style={inputStyle} value={c.email} onChange={(e) => update(c.key, { email: e.target.value })} disabled={!canManage} />
+            </label>
+            <label className={`${lbl} sm:col-span-2`} style={lblStyle}>
+              Address
+              <input className={`${inputCls} w-full mt-1`} style={inputStyle} value={c.address} onChange={(e) => update(c.key, { address: e.target.value })} disabled={!canManage} />
+            </label>
+          </div>
+        </div>
+      ))}
+      <datalist id="emergency-relationships">
+        {RELATIONSHIPS.map((r) => <option key={r} value={r} />)}
+      </datalist>
+
+      {canManage && (
+        <div className="flex items-center gap-3 flex-wrap">
+          {drafts.length < MAX_CONTACTS && (
+            <button type="button" onClick={add} className="rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--ch-line)", color: "var(--ch-navy)" }}>
+              + Add contact
+            </button>
+          )}
+          <button type="button" onClick={save} disabled={saving} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+            {saving ? "Saving…" : "Save contacts"}
+          </button>
+          {saved && !error && <span className="text-xs font-semibold" style={{ color: "var(--ch-ok, #1a7f37)" }}>Saved</span>}
         </div>
       )}
       <ErrorLine error={error} />

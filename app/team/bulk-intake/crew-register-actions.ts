@@ -1159,6 +1159,41 @@ export async function commitCrewRegisterImport(payloadJson: string): Promise<{ r
         createdProfiles++;
       }
 
+      // Keep the emergency-contacts list (migration 0042) in step with the
+      // two legacy columns this import writes. Best effort: a problem here
+      // never fails the profile row itself.
+      if (p.emergencyContactName || p.emergencyContactPhone) {
+        try {
+          const { data: existing } = await supabase
+            .from("crew_emergency_contacts")
+            .select("id, is_primary")
+            .eq("crew_id", crewId);
+          const primary = (existing ?? []).find((r) => (r as { is_primary: boolean }).is_primary);
+          if (primary) {
+            await supabase
+              .from("crew_emergency_contacts")
+              .update({
+                ...(p.emergencyContactName ? { full_name: p.emergencyContactName } : {}),
+                ...(p.emergencyContactPhone ? { phone: p.emergencyContactPhone } : {}),
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", (primary as { id: string }).id);
+          } else if (!existing?.length) {
+            await supabase.from("crew_emergency_contacts").insert({
+              org_id: orgId,
+              crew_id: crewId,
+              full_name: p.emergencyContactName || "Emergency contact",
+              phone: p.emergencyContactPhone,
+              is_primary: true,
+              sort_order: 0,
+              created_by: userId,
+            });
+          }
+        } catch {
+          /* table not created yet (migration 0042 not run) — ignore */
+        }
+      }
+
       crewIdByCode.set(p.employeeCode.toLowerCase(), crewId);
       profileRows.push({
         employeeCode: p.employeeCode,

@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getEffectiveAccess, can } from "@/lib/rbac";
-import CrewEditor from "./crew-editor";
+import CrewEditor, { type EmergencyContactRow } from "./crew-editor";
 
 const BASE_FIELDS =
   "id, org_id, crew_code, employee_code, full_name, photo_url, employment_status, nationality, date_of_birth, gender, phone, email, home_country, current_location, nearest_airport, primary_job_role_id, employment_type, joining_date, notice_period_days, availability_date, default_rotation_template_id, emergency_contact_name, emergency_contact_phone, notes, linked_profile_id, job_roles(name), rotation_templates(name)";
@@ -61,6 +61,7 @@ export default async function CrewProfileDetailPage({
     customFieldDefinitionsRes,
     documentVersionCountsRes,
     reservationsRes,
+    emergencyContactsRes,
   ] = await Promise.all([
     supabase.from("job_roles").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
     supabase.from("rotation_templates").select("id, name").eq("org_id", access.orgId).eq("is_active", true).order("name"),
@@ -125,6 +126,11 @@ export default async function CrewProfileDetailPage({
           .eq("crew_id", id)
           .order("reserved_at", { ascending: false })
       : Promise.resolve({ data: [] }),
+    supabase
+      .from("crew_emergency_contacts")
+      .select("id, full_name, relationship, phone, email, address, is_primary, sort_order")
+      .eq("crew_id", id)
+      .order("sort_order"),
   ]);
 
   const documentVersionCounts: Record<string, number> = {};
@@ -208,6 +214,7 @@ export default async function CrewProfileDetailPage({
         customFieldDefinitions={customFieldDefinitionsRes.data ?? []}
         documentVersionCounts={documentVersionCounts}
         reservations={reservations}
+        emergencyContacts={(emergencyContactsRes.data ?? []) as EmergencyContactRow[]}
       />
     </>
   );
