@@ -135,14 +135,14 @@ export default function VisasTab({
             </button>
           ))}
         </div>
-        <span className="text-xs flex-1 min-w-[200px]" style={{ color: "var(--ch-sub)" }}>
-          Newest first. A visa moves to “Expired &amp; past” when it expires, its entry deadline passes, the permitted stay ends, or it is cancelled.
-        </span>
         {canManage && !adding && (
           <button onClick={onAdd} className="ch-btn-primary rounded-lg px-4 py-2 text-sm font-semibold">
             + Add visa
           </button>
         )}
+      </div>
+      <div className="text-xs mb-3" style={{ color: "var(--ch-sub)" }}>
+        Newest first. A visa moves to “Expired &amp; past” when it expires, its entry deadline passes, the permitted stay ends, or it is cancelled.
       </div>
 
       {error && <div className="text-sm mb-2" style={{ color: "var(--ch-fail)" }}>{error}</div>}
