@@ -633,41 +633,52 @@ const VISA_SNAPSHOT_COLUMNS =
 // none yet, reuse one already named like a visa (setting its category), or
 // create a plain "Visa" type, so "+ Add visa" works the first time.
 export async function ensureVisaDocumentType() {
-  const { supabase, access, userId } = await requireCrewManage();
-  const { data: existing } = await supabase
-    .from("document_types")
-    .select("id")
-    .eq("org_id", access.orgId)
-    .eq("category", "visa")
-    .eq("is_active", true)
-    .limit(1);
-  if (existing && existing.length > 0) return {};
+  try {
+    const { supabase, access, userId } = await requireCrewManage();
+    const cols = "id, name, category, tracks_number, warning_threshold_days, is_active";
+    const { data: existing } = await supabase
+      .from("document_types")
+      .select(cols)
+      .eq("org_id", access.orgId)
+      .eq("category", "visa")
+      .eq("is_active", true)
+      .limit(1);
+    if (existing && existing.length > 0) return { documentType: existing[0] };
 
-  const { data: named } = await supabase
-    .from("document_types")
-    .select("id")
-    .eq("org_id", access.orgId)
-    .eq("is_active", true)
-    .ilike("name", "%visa%")
-    .order("name")
-    .limit(1);
-  if (named && named.length > 0) {
-    const { error } = await supabase.from("document_types").update({ category: "visa" }).eq("id", named[0].id);
-    if (error) return { error: error.message };
-  } else {
-    const { error } = await supabase.from("document_types").insert({
-      org_id: access.orgId,
-      name: "Visa",
-      category: "visa",
-      tracks_number: true,
-      warning_threshold_days: 30,
-      created_by: userId,
-    });
-    if (error) return { error: error.message };
+    const { data: named } = await supabase
+      .from("document_types")
+      .select("id")
+      .eq("org_id", access.orgId)
+      .eq("is_active", true)
+      .ilike("name", "%visa%")
+      .order("name")
+      .limit(1);
+    let row;
+    if (named && named.length > 0) {
+      const { data, error } = await supabase.from("document_types").update({ category: "visa" }).eq("id", named[0].id).select(cols).single();
+      if (error) return { error: error.message };
+      row = data;
+    } else {
+      const { data, error } = await supabase
+        .from("document_types")
+        .insert({
+          org_id: access.orgId,
+          name: "Visa",
+          category: "visa",
+          tracks_number: true,
+          warning_threshold_days: 30,
+          created_by: userId,
+        })
+        .select(cols)
+        .single();
+      if (error) return { error: error.message };
+      row = data;
+    }
+    revalidateMatrix();
+    return { documentType: row };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Could not set up the Visa document type." };
   }
-  revalidateDetail("");
-  revalidateMatrix();
-  return {};
 }
 
 export async function createCrewDocument(crewId: string, formData: FormData) {

@@ -1642,7 +1642,11 @@ function VisasSection({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // A Visa document type set up on the spot is kept here, so the form opens
+  // straight away without waiting for the page to reload.
+  const [createdType, setCreatedType] = useState<DocumentType | null>(null);
   const visaDocTypes = documentTypes.filter((t) => t.category === "visa");
+  if (visaDocTypes.length === 0 && createdType) visaDocTypes.push(createdType);
   const docById = (id: string) => crewDocuments.find((d) => d.id === id);
 
   const save = (documentId: string | null, fd: FormData) => {
@@ -1678,11 +1682,12 @@ function VisasSection({
             setError(null);
             startTransition(async () => {
               const res = await ensureVisaDocumentType();
-              if (res?.error) {
-                setError(res.error);
+              if (res?.error || !res?.documentType) {
+                setError(res?.error ?? "Could not set up the Visa document type.");
                 setAdding(false);
                 return;
               }
+              setCreatedType(res.documentType as DocumentType);
               onChanged();
             });
           }
