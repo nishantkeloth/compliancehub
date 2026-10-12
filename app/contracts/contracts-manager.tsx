@@ -7,6 +7,7 @@ import { createContract, deleteContract } from "./actions";
 import { useOptimisticList, tempId, isTempId } from "@/lib/use-optimistic-list";
 import { useGuideMaybe } from "@/components/guide/guide-context";
 import { CONTRACT_SERVICE_OPTIONS } from "@/lib/contract-services";
+import { currencyOptions } from "@/lib/currencies";
 
 type Contract = {
   id: string;
@@ -342,7 +343,15 @@ function ContractForm({
         {field("Actual end", "actualEndDate", "date")}
       </div>
       <div className="grid gap-3 sm:grid-cols-4 mb-3">
-        {field("Currency", "currency", "text", true, "contracts.form.currency")}
+        <label className={lbl} style={lblStyle} data-guide-id="contracts.form.currency">
+          Currency <span style={{ color: "var(--ch-fail)" }}>*</span>
+          <select className={`${inputCls} w-full mt-1`} style={inputStyle} value={values.currency} onChange={set("currency")}>
+            <option value="">Select currency…</option>
+            {currencyOptions(values.currency).map((c) => (
+              <option key={c.code} value={c.code}>{c.code} · {c.name}</option>
+            ))}
+          </select>
+        </label>
         {field("Estimated value", "estimatedContractValue", "number")}
         {field("Billing model", "billingModel")}
         {field("Mobilization notice (days)", "mobilizationNoticeDays", "number")}
