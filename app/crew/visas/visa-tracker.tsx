@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { visaGroupOf } from "@/lib/visa-groups";
+import VisaDashboard, { type DashboardOpen } from "./visa-dashboard";
 
 export type VisaRow = {
   docId: string;
@@ -25,6 +27,8 @@ export type VisaRow = {
   keyLabel: string;
   keyDate: string | null;
   keyDays: number | null;
+  /** True for the one visa that counts as this person's current visa on the dashboard. */
+  onDashboard: boolean;
 };
 export type NoVisaRow = { crewId: string; crewName: string; roleName: string | null; siteName: string | null };
 
@@ -48,7 +52,7 @@ function fmt(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-type View = "visas" | "none";
+type View = "dashboard" | "visas" | "none";
 
 export default function VisaTracker({
   rows,
@@ -61,7 +65,8 @@ export default function VisaTracker({
   today: string;
   noVisaDocType: boolean;
 }) {
-  const [view, setView] = useState<View>("visas");
+  const [view, setView] = useState<View>("dashboard");
+  const [dashFilter, setDashFilter] = useState<DashboardOpen | null>(null);
   const [search, setSearch] = useState("");
   const [country, setCountry] = useState("");
   const [visaType, setVisaType] = useState("");
@@ -94,8 +99,9 @@ export default function VisaTracker({
       .filter((r) => !visaType || r.visaTypeName === visaType)
       .filter((r) => !attention || r.severity === "expired" || r.severity === "critical" || r.severity === "warning")
       .filter((r) => n == null || (r.keyDays != null && r.keyDays <= n))
+      .filter((r) => !dashFilter || (r.onDashboard && dashFilter.test(r)))
       .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || (a.keyDays ?? 99999) - (b.keyDays ?? 99999) || a.crewName.localeCompare(b.crewName));
-  }, [rows, search, country, visaType, attention, withinDays]);
+  }, [rows, search, country, visaType, attention, withinDays, dashFilter]);
 
   const filteredNone = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -111,6 +117,7 @@ export default function VisaTracker({
 
   return (
     <div>
+      {view !== "dashboard" && (
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-5 mb-4">
         {tile("Visas on record", counts.total)}
         {tile("Need attention", counts.attention, counts.attention ? "#c2410c" : undefined)}
@@ -118,12 +125,13 @@ export default function VisaTracker({
         {tile("Awaiting entry", counts.awaiting)}
         {tile("People with no visa", noVisa.length, noVisa.length ? "#9a6b00" : undefined)}
       </div>
+      )}
 
       <div className="flex items-center gap-1 rounded-lg border p-1 mb-4 w-fit" style={{ borderColor: "var(--ch-line)" }}>
-        {([["visas", `Visas (${rows.length})`], ["none", `No visa on file (${noVisa.length})`]] as [View, string][]).map(([k, label]) => (
+        {([["dashboard", "Dashboard"], ["visas", `Visas (${rows.length})`], ["none", `No visa on file (${noVisa.length})`]] as [View, string][]).map(([k, label]) => (
           <button
             key={k}
-            onClick={() => setView(k)}
+            onClick={() => { setView(k); setDashFilter(null); }}
             className="px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap"
             style={view === k ? { background: "var(--ch-navy)", color: "#fff" } : { color: "var(--ch-sub)" }}
           >
@@ -132,6 +140,31 @@ export default function VisaTracker({
         ))}
       </div>
 
+      {view === "dashboard" && (
+        <>
+          {noVisaDocType && (
+            <div className="text-sm mb-3" style={{ color: "var(--ch-sub)" }}>
+              No document type is in the Visa category yet. Add a visa to any crew profile (Visas tab) and it is set up automatically.
+            </div>
+          )}
+          <VisaDashboard
+            rows={rows.filter((r) => r.onDashboard)}
+            noVisa={noVisa}
+            today={today}
+            onOpen={(f) => {
+              setSearch("");
+              setCountry("");
+              setVisaType("");
+              setAttention(false);
+              setWithinDays("");
+              setDashFilter(f);
+              setView("visas");
+            }}
+          />
+        </>
+      )}
+
+      {view !== "dashboard" && (
       <div className="flex items-end gap-3 flex-wrap mb-4">
         <label className="text-xs" style={{ color: "var(--ch-sub)" }}>
           Search
@@ -163,8 +196,18 @@ export default function VisaTracker({
           </>
         )}
       </div>
+      )}
 
-      {view === "visas" ? (
+      {view === "visas" && dashFilter && (
+        <div className="flex items-center gap-2 mb-3 text-xs rounded-lg px-3 py-2" style={{ background: "var(--ch-navy-soft)", color: "var(--ch-navy)" }}>
+          <span>
+            Showing <b>{dashFilter.label}</b> — each person&apos;s current visa, as on the Dashboard.
+          </span>
+          <button type="button" className="font-semibold underline" onClick={() => setDashFilter(null)}>Show all visas</button>
+        </div>
+      )}
+
+      {view === "dashboard" ? null : view === "visas" ? (
         <div className={`${cardCls} overflow-x-auto`} style={cardStyle}>
           {noVisaDocType && (
             <div className="p-4 text-sm" style={{ color: "var(--ch-sub)" }}>

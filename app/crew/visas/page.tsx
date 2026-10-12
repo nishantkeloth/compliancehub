@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { getEffectiveAccess, can } from "@/lib/rbac";
 import { assessVisa, VISA_STATUS_LABEL } from "@/lib/visa";
+import { isPastState } from "@/lib/visa-groups";
 import VisaTracker, { type VisaRow, type NoVisaRow } from "./visa-tracker";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- untyped supabase rows, same pattern as the other crew pages */
@@ -125,7 +126,25 @@ export default async function VisaTrackerPage() {
       keyLabel,
       keyDate,
       keyDays,
+      onDashboard: false,
     });
+  }
+
+  // Each active person's one "current" visa, for the dashboard: the newest visa that
+  // is still live, otherwise the one that ended most recently.
+  const byCrew = new Map<string, VisaRow[]>();
+  for (const r of rows) {
+    const list = byCrew.get(r.crewId);
+    if (list) list.push(r);
+    else byCrew.set(r.crewId, [r]);
+  }
+  for (const list of byCrew.values()) {
+    if (list[0].employmentStatus === "inactive" || list[0].employmentStatus === "terminated") continue;
+    const live = list.filter((r) => !isPastState(r.state));
+    const pick = live.length
+      ? [...live].sort((a, b) => (b.issueDate ?? "9999").localeCompare(a.issueDate ?? "9999"))[0]
+      : [...list].sort((a, b) => (b.keyDate ?? b.expiryDate ?? b.issueDate ?? "").localeCompare(a.keyDate ?? a.expiryDate ?? a.issueDate ?? ""))[0];
+    pick.onDashboard = true;
   }
 
   const noVisa: NoVisaRow[] = (crewRes.data ?? [])
